@@ -8,6 +8,7 @@ import {
   formatRocketLeagueScore,
   ROCKET_LEAGUE_GAME_COUNT,
 } from "../lib/rocket-league.mjs";
+import { buildRocketLeagueOverlayState } from "../lib/rocket-league-live.mjs";
 import {
   buildValorantOverlayState,
   buildValorantFields,
@@ -99,6 +100,8 @@ type RocketLeagueGame = {
 type RocketLeague = {
   scoreboardHeader: string;
   bestOf: "Bo1" | "Bo3" | "Bo5" | "Bo7";
+  flipSides: boolean;
+  playerCardEnabled: boolean;
   games: RocketLeagueGame[];
   savedGames: RocketLeagueGame[];
 };
@@ -170,6 +173,7 @@ type ExportFile = { filename: string; data: unknown };
 const STORAGE_KEY = "gaming-oasis-production-v1";
 const LIVE_JSON_ENDPOINT = "http://127.0.0.1:4877/api/live-json";
 const VALORANT_OVERLAY_URL = "http://localhost:3000/overlays/valorant";
+const ROCKET_LEAGUE_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league";
 const GAMING_OASIS_SPONSOR: Sponsor = {
   id: "gaming-oasis",
   name: "Gaming Oasis",
@@ -299,6 +303,8 @@ function createInitialState(): ProductionState {
     rocketLeague: {
       scoreboardHeader: "",
       bestOf: "Bo3",
+      flipSides: false,
+      playerCardEnabled: true,
       games: createRocketLeagueGames(),
       savedGames: createRocketLeagueGames(),
     },
@@ -449,6 +455,8 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
       bestOf: ["Bo1", "Bo3", "Bo5", "Bo7"].includes(saved.rocketLeague?.bestOf ?? "")
         ? saved.rocketLeague!.bestOf
         : initial.rocketLeague.bestOf,
+      flipSides: Boolean(saved.rocketLeague?.flipSides),
+      playerCardEnabled: saved.rocketLeague?.playerCardEnabled !== false,
       games: initial.rocketLeague.games.map((game, index) => ({
         ...game,
         ...(saved.rocketLeague?.games?.[index] ?? {}),
@@ -781,6 +789,7 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<Section>("welcome");
   const [generalTab, setGeneralTab] = useState<"talent" | "segments">("talent");
   const [valorantTab, setValorantTab] = useState<"results" | "pickBans" | "mapArtwork" | "overlay">("results");
+  const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "overlay">("results");
   const [drawTab, setDrawTab] = useState<DrawKey>("RLT1");
   const [drawPastePool, setDrawPastePool] = useState<number | null>(null);
   const [drawPasteText, setDrawPasteText] = useState("");
@@ -878,6 +887,15 @@ export default function Home() {
     state.sponsors,
     state.valorantMapData.maps,
   ), [state.valorant, state.general.matches, state.sponsors, state.valorantMapData.maps]);
+  const rocketLeagueOverlay = useMemo(() => buildRocketLeagueOverlayState(
+    state.rocketLeague,
+    resolveTeam(state.general.matches[0].team1),
+    resolveTeam(state.general.matches[0].team2),
+    {
+      primaryColor: state.general.matches[0].team1.backupColor1,
+      secondaryColor: state.general.matches[0].team1.backupColor2,
+    },
+  ), [state.rocketLeague, state.general.matches]);
   const hasLiveProductionContent = useMemo(() => hasProductionContent(state), [state]);
   const filledSponsors = state.sponsors.filter((sponsor) => sponsor.name.trim() || sponsor.logo.trim()).length;
   const filledMatches = state.general.matches.filter((match) => resolveTeam(match.team1).name && resolveTeam(match.team2).name).length;
@@ -902,7 +920,11 @@ export default function Home() {
         const response = await fetch(LIVE_JSON_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files, overlays: { valorant: valorantOverlay }, valorantMapData: state.valorantMapData }),
+          body: JSON.stringify({
+            files,
+            overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay },
+            valorantMapData: state.valorantMapData,
+          }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -917,7 +939,7 @@ export default function Home() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [files, valorantOverlay, state.valorantMapData, hydrated, liveWriteReady, hasLiveProductionContent, allowEmptyLiveWrite]);
+  }, [files, valorantOverlay, rocketLeagueOverlay, state.valorantMapData, hydrated, liveWriteReady, hasLiveProductionContent, allowEmptyLiveWrite]);
 
   function notify(message: string) {
     setToast(message);
@@ -940,6 +962,19 @@ export default function Home() {
 
   function openValorantOverlay() {
     window.open(VALORANT_OVERLAY_URL, "_blank", "noopener,noreferrer");
+  }
+
+  async function copyRocketLeagueOverlayLink() {
+    try {
+      await navigator.clipboard.writeText(ROCKET_LEAGUE_OVERLAY_URL);
+      notify("Rocket League overlay link copied");
+    } catch {
+      notify("Could not copy the overlay link");
+    }
+  }
+
+  function openRocketLeagueOverlay() {
+    window.open(ROCKET_LEAGUE_OVERLAY_URL, "_blank", "noopener,noreferrer");
   }
 
   function updateRocketLeague(patch: Partial<RocketLeague>) {
@@ -1604,70 +1639,98 @@ export default function Home() {
           title="Rocket League"
           description="Enter game results and configure the scoreboard. Match 1 supplies the team names used here."
         />
-        <div className="rocket-league-layout">
-          <section className="panel-card rocket-score-card">
-            <div className="card-title-row result-card-heading">
-              <div><h2>Match results</h2><p>Enter both scores with a clear winner, then update the live JSON.</p></div>
-              <div className="result-update-controls"><span className={rocketLeagueInvalidResults ? "invalid" : rocketLeaguePendingResults ? "pending" : "current"}>{rocketLeagueInvalidResults ? `${rocketLeagueInvalidResults} invalid ${rocketLeagueInvalidResults === 1 ? "result" : "results"}` : rocketLeaguePendingResults ? `${rocketLeaguePendingResults} unsaved` : "Results current"}</span><button className={`button ${rocketLeaguePendingResults && !rocketLeagueInvalidResults ? "primary" : "secondary"}`} type="button" onClick={saveRocketLeagueResults} disabled={!rocketLeaguePendingResults || Boolean(rocketLeagueInvalidResults)}>Update results</button></div>
-            </div>
-            <div className="rocket-score-head" aria-hidden="true">
-              <span>Game</span>
-              <strong>{homeTeam}</strong>
-              <span>vs</span>
-              <strong>{awayTeam}</strong>
-            </div>
-            <div className="rocket-score-list">
-              {Array.from({ length: ROCKET_LEAGUE_GAME_COUNT }, (_, gameIndex) => {
-                const game = state.rocketLeague.games[gameIndex];
-                const status = resultStatus(game);
-                const isCompleted = status === "valid";
-                const isInvalid = status === "partial" || status === "tied";
-                const isPending = resultIsPending(game, state.rocketLeague.savedGames[gameIndex]);
-                return (
-                  <div className={`rocket-score-row ${isCompleted ? "complete" : ""} ${isPending ? "pending" : ""} ${isInvalid ? "invalid" : ""}`} key={gameIndex}>
-                    <span>Game {gameIndex + 1}{status === "tied" ? <small className="result-error">Tie not allowed</small> : status === "partial" ? <small className="result-error">Enter both scores</small> : isPending ? <small>Unsaved</small> : null}</span>
-                    <input aria-invalid={isInvalid} aria-label={`Game ${gameIndex + 1} ${homeTeam} score`} inputMode="numeric" value={game.home} onChange={(event) => updateRocketLeagueScore(gameIndex, "home", event.target.value)} placeholder="0" />
-                    <b>–</b>
-                    <input aria-invalid={isInvalid} aria-label={`Game ${gameIndex + 1} ${awayTeam} score`} inputMode="numeric" value={game.away} onChange={(event) => updateRocketLeagueScore(gameIndex, "away", event.target.value)} placeholder="0" />
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+        <div className="tabs" role="tablist" aria-label="Rocket League views">
+          <button className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
+          <button className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
+        </div>
 
-          <div className="rocket-side-stack">
-            <section className="panel-card rocket-setup-card">
-              <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values feed the Rocket League graphics.</p></div></div>
-              <div className="form-grid">
-                <Field label="Scoreboard header" value={state.rocketLeague.scoreboardHeader} onChange={(value) => updateRocketLeague({ scoreboardHeader: value })} placeholder="Championship Match" />
-                <label className="field">
-                  <span className="field-label">Series format</span>
-                  <select value={state.rocketLeague.bestOf} onChange={(event) => updateRocketLeague({ bestOf: event.target.value as RocketLeague["bestOf"] })}>
-                    <option value="Bo1">Best of 1</option>
-                    <option value="Bo3">Best of 3</option>
-                    <option value="Bo5">Best of 5</option>
-                    <option value="Bo7">Best of 7</option>
-                  </select>
-                </label>
+        {rocketLeagueTab === "results" ? (
+          <div className="rocket-league-layout">
+            <section className="panel-card rocket-score-card">
+              <div className="card-title-row result-card-heading">
+                <div><h2>Match results</h2><p>Enter both scores with a clear winner, then update the live JSON.</p></div>
+                <div className="result-update-controls"><span className={rocketLeagueInvalidResults ? "invalid" : rocketLeaguePendingResults ? "pending" : "current"}>{rocketLeagueInvalidResults ? `${rocketLeagueInvalidResults} invalid ${rocketLeagueInvalidResults === 1 ? "result" : "results"}` : rocketLeaguePendingResults ? `${rocketLeaguePendingResults} unsaved` : "Results current"}</span><button className={`button ${rocketLeaguePendingResults && !rocketLeagueInvalidResults ? "primary" : "secondary"}`} type="button" onClick={saveRocketLeagueResults} disabled={!rocketLeaguePendingResults || Boolean(rocketLeagueInvalidResults)}>Update results</button></div>
+              </div>
+              <div className="rocket-score-head" aria-hidden="true">
+                <span>Game</span>
+                <strong>{homeTeam}</strong>
+                <span>vs</span>
+                <strong>{awayTeam}</strong>
+              </div>
+              <div className="rocket-score-list">
+                {Array.from({ length: ROCKET_LEAGUE_GAME_COUNT }, (_, gameIndex) => {
+                  const game = state.rocketLeague.games[gameIndex];
+                  const status = resultStatus(game);
+                  const isCompleted = status === "valid";
+                  const isInvalid = status === "partial" || status === "tied";
+                  const isPending = resultIsPending(game, state.rocketLeague.savedGames[gameIndex]);
+                  return (
+                    <div className={`rocket-score-row ${isCompleted ? "complete" : ""} ${isPending ? "pending" : ""} ${isInvalid ? "invalid" : ""}`} key={gameIndex}>
+                      <span>Game {gameIndex + 1}{status === "tied" ? <small className="result-error">Tie not allowed</small> : status === "partial" ? <small className="result-error">Enter both scores</small> : isPending ? <small>Unsaved</small> : null}</span>
+                      <input aria-invalid={isInvalid} aria-label={`Game ${gameIndex + 1} ${homeTeam} score`} inputMode="numeric" value={game.home} onChange={(event) => updateRocketLeagueScore(gameIndex, "home", event.target.value)} placeholder="0" />
+                      <b>–</b>
+                      <input aria-invalid={isInvalid} aria-label={`Game ${gameIndex + 1} ${awayTeam} score`} inputMode="numeric" value={game.away} onChange={(event) => updateRocketLeagueScore(gameIndex, "away", event.target.value)} placeholder="0" />
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
-            <section className="panel-card rocket-indicator-card">
-              <div className="card-title-row"><div><h2>Live match indicators</h2><p>Calculated from the results currently saved to JSON.</p></div></div>
-              <dl className="rocket-indicators">
-                <div><dt>Round</dt><dd>{rocketLeagueSeries.roundNumber}</dd><small>Current game</small></div>
-                <div><dt>{homeTeam}</dt><dd>{rocketLeagueSeries.homeWins}</dd><small>Series wins</small></div>
-                <div><dt>{awayTeam}</dt><dd>{rocketLeagueSeries.awayWins}</dd><small>Series wins</small></div>
-              </dl>
-            </section>
+            <div className="rocket-side-stack">
+              <section className="panel-card rocket-setup-card">
+                <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values feed the Rocket League graphics.</p></div></div>
+                <div className="form-grid">
+                  <Field label="Scoreboard header" value={state.rocketLeague.scoreboardHeader} onChange={(value) => updateRocketLeague({ scoreboardHeader: value })} placeholder="Championship Match" />
+                  <label className="field">
+                    <span className="field-label">Series format</span>
+                    <select value={state.rocketLeague.bestOf} onChange={(event) => updateRocketLeague({ bestOf: event.target.value as RocketLeague["bestOf"] })}>
+                      <option value="Bo1">Best of 1</option>
+                      <option value="Bo3">Best of 3</option>
+                      <option value="Bo5">Best of 5</option>
+                      <option value="Bo7">Best of 7</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="valorant-toggle-row"><div><strong>Flip sides</strong><p>Swap team names, logos, and series totals on the browser overlay.</p></div><label className="switch large"><input aria-label="Flip Rocket League team sides" type="checkbox" checked={state.rocketLeague.flipSides} onChange={(event) => updateRocketLeague({ flipSides: event.target.checked })} /><span /></label></div>
+              </section>
 
-            <section className="panel-card rocket-output-card">
-              <span>Live output</span>
-              <strong>{state.rocketLeague.bestOf} · Round {rocketLeagueSeries.roundNumber}</strong>
-              <small>{rocketLeagueSeries.completedGames} of {ROCKET_LEAGUE_GAME_COUNT} game scores complete</small>
-            </section>
+              <section className="panel-card rocket-indicator-card">
+                <div className="card-title-row"><div><h2>Live match indicators</h2><p>Calculated from the results currently saved to JSON.</p></div></div>
+                <dl className="rocket-indicators">
+                  <div><dt>Round</dt><dd>{rocketLeagueSeries.roundNumber}</dd><small>Current game</small></div>
+                  <div><dt>{homeTeam}</dt><dd>{rocketLeagueSeries.homeWins}</dd><small>Series wins</small></div>
+                  <div><dt>{awayTeam}</dt><dd>{rocketLeagueSeries.awayWins}</dd><small>Series wins</small></div>
+                </dl>
+              </section>
+
+              <section className="panel-card rocket-output-card">
+                <span>Live output</span>
+                <strong>{state.rocketLeague.bestOf} · Round {rocketLeagueSeries.roundNumber}</strong>
+                <small>{rocketLeagueSeries.completedGames} of {ROCKET_LEAGUE_GAME_COUNT} game scores complete</small>
+              </section>
+            </div>
           </div>
-        </div>
+        ) : (
+          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="Browser overlay">
+            <div className="card-title-row"><div><h2>Rocket League browser overlay</h2><p>Use this transparent PSD-aligned source as a vMix browser input. League colors and logo backgrounds come from Match 1 / Team Info.</p></div></div>
+            <div className="browser-overlay-details">
+              <div><span>Canvas</span><strong>1920 × 1080</strong><small>Transparent background</small></div>
+              <div><span>Data</span><strong>Match 1</strong><small>Teams, league colors, logo backgrounds</small></div>
+              <div><span>Refresh</span><strong>Automatic</strong><small>Updates four times per second</small></div>
+            </div>
+            <div className="browser-overlay-widget-controls" aria-label="Overlay widget visibility">
+              <div className="browser-overlay-widget-toggle">
+                <div><strong>Player card</strong><small>Reserved for the selected-player widget in a later slice.</small></div>
+                <label className="switch large"><input aria-label="Enable Rocket League player card" type="checkbox" checked={state.rocketLeague.playerCardEnabled} onChange={(event) => updateRocketLeague({ playerCardEnabled: event.target.checked })} /><span /></label>
+              </div>
+            </div>
+            <label className="field browser-overlay-url"><span className="field-label">Local URL</span><input readOnly value={ROCKET_LEAGUE_OVERLAY_URL} /></label>
+            <div className="browser-overlay-actions">
+              <button className="button secondary" type="button" onClick={copyRocketLeagueOverlayLink}>Copy link</button>
+              <button className="button primary" type="button" onClick={openRocketLeagueOverlay}>Open overlay</button>
+            </div>
+          </section>
+        )}
       </div>
     );
   }

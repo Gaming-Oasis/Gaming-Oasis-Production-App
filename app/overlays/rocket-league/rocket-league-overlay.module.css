@@ -1,0 +1,299 @@
+@font-face {
+  font-family: "Orbitron";
+  src: url("/rocket-league-overlay/fonts/Orbitron-VariableFont_wght.ttf") format("truetype");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: block;
+}
+
+.viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: 0 0;
+}
+
+.stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: transparent;
+  font-family: "Orbitron", "Arial Narrow", system-ui, sans-serif;
+  text-rendering: geometricPrecision;
+}
+
+.scoreboardSlot {
+  /* Reference HUD places the 1920×300 strip at 1000px wide in the upper left. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1000px;
+  height: 156.25px;
+  overflow: hidden;
+}
+
+.scoreboard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 300px;
+  transform: scale(0.5208333333);
+  transform-origin: 0 0;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 300px;
+  pointer-events: none;
+}
+
+.primaryFill,
+.secondaryFill,
+.logoFill {
+  -webkit-mask-position: 0 0;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 1920px 300px;
+  mask-position: 0 0;
+  mask-repeat: no-repeat;
+  mask-size: 1920px 300px;
+}
+
+.secondaryFill {
+  z-index: 1;
+  background: var(--league-secondary);
+  -webkit-mask-image: url("/rocket-league-overlay/nel/secondary-mask.png");
+  mask-image: url("/rocket-league-overlay/nel/secondary-mask.png");
+}
+
+.logoFillOne {
+  z-index: 2;
+  background: var(--logo-one-bg);
+  -webkit-mask-image: url("/rocket-league-overlay/nel/logo-one-mask.png");
+  mask-image: url("/rocket-league-overlay/nel/logo-one-mask.png");
+}
+
+.logoFillTwo {
+  z-index: 2;
+  background: var(--logo-two-bg);
+  -webkit-mask-image: url("/rocket-league-overlay/nel/logo-two-mask.png");
+  mask-image: url("/rocket-league-overlay/nel/logo-two-mask.png");
+}
+
+.nameFill {
+  position: absolute;
+  z-index: 2;
+  top: 99px;
+  height: 135px;
+  pointer-events: none;
+}
+
+.nameFillOne {
+  left: 238px;
+  width: 469px;
+  background: var(--team-one);
+}
+
+.nameFillTwo {
+  left: 971px;
+  width: 470px;
+  background: var(--team-two);
+}
+
+.primaryFill {
+  z-index: 3;
+  background: var(--league-primary);
+  -webkit-mask-image: url("/rocket-league-overlay/nel/primary-mask.png");
+  mask-image: url("/rocket-league-overlay/nel/primary-mask.png");
+}
+
+.logoFrame {
+  position: absolute;
+  z-index: 4;
+  inset: auto;
+  top: 99px;
+  width: 141px;
+  height: 135px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.logoOne {
+  left: 97px;
+}
+
+.logoTwo {
+  left: 832px;
+  width: 139px;
+}
+
+.logoImage {
+  max-width: 78%;
+  max-height: 78%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.teamName,
+.score,
+.scoreLabel,
+.header {
+  position: absolute;
+  z-index: 5;
+  inset: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.header {
+  top: 54px;
+  left: 110px;
+  width: 980px;
+  height: 45px;
+  padding: 0 8px;
+  color: var(--header-text);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  justify-content: flex-start;
+  line-height: 1;
+  text-overflow: ellipsis;
+}
+
+.teamStack {
+  position: absolute;
+  z-index: 5;
+  top: 99px;
+  height: 135px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0 18px;
+  overflow: hidden;
+}
+
+.teamOneStack {
+  left: 238px;
+  width: 469px;
+}
+
+.teamTwoStack {
+  left: 971px;
+  width: 470px;
+}
+
+.teamName {
+  position: relative;
+  z-index: 5;
+  inset: auto;
+  top: auto;
+  left: auto;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  font-weight: 700;
+  font-size: 42px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.teamOneName {
+  color: var(--team-one-text);
+}
+
+.teamTwoName {
+  color: var(--team-two-text);
+}
+
+.pills {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  height: 16px;
+}
+
+.pill {
+  box-sizing: border-box;
+  width: 44px;
+  height: 14px;
+  border-radius: 7px;
+  border: 3px solid var(--league-secondary);
+  flex: 0 0 auto;
+}
+
+.pillEmpty {
+  background: transparent;
+  opacity: 0.45;
+}
+
+.pillFilled {
+  background: var(--league-secondary);
+  opacity: 1;
+}
+
+.scoreLabel {
+  top: 104px;
+  width: 122px;
+  height: 28px;
+  color: var(--score-text);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.scoreLabelOne {
+  left: 707px;
+}
+
+.scoreLabelTwo {
+  left: 1440px;
+}
+
+.score {
+  top: 99px;
+  width: 122px;
+  height: 135px;
+  color: var(--score-text);
+  font-weight: 800;
+  font-size: 54px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.scoreOne {
+  left: 707px;
+}
+
+.scoreTwo {
+  left: 1440px;
+}

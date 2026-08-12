@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { calculateRocketLeagueSeries, formatRocketLeagueScore } from "../lib/rocket-league.mjs";
+import { buildRocketLeagueOverlayState } from "../lib/rocket-league-live.mjs";
 import { buildValorantFields, buildValorantOverlayState, calculateValorantSeries, formatValorantScore, getValorantCurrentMap, getValorantCurrentSides, VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
 import { JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
 
@@ -141,6 +142,133 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.doesNotMatch(css, /filter:/);
 });
 
+test("server-renders the transparent Rocket League browser overlay route", async () => {
+  const response = await render("/overlays/rocket-league");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+  const page = await readFile(new URL("../app/overlays/rocket-league/page.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/overlays/rocket-league/rocket-league-overlay.module.css", import.meta.url), "utf8");
+  assert.match(page, /width:100%.*background:transparent/);
+  assert.match(page, /1920/);
+  assert.match(page, /1080/);
+  assert.match(page, /api\/overlays\/rocket-league/);
+  assert.match(page, /leaguePrimary/);
+  assert.match(page, /leagueSecondary/);
+  assert.match(page, /logoBackground/);
+  assert.match(page, /primaryFill/);
+  assert.match(page, /secondaryFill/);
+  assert.match(css, /--league-primary/);
+  assert.match(css, /--league-secondary/);
+  assert.match(css, /primary-mask\.png/);
+  assert.match(css, /secondary-mask\.png/);
+  assert.match(css, /logo-one-mask\.png/);
+  assert.match(css, /logo-two-mask\.png/);
+  assert.match(page, /nameFill/);
+  assert.match(page, /--team-one/);
+  assert.match(page, /--team-two/);
+  assert.match(page, /readableText\(overlay\.leagueSecondary\)/);
+  assert.match(page, /--score-text/);
+  assert.match(page, /scoreLabel/);
+  assert.match(page, /SeriesPills/);
+  assert.match(page, /headerText \? <div className=\{styles\.header\}/);
+  assert.match(page, /--header-text/);
+  assert.doesNotMatch(page, /scoreboard-chrome\.png/);
+  assert.match(css, /--team-one/);
+  assert.match(css, /--team-two/);
+  assert.match(css, /--score-text/);
+  assert.match(css, /--header-text/);
+  assert.match(css, /nameFillOne/);
+  assert.match(css, /\.primaryFill \{[\s\S]*z-index: 3/);
+  assert.match(css, /\.teamStack \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
+  assert.match(css, /\.score \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
+  assert.match(css, /\.pillFilled \{[\s\S]*background: var\(--league-secondary\)/);
+  assert.match(css, /\.scoreboardSlot \{[\s\S]*width: 1000px;[\s\S]*height: 156\.25px/);
+  assert.match(css, /\.scoreboard \{[\s\S]*transform: scale\(0\.5208333333\);[\s\S]*transform-origin: 0 0/);
+  assert.match(css, /Orbitron/);
+});
+
+test("builds Rocket League overlay state from Match 1 teams and league colors", () => {
+  const state = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "NEL Finals",
+      bestOf: "Bo5",
+      flipSides: false,
+      playerCardEnabled: true,
+      games: [{ home: "3", away: "1" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
+      savedGames: [{ home: "3", away: "1" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
+    },
+    { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#000000" },
+    { primaryColor: "#1A75FD", secondaryColor: "#FCC500" },
+  );
+
+  assert.equal(state.version, 1);
+  assert.equal(state.header, "NEL Finals");
+  assert.equal(state.leaguePrimary, "#1A75FD");
+  assert.equal(state.leagueSecondary, "#FCC500");
+  assert.equal(state.teamOne.name, "Alpha");
+  assert.equal(state.teamOne.logoBackground, "#FFFFFF");
+  assert.equal(state.teamTwo.logoBackground, "#000000");
+  assert.equal(state.teamOne.seriesScore, "1");
+  assert.equal(state.teamTwo.seriesScore, "0");
+  assert.equal(state.winsNeeded, 3);
+  assert.equal(state.game.hasGame, false);
+  assert.equal(state.game.scoreOne, 0);
+  assert.equal(state.connection.connected, false);
+});
+
+test("fills Rocket League series pills from draft game wins left to right", () => {
+  const empty = Array.from({ length: 6 }, () => ({ home: "", away: "" }));
+  const oneWin = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "Series",
+      bestOf: "Bo5",
+      games: [{ home: "3", away: "1" }, ...empty],
+      savedGames: [{ home: "", away: "" }, ...empty],
+    },
+    { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
+  );
+  assert.equal(oneWin.teamOne.seriesScore, "1");
+  assert.equal(oneWin.teamTwo.seriesScore, "0");
+  assert.equal(oneWin.winsNeeded, 3);
+
+  const twoOneBo5 = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "Series",
+      bestOf: "Bo5",
+      games: [
+        { home: "3", away: "1" },
+        { home: "2", away: "0" },
+        { home: "0", away: "3" },
+        ...empty.slice(0, 4),
+      ],
+      savedGames: Array.from({ length: 7 }, () => ({ home: "", away: "" })),
+    },
+    { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
+  );
+  // Bo5 → 3 pills each; 2-1 series → team1 2/3 filled, team2 1/3 filled.
+  assert.equal(twoOneBo5.winsNeeded, 3);
+  assert.equal(twoOneBo5.teamOne.seriesScore, "2");
+  assert.equal(twoOneBo5.teamTwo.seriesScore, "1");
+
+  const twoWins = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "Series",
+      bestOf: "Bo7",
+      games: [{ home: "3", away: "1" }, { home: "2", away: "0" }, { home: "0", away: "1" }, ...empty.slice(0, 4)],
+      savedGames: Array.from({ length: 7 }, () => ({ home: "", away: "" })),
+    },
+    { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
+  );
+  assert.equal(twoWins.teamOne.seriesScore, "2");
+  assert.equal(twoWins.teamTwo.seriesScore, "1");
+  assert.equal(twoWins.winsNeeded, 4);
+});
+
 test("keeps every browser shape at its native PSD layer size", async () => {
   const expectedSizes = {
     "center-rail.png": [1920, 39],
@@ -245,11 +373,18 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /mapWidgetEnabled: true/);
   assert.match(page, /sponsorWidgetEnabled: true/);
   assert.match(page, /\/overlays\/valorant/);
+  assert.match(page, /\/overlays\/rocket-league/);
   assert.match(page, /useState<"results" \| "pickBans" \| "mapArtwork" \| "overlay">/);
+  assert.match(page, /useState<"results" \| "overlay">\("results"\)/);
   assert.match(page, /setValorantTab\("overlay"\)/);
+  assert.match(page, /setRocketLeagueTab\("overlay"\)/);
   assert.match(page, /setValorantTab\("mapArtwork"\)/);
   assert.match(page, /VALORANT MAP DATA\.json/);
-  assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 1);
+  assert.match(page, /buildRocketLeagueOverlayState/);
+  assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay \}/);
+  assert.match(page, /Rocket League browser overlay/);
+  assert.match(page, /Enable Rocket League player card/);
+  assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 2);
   assert.match(page, /valorant-reference-ban-control/);
   assert.match(page, /Ban Team A/);
   assert.match(page, /Ban Team B/);
@@ -697,6 +832,57 @@ test("serves the latest non-exported VALORANT overlay state without changing the
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), valorant);
+    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+  } finally {
+    await writer.close();
+  }
+});
+
+test("serves the latest non-exported Rocket League overlay state without changing the six JSON files", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-rl-overlay-"));
+  const writer = await startJsonWriter({ port: 0, outputDir });
+  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
+  const rocketLeague = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    skin: "nel",
+    header: "NEL Finals",
+    bestOf: "Bo5",
+    flipSides: false,
+    playerCardEnabled: true,
+    roundNumber: 2,
+    winsNeeded: 3,
+    leaguePrimary: "#1A75FD",
+    leagueSecondary: "#FCC500",
+    teamOne: { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF", seriesScore: "1" },
+    teamTwo: { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#000000", seriesScore: "0" },
+    connection: { connected: false, lastEventAt: null },
+    game: {
+      hasGame: false,
+      hasWinner: false,
+      isOT: false,
+      isReplay: false,
+      timeSeconds: 0,
+      target: "",
+      scoreOne: 0,
+      scoreTwo: 0,
+      targetPlayer: null,
+    },
+  };
+
+  try {
+    const before = await fetch(`${writer.url}/api/overlays/rocket-league`);
+    assert.equal(before.status, 204);
+    const update = await fetch(`${writer.url}/api/live-json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files, overlays: { rocketLeague } }),
+    });
+    assert.equal(update.status, 200);
+
+    const response = await fetch(`${writer.url}/api/overlays/rocket-league`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), rocketLeague);
     assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
   } finally {
     await writer.close();

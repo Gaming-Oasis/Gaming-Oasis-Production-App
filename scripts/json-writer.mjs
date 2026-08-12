@@ -101,6 +101,54 @@ function validValorantOverlay(value) {
     && validOverlayTeam(value.teamTwo);
 }
 
+function validRocketLeagueOverlayPlayer(value) {
+  return value && typeof value === "object"
+    && typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.team === "number"
+    && typeof value.goals === "number"
+    && typeof value.shots === "number"
+    && typeof value.saves === "number"
+    && typeof value.assists === "number"
+    && typeof value.boost === "number"
+    && typeof value.isDead === "boolean";
+}
+
+function validRocketLeagueOverlayGame(value) {
+  return value && typeof value === "object"
+    && typeof value.hasGame === "boolean"
+    && typeof value.hasWinner === "boolean"
+    && typeof value.isOT === "boolean"
+    && typeof value.isReplay === "boolean"
+    && typeof value.timeSeconds === "number"
+    && typeof value.target === "string"
+    && typeof value.scoreOne === "number"
+    && typeof value.scoreTwo === "number"
+    && (value.targetPlayer === null || validRocketLeagueOverlayPlayer(value.targetPlayer));
+}
+
+function validRocketLeagueOverlay(value) {
+  const connection = value?.connection;
+  return value && typeof value === "object"
+    && value.version === 1
+    && typeof value.updatedAt === "string"
+    && typeof value.skin === "string"
+    && typeof value.header === "string"
+    && typeof value.bestOf === "string"
+    && typeof value.flipSides === "boolean"
+    && typeof value.playerCardEnabled === "boolean"
+    && typeof value.roundNumber === "number"
+    && typeof value.winsNeeded === "number"
+    && typeof value.leaguePrimary === "string"
+    && typeof value.leagueSecondary === "string"
+    && validOverlayTeam(value.teamOne)
+    && validOverlayTeam(value.teamTwo)
+    && connection && typeof connection === "object"
+    && typeof connection.connected === "boolean"
+    && (connection.lastEventAt === null || typeof connection.lastEventAt === "string")
+    && validRocketLeagueOverlayGame(value.game);
+}
+
 function validValorantMapData(value) {
   return value && typeof value === "object"
     && Array.isArray(value.maps)
@@ -121,6 +169,7 @@ export async function startJsonWriter({
   let writeQueue = Promise.resolve();
   let lastWrite = null;
   let valorantOverlayState = null;
+  let rocketLeagueOverlayState = null;
   const mapArtworkCache = new Map();
 
   const server = createServer(async (request, response) => {
@@ -145,6 +194,16 @@ export async function startJsonWriter({
       }
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(valorantOverlayState));
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/api/overlays/rocket-league") {
+      if (!rocketLeagueOverlayState) {
+        response.writeHead(204).end();
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(rocketLeagueOverlayState));
       return;
     }
 
@@ -252,6 +311,10 @@ export async function startJsonWriter({
       if (nextValorantOverlay !== undefined && !validValorantOverlay(nextValorantOverlay)) {
         throw new Error("Invalid VALORANT overlay state");
       }
+      const nextRocketLeagueOverlay = payload.overlays?.rocketLeague;
+      if (nextRocketLeagueOverlay !== undefined && !validRocketLeagueOverlay(nextRocketLeagueOverlay)) {
+        throw new Error("Invalid Rocket League overlay state");
+      }
       const nextValorantMapData = payload.valorantMapData;
       if (nextValorantMapData !== undefined && !validValorantMapData(nextValorantMapData)) {
         throw new Error("Invalid VALORANT map data");
@@ -261,6 +324,7 @@ export async function startJsonWriter({
         await Promise.all(payload.files.map((file) => writeJsonWithRetry(outputDir, file.filename, file.data)));
         if (nextValorantMapData !== undefined) await writeJsonWithRetry(outputDir, VALORANT_MAP_DATA_FILENAME, nextValorantMapData);
         if (nextValorantOverlay !== undefined) valorantOverlayState = nextValorantOverlay;
+        if (nextRocketLeagueOverlay !== undefined) rocketLeagueOverlayState = nextRocketLeagueOverlay;
         lastWrite = new Date().toISOString();
       });
       await writeQueue;
