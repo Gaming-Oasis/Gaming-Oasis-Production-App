@@ -47,6 +47,8 @@ Attach this guide, `AGENTS.md`, and `docs/GAMING-OASIS-TOOL-BRAND-GUIDE.md` when
 - [ ] Each Draw Show pool supports pasting a copied Excel column without changing its legacy `Pij` key mapping.
 - [ ] League Hub match lookup uses the fixed public endpoint and requires only a match ID.
 - [ ] League Hub/source team data remains separate from manual overrides.
+- [ ] League Hub/source league data (name, logo, primary/secondary colors, event name) remains separate from per-match league overrides.
+- [ ] Match 1 resolved league event name and colors continue to drive General Info and RL/VAL overlays.
 - [ ] Each team can select either Hub placement (for example, `3rd`) or standing record (for example, `0-1`) for the legacy standing output.
 - [ ] Match 2 can be copied completely into Match 1 without dropping synced values, selected colors, logo backgrounds, or manual overrides.
 - [ ] Team name, standing, logo, color, and logo-background overrides resolve into a visible final output.

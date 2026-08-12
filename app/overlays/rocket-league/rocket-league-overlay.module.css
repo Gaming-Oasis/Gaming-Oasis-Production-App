@@ -73,7 +73,8 @@
 
 .secondaryFill {
   z-index: 1;
-  background: var(--league-secondary);
+  /* Solid navy plate matching the active-player card body — no decorative texture. */
+  background: #0e1520;
   -webkit-mask-image: url("/rocket-league-overlay/nel/secondary-mask.png");
   mask-image: url("/rocket-league-overlay/nel/secondary-mask.png");
 }
@@ -296,4 +297,161 @@
 
 .scoreTwo {
   left: 1440px;
+}
+
+/* Active player card — SEL geometry: 970px-wide strip at bottom-left (top 930).
+   Assets are 1920×300; content band is y 110–201. Stat icons/labels sit at y 131–169. */
+.activePlayerSlot {
+  position: absolute;
+  top: 930px;
+  left: 0;
+  width: 970px;
+  height: 151.5625px;
+  overflow: hidden;
+}
+
+.activePlayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 300px;
+  transform: scale(0.5052083333);
+  transform-origin: 0 0;
+}
+
+.activeLayer {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 300px;
+  pointer-events: none;
+  object-fit: fill;
+}
+
+.activeBackground {
+  z-index: 1;
+}
+
+.activeBorderFill {
+  z-index: 3;
+}
+
+.activeBorder {
+  z-index: 4;
+  background: var(--league-primary);
+  -webkit-mask-image: url("/rocket-league-overlay/nel/active-border-mask.png");
+  -webkit-mask-position: 0 0;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 1920px 300px;
+  mask-image: url("/rocket-league-overlay/nel/active-border-mask.png");
+  mask-position: 0 0;
+  mask-repeat: no-repeat;
+  mask-size: 1920px 300px;
+}
+
+.activeStatLabels {
+  z-index: 5;
+}
+
+/* Name plate: SEL 59×990 / 177×38 on the 970-wide strip → native 117×119 / 350×75. */
+.activeNamePlate {
+  position: absolute;
+  z-index: 2;
+  top: 119px;
+  left: 117px;
+  width: 350px;
+  height: 75px;
+  pointer-events: none;
+}
+
+.activeName {
+  position: absolute;
+  z-index: 6;
+  top: 119px;
+  left: 117px;
+  width: 350px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-weight: 700;
+  font-size: 36px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  line-height: 1;
+  color: var(--active-name-text, #ffffff);
+}
+
+/* Boost spans the full plate interior (SEL 59×1022 / 839×6 on the 970-wide strip). */
+.activeBoost {
+  position: absolute;
+  z-index: 6;
+  left: 117px;
+  top: 182px;
+  width: 1661px;
+  height: 12px;
+  appearance: none;
+  border: 0;
+  background: rgb(255 255 255 / 12%);
+  overflow: hidden;
+}
+
+.activeBoost::-webkit-progress-bar {
+  background: transparent;
+}
+
+.activeBoost::-webkit-progress-value {
+  background: #fefe13;
+  transition: width 0.35s ease;
+}
+
+.activeBoost::-moz-progress-bar {
+  background: #fefe13;
+}
+
+/*
+  Stat values sit in the gaps immediately left of each icon+label group in
+  active-stat-labels.png (icon left edges ≈ 556 / 885 / 1202 / 1550).
+*/
+.activeStat {
+  position: absolute;
+  z-index: 6;
+  top: 131px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  padding: 0 10px 0 0;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 38px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.activeStatGoals {
+  left: 470px;
+  width: 76px;
+}
+
+.activeStatShots {
+  left: 799px;
+  width: 76px;
+}
+
+.activeStatSaves {
+  left: 1116px;
+  width: 76px;
+}
+
+.activeStatAssists {
+  left: 1464px;
+  width: 76px;
 }

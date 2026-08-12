@@ -196,6 +196,14 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
 .color-comparison .similarity-result > span { color: var(--muted); font-size: 9px; }
 .color-comparison.warning { border-color: color-mix(in srgb, var(--status-error) 55%, var(--border)); }
 .color-comparison.warning .similarity-result strong, .color-comparison.warning .similarity-result small { color: #f08d88; }
+.league-info { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.league-info .team-editor-title { margin-bottom: var(--space-3); }
+.league-logo-preview { background: #1a1a1a; }
+.league-source-data { gap: var(--space-2); }
+.league-source-data small { display: inline-flex; align-items: center; gap: 5px; }
+.league-source-data small i { width: 10px; height: 10px; border: 1px solid rgba(255,255,255,.25); border-radius: 2px; }
+.league-source-logo { width: 28px; height: 28px; flex: 0 0 auto; object-fit: contain; border: 1px solid var(--border); border-radius: 4px; background: #1a1a1a; }
+.league-final-line { grid-template-columns: auto 1fr auto auto auto; }
 .talent-layout { display: grid; grid-template-columns: 1.3fr .7fr; gap: var(--space-3); }
 .talent-layout .panel-card { padding: var(--space-4); }
 

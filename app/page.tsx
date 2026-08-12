@@ -8,7 +8,16 @@ import {
   formatRocketLeagueScore,
   ROCKET_LEAGUE_GAME_COUNT,
 } from "../lib/rocket-league.mjs";
-import { buildRocketLeagueOverlayState } from "../lib/rocket-league-live.mjs";
+import {
+  ROCKET_LEAGUE_ACTIVE_PLAYER_SCENARIOS,
+  ROCKET_LEAGUE_ACTIVE_PLAYER_SCENARIO_IDS,
+  applyDebugScenario,
+  buildRocketLeagueOverlayState,
+  createDefaultDebugLive,
+  normalizeActivePlayerScenario,
+  normalizeDebugLive,
+} from "../lib/rocket-league-live.mjs";
+import { resolveScoreboardHeader } from "../lib/scoreboard-header.mjs";
 import {
   buildValorantOverlayState,
   buildValorantFields,
@@ -35,6 +44,23 @@ type TeamOverrides = {
   logoBackground: string;
 };
 
+type LeagueOverrides = {
+  name: string;
+  logo: string;
+  primaryColor: string;
+  secondaryColor: string;
+  eventName: string;
+};
+
+type MatchLeague = {
+  name: string;
+  logo: string;
+  primaryColor: string;
+  secondaryColor: string;
+  eventName: string;
+  overrides: LeagueOverrides;
+};
+
 type Team = {
   sourceName: string;
   name: string;
@@ -56,6 +82,7 @@ type Match = {
   id: string;
   team1: Team;
   team2: Team;
+  league: MatchLeague;
 };
 
 type GeneralInfo = {
@@ -97,11 +124,41 @@ type RocketLeagueGame = {
   away: string;
 };
 
+type RocketLeagueActivePlayerScenario = keyof typeof ROCKET_LEAGUE_ACTIVE_PLAYER_SCENARIOS;
+
+type RocketLeagueDebugTargetPlayer = {
+  id: string;
+  name: string;
+  team: number;
+  goals: number;
+  shots: number;
+  saves: number;
+  assists: number;
+  boost: number;
+  isDead: boolean;
+};
+
+type RocketLeagueDebugLive = {
+  connected: boolean;
+  hasGame: boolean;
+  hasWinner: boolean;
+  isOT: boolean;
+  isReplay: boolean;
+  timeSeconds: number;
+  target: string;
+  scoreOne: number;
+  scoreTwo: number;
+  targetPlayer: RocketLeagueDebugTargetPlayer;
+};
+
 type RocketLeague = {
   scoreboardHeader: string;
   bestOf: "Bo1" | "Bo3" | "Bo5" | "Bo7";
   flipSides: boolean;
   playerCardEnabled: boolean;
+  debugActivePlayerEnabled: boolean;
+  debugActivePlayerScenario: RocketLeagueActivePlayerScenario;
+  debugLive: RocketLeagueDebugLive;
   games: RocketLeagueGame[];
   savedGames: RocketLeagueGame[];
 };
@@ -250,6 +307,23 @@ const COLOR_OPTIONS: { key: ColorSource; label: string }[] = [
 
 const emptyOverrides = (): TeamOverrides => ({ name: "", standing: "", logo: "", color: "", logoBackground: "" });
 
+const emptyLeagueOverrides = (): LeagueOverrides => ({
+  name: "",
+  logo: "",
+  primaryColor: "",
+  secondaryColor: "",
+  eventName: "",
+});
+
+const emptyLeague = (): MatchLeague => ({
+  name: "",
+  logo: "",
+  primaryColor: "#F6AC18",
+  secondaryColor: "#47213F",
+  eventName: "",
+  overrides: emptyLeagueOverrides(),
+});
+
 const emptyTeam = (): Team => ({
   sourceName: "",
   name: "",
@@ -268,7 +342,7 @@ const emptyTeam = (): Team => ({
 });
 
 function emptyMatch(): Match {
-  return { id: "", team1: emptyTeam(), team2: emptyTeam() };
+  return { id: "", team1: emptyTeam(), team2: emptyTeam(), league: emptyLeague() };
 }
 
 function createDraws(): DrawData {
@@ -305,6 +379,9 @@ function createInitialState(): ProductionState {
       bestOf: "Bo3",
       flipSides: false,
       playerCardEnabled: true,
+      debugActivePlayerEnabled: false,
+      debugActivePlayerScenario: "skyljn3",
+      debugLive: createDefaultDebugLive("skyljn3") as RocketLeagueDebugLive,
       games: createRocketLeagueGames(),
       savedGames: createRocketLeagueGames(),
     },
@@ -351,6 +428,16 @@ function hasProductionContent(state: ProductionState) {
     team.seed,
     team.logo,
   ].some(hasText);
+  const leagueHasContent = (league: MatchLeague) => [
+    league.name,
+    league.logo,
+    league.eventName,
+    league.overrides.name,
+    league.overrides.logo,
+    league.overrides.primaryColor,
+    league.overrides.secondaryColor,
+    league.overrides.eventName,
+  ].some(hasText);
   const scoresHaveContent = (games: Array<{ home: string; away: string }>) => games.some((game) => hasText(game.home) || hasText(game.away));
 
   return [
@@ -369,7 +456,7 @@ function hasProductionContent(state: ProductionState) {
     state.settings.regionalLogo,
   ].some(hasText)
     || state.general.segments.some(hasText)
-    || state.general.matches.some((match) => hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2))
+    || state.general.matches.some((match) => hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2) || leagueHasContent(match.league))
     || scoresHaveContent(state.rocketLeague.games)
     || scoresHaveContent(state.rocketLeague.savedGames)
     || scoresHaveContent(state.valorant.games)
@@ -420,11 +507,23 @@ function mergeTeam(saved?: Partial<Team>): Team {
   };
 }
 
+function mergeLeague(saved?: Partial<MatchLeague>): MatchLeague {
+  const initial = emptyLeague();
+  return {
+    ...initial,
+    ...saved,
+    primaryColor: saved?.primaryColor?.trim() || initial.primaryColor,
+    secondaryColor: saved?.secondaryColor?.trim() || initial.secondaryColor,
+    overrides: { ...initial.overrides, ...(saved?.overrides ?? {}) },
+  };
+}
+
 function mergeMatch(saved?: Partial<Match>): Match {
   return {
     id: saved?.id ?? "",
     team1: mergeTeam(saved?.team1),
     team2: mergeTeam(saved?.team2),
+    league: mergeLeague(saved?.league),
   };
 }
 
@@ -457,6 +556,14 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
         : initial.rocketLeague.bestOf,
       flipSides: Boolean(saved.rocketLeague?.flipSides),
       playerCardEnabled: saved.rocketLeague?.playerCardEnabled !== false,
+      debugActivePlayerEnabled: Boolean(saved.rocketLeague?.debugActivePlayerEnabled),
+      debugActivePlayerScenario: normalizeActivePlayerScenario(
+        saved.rocketLeague?.debugActivePlayerScenario,
+      ) as RocketLeagueActivePlayerScenario,
+      debugLive: normalizeDebugLive(
+        saved.rocketLeague?.debugLive,
+        saved.rocketLeague?.debugActivePlayerScenario,
+      ) as RocketLeagueDebugLive,
       games: initial.rocketLeague.games.map((game, index) => ({
         ...game,
         ...(saved.rocketLeague?.games?.[index] ?? {}),
@@ -534,6 +641,23 @@ function resolveTeam(team: Team) {
     logo: team.overrides.logo.trim() || team.logo.trim(),
     color: selectedTeamColor(team),
     logoBackground: customLogoBackground || normalizeLogoBackground(team.logoBackground) || "#FFFFFF",
+  };
+}
+
+function resolveLeague(league: MatchLeague) {
+  return {
+    name: league.overrides.name.trim() || league.name.trim(),
+    logo: league.overrides.logo.trim() || league.logo.trim(),
+    primaryColor: league.overrides.primaryColor.trim() || league.primaryColor.trim() || "#F6AC18",
+    secondaryColor: league.overrides.secondaryColor.trim() || league.secondaryColor.trim() || "#47213F",
+    eventName: league.overrides.eventName.trim() || league.eventName.trim(),
+  };
+}
+
+function applyLeagueColorsToTeams(team1: Team, team2: Team, primaryColor: string, secondaryColor: string): { team1: Team; team2: Team } {
+  return {
+    team1: { ...team1, backupColor1: primaryColor, backupColor2: secondaryColor },
+    team2: { ...team2, backupColor1: primaryColor, backupColor2: secondaryColor },
   };
 }
 
@@ -628,7 +752,7 @@ function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valo
     output[`rlscore${index + 1}`] = formatRocketLeagueScore(game);
   });
   const series = calculateRocketLeagueSeries(rocketLeague.savedGames);
-  output.rlheader = rocketLeague.scoreboardHeader.trim();
+  output.rlheader = resolveScoreboardHeader(rocketLeague.scoreboardHeader, general.eventName);
   output["rlformat#"] = rocketLeague.bestOf;
   output.rlroundnumber = String(series.roundNumber);
   output.rlseriesscore1 = String(series.homeWins);
@@ -641,6 +765,7 @@ function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valo
       resolveTeam(general.matches[0].team1),
       resolveTeam(general.matches[0].team2),
       mapArtwork,
+      { eventName: general.eventName },
     ),
   );
 
@@ -703,6 +828,25 @@ function ordinal(rank: number) {
   if (rank % 10 === 2) return `${rank}nd`;
   if (rank % 10 === 3) return `${rank}rd`;
   return `${rank}th`;
+}
+
+function normalizeLeague(leagueValue: unknown, eventValue: unknown): MatchLeague {
+  const league = (leagueValue && typeof leagueValue === "object" ? leagueValue : {}) as Record<string, unknown>;
+  const event = (eventValue && typeof eventValue === "object" ? eventValue : {}) as Record<string, unknown>;
+  const logo = typeof league.logo === "string" && league.logo.trim()
+    ? league.logo.trim()
+    : typeof league.logoUrl === "string" && league.logoUrl.trim()
+      ? league.logoUrl.trim()
+      : "";
+  return {
+    ...emptyLeague(),
+    name: typeof league.name === "string" ? league.name.trim() : "",
+    logo,
+    primaryColor: String(league.primaryColor ?? "#F6AC18"),
+    secondaryColor: String(league.secondaryColor ?? "#47213F"),
+    eventName: typeof event.name === "string" ? event.name.trim() : "",
+    overrides: emptyLeagueOverrides(),
+  };
 }
 
 function normalizeTeam(value: unknown, standingValue?: unknown, leagueValue?: unknown, gameTitle = ""): Team {
@@ -789,7 +933,7 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<Section>("welcome");
   const [generalTab, setGeneralTab] = useState<"talent" | "segments">("talent");
   const [valorantTab, setValorantTab] = useState<"results" | "pickBans" | "mapArtwork" | "overlay">("results");
-  const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "overlay">("results");
+  const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "overlay" | "debug">("results");
   const [drawTab, setDrawTab] = useState<DrawKey>("RLT1");
   const [drawPastePool, setDrawPastePool] = useState<number | null>(null);
   const [drawPasteText, setDrawPasteText] = useState("");
@@ -876,39 +1020,44 @@ export default function Home() {
     state.sponsors,
     state.draws,
   ]);
+  const matchOneLeague = resolveLeague(state.general.matches[0].league);
   const valorantOverlay = useMemo(() => buildValorantOverlayState(
     state.valorant,
     resolveTeam(state.general.matches[0].team1),
     resolveTeam(state.general.matches[0].team2),
     {
-      primaryColor: state.general.matches[0].team1.backupColor1,
-      secondaryColor: state.general.matches[0].team1.backupColor2,
+      primaryColor: matchOneLeague.primaryColor,
+      secondaryColor: matchOneLeague.secondaryColor,
     },
     state.sponsors,
     state.valorantMapData.maps,
-  ), [state.valorant, state.general.matches, state.sponsors, state.valorantMapData.maps]);
+    { eventName: state.general.eventName },
+  ), [state.valorant, state.general.eventName, state.general.matches, state.sponsors, state.valorantMapData.maps, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
   const rocketLeagueOverlay = useMemo(() => buildRocketLeagueOverlayState(
     state.rocketLeague,
     resolveTeam(state.general.matches[0].team1),
     resolveTeam(state.general.matches[0].team2),
     {
-      primaryColor: state.general.matches[0].team1.backupColor1,
-      secondaryColor: state.general.matches[0].team1.backupColor2,
+      primaryColor: matchOneLeague.primaryColor,
+      secondaryColor: matchOneLeague.secondaryColor,
     },
-  ), [state.rocketLeague, state.general.matches]);
+    { eventName: state.general.eventName },
+  ), [state.rocketLeague, state.general.eventName, state.general.matches, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
   const hasLiveProductionContent = useMemo(() => hasProductionContent(state), [state]);
   const filledSponsors = state.sponsors.filter((sponsor) => sponsor.name.trim() || sponsor.logo.trim()).length;
   const filledMatches = state.general.matches.filter((match) => resolveTeam(match.team1).name && resolveTeam(match.team2).name).length;
   const rocketLeagueSeries = calculateRocketLeagueSeries(state.rocketLeague.savedGames);
   const rocketLeaguePendingResults = pendingResultCount(state.rocketLeague.games, state.rocketLeague.savedGames);
   const rocketLeagueInvalidResults = invalidResultCount(state.rocketLeague.games);
-  const rocketLeagueReady = Boolean(state.rocketLeague.scoreboardHeader.trim());
+  const rocketLeagueHeader = resolveScoreboardHeader(state.rocketLeague.scoreboardHeader, state.general.eventName);
+  const rocketLeagueReady = Boolean(rocketLeagueHeader);
   const valorantSeries = calculateValorantSeries(state.valorant.savedGames);
   const valorantCurrentMap = getValorantCurrentMap(state.valorant, valorantSeries.roundNumber);
   const valorantCurrentSides = getValorantCurrentSides(state.valorant, valorantSeries.roundNumber);
   const valorantPendingResults = pendingResultCount(state.valorant.games, state.valorant.savedGames);
   const valorantInvalidResults = invalidResultCount(state.valorant.games);
-  const valorantReady = Boolean(state.valorant.scoreboardHeader.trim());
+  const valorantHeader = resolveScoreboardHeader(state.valorant.scoreboardHeader, state.general.eventName);
+  const valorantReady = Boolean(valorantHeader);
 
   useEffect(() => {
     if (!hydrated || !liveWriteReady) return;
@@ -979,6 +1128,48 @@ export default function Home() {
 
   function updateRocketLeague(patch: Partial<RocketLeague>) {
     setState((current) => ({ ...current, rocketLeague: { ...current.rocketLeague, ...patch } }));
+  }
+
+  function updateDebugLive(patch: Partial<RocketLeagueDebugLive>) {
+    setState((current) => ({
+      ...current,
+      rocketLeague: {
+        ...current.rocketLeague,
+        debugLive: normalizeDebugLive({
+          ...current.rocketLeague.debugLive,
+          ...patch,
+        }, current.rocketLeague.debugActivePlayerScenario) as RocketLeagueDebugLive,
+      },
+    }));
+  }
+
+  function updateDebugTargetPlayer(patch: Partial<RocketLeagueDebugTargetPlayer>) {
+    setState((current) => {
+      const nextPlayer = {
+        ...current.rocketLeague.debugLive.targetPlayer,
+        ...patch,
+      };
+      const nextLive = normalizeDebugLive({
+        ...current.rocketLeague.debugLive,
+        target: patch.id !== undefined ? String(patch.id) : current.rocketLeague.debugLive.target,
+        targetPlayer: nextPlayer,
+      }, current.rocketLeague.debugActivePlayerScenario) as RocketLeagueDebugLive;
+      return {
+        ...current,
+        rocketLeague: {
+          ...current.rocketLeague,
+          debugLive: nextLive,
+        },
+      };
+    });
+  }
+
+  function applyActivePlayerScenario(scenarioId: string) {
+    const scenario = normalizeActivePlayerScenario(scenarioId) as RocketLeagueActivePlayerScenario;
+    updateRocketLeague({
+      debugActivePlayerScenario: scenario,
+      debugLive: applyDebugScenario(scenario) as RocketLeagueDebugLive,
+    });
   }
 
   function updateRocketLeagueScore(gameIndex: number, side: "home" | "away", rawValue: string) {
@@ -1061,12 +1252,17 @@ export default function Home() {
 
   function copyMatchTwoToOne() {
     setState((current) => {
-      const matches: [Match, Match] = [
-        mergeMatch(current.general.matches[1]),
-        current.general.matches[1],
-      ];
-
-      return { ...current, general: { ...current.general, matches } };
+      const copied = mergeMatch(current.general.matches[1]);
+      const resolved = resolveLeague(copied.league);
+      const matches: [Match, Match] = [copied, current.general.matches[1]];
+      return {
+        ...current,
+        general: {
+          ...current.general,
+          eventName: resolved.eventName || current.general.eventName,
+          matches,
+        },
+      };
     });
     notify("Match 2 copied to Match 1");
   }
@@ -1092,6 +1288,48 @@ export default function Home() {
       };
       return { ...current, general: { ...current.general, matches } };
     });
+  }
+
+  function updateLeagueOverride(matchIndex: number, patch: Partial<LeagueOverrides>) {
+    setState((current) => {
+      const matches = [...current.general.matches] as [Match, Match];
+      const match = matches[matchIndex];
+      const league = {
+        ...match.league,
+        overrides: { ...match.league.overrides, ...patch },
+      };
+      const resolved = resolveLeague(league);
+      const colored = applyLeagueColorsToTeams(match.team1, match.team2, resolved.primaryColor, resolved.secondaryColor);
+      matches[matchIndex] = { ...match, ...colored, league };
+      return {
+        ...current,
+        general: {
+          ...current.general,
+          eventName: matchIndex === 0 ? resolved.eventName || current.general.eventName : current.general.eventName,
+          matches,
+        },
+      };
+    });
+  }
+
+  function resetLeagueOverrides(matchIndex: number) {
+    setState((current) => {
+      const matches = [...current.general.matches] as [Match, Match];
+      const match = matches[matchIndex];
+      const league = { ...match.league, overrides: emptyLeagueOverrides() };
+      const resolved = resolveLeague(league);
+      const colored = applyLeagueColorsToTeams(match.team1, match.team2, resolved.primaryColor, resolved.secondaryColor);
+      matches[matchIndex] = { ...match, ...colored, league };
+      return {
+        ...current,
+        general: {
+          ...current.general,
+          eventName: matchIndex === 0 ? resolved.eventName || current.general.eventName : current.general.eventName,
+          matches,
+        },
+      };
+    });
+    notify(`Match ${matchIndex + 1} league overrides reset`);
   }
 
   function selectTeamColor(matchIndex: number, teamKey: "team1" | "team2", selectedColor: ColorSource) {
@@ -1214,16 +1452,28 @@ export default function Home() {
       const standings = (json.standings && typeof json.standings === "object" ? json.standings : {}) as Record<string, unknown>;
       const event = (json.event && typeof json.event === "object" ? json.event : {}) as Record<string, unknown>;
       const gameTitle = typeof event.gameTitle === "string" ? event.gameTitle : "";
-      const team1 = normalizeTeam(matchData.team1, standings.team1, json.league, gameTitle);
-      const team2 = normalizeTeam(matchData.team2, standings.team2, json.league, gameTitle);
+      const leagueSource = normalizeLeague(json.league, event);
       setState((current) => {
         const matches = [...current.general.matches] as [Match, Match];
-        matches[matchIndex] = { ...matches[matchIndex], team1, team2 };
+        const existingOverrides = current.general.matches[matchIndex].league.overrides;
+        const league = { ...leagueSource, overrides: { ...existingOverrides } };
+        const resolved = resolveLeague(league);
+        const team1 = normalizeTeam(matchData.team1, standings.team1, {
+          primaryColor: resolved.primaryColor,
+          secondaryColor: resolved.secondaryColor,
+        }, gameTitle);
+        const team2 = normalizeTeam(matchData.team2, standings.team2, {
+          primaryColor: resolved.primaryColor,
+          secondaryColor: resolved.secondaryColor,
+        }, gameTitle);
+        matches[matchIndex] = { ...matches[matchIndex], team1, team2, league };
         return {
           ...current,
           general: {
             ...current.general,
-            eventName: typeof event.name === "string" ? event.name : current.general.eventName,
+            eventName: matchIndex === 0
+              ? (resolved.eventName || current.general.eventName)
+              : current.general.eventName,
             matches,
           },
         };
@@ -1278,8 +1528,8 @@ export default function Home() {
           <div className="setup-list">
             <button onClick={() => { setActiveSection("general"); setGeneralTab("talent"); }}><span className={state.general.eventName ? "complete" : ""} aria-hidden="true" /><div><strong>Event details</strong><small>{state.general.eventName || "Not configured"}</small></div><b>Open</b></button>
             <button onClick={() => setActiveSection("matches")}><span className={filledMatches ? "complete" : ""} aria-hidden="true" /><div><strong>Team Info</strong><small>{filledMatches ? `${filledMatches} match${filledMatches === 1 ? "" : "es"} ready` : "No complete matches"}</small></div><b>Open</b></button>
-            <button onClick={() => setActiveSection("rocketLeague")}><span className={rocketLeagueReady ? "complete" : ""} aria-hidden="true" /><div><strong>Rocket League</strong><small>{rocketLeagueReady ? `${state.rocketLeague.bestOf} · ${rocketLeagueSeries.completedGames} games entered` : "Scoreboard header not configured"}</small></div><b>Open</b></button>
-            <button onClick={() => setActiveSection("valorant")}><span className={valorantReady ? "complete" : ""} aria-hidden="true" /><div><strong>VALORANT</strong><small>{valorantReady ? `${state.valorant.bestOf} · ${valorantSeries.completedGames} maps entered` : "Scoreboard header not configured"}</small></div><b>Open</b></button>
+            <button onClick={() => setActiveSection("rocketLeague")}><span className={rocketLeagueReady ? "complete" : ""} aria-hidden="true" /><div><strong>Rocket League</strong><small>{rocketLeagueReady ? `${state.rocketLeague.bestOf} · ${rocketLeagueSeries.completedGames} games entered` : "Event name / header not configured"}</small></div><b>Open</b></button>
+            <button onClick={() => setActiveSection("valorant")}><span className={valorantReady ? "complete" : ""} aria-hidden="true" /><div><strong>VALORANT</strong><small>{valorantReady ? `${state.valorant.bestOf} · ${valorantSeries.completedGames} maps entered` : "Event name / header not configured"}</small></div><b>Open</b></button>
             <button onClick={() => setActiveSection("sponsors")}><span className={filledSponsors ? "complete" : ""} aria-hidden="true" /><div><strong>Sponsors</strong><small>{filledSponsors ? `${filledSponsors} configured` : "No sponsors configured"}</small></div><b>Open</b></button>
           </div>
         </section>
@@ -1315,6 +1565,10 @@ export default function Home() {
                 const firstFinal = resolveTeam(match.team1);
                 const secondFinal = resolveTeam(match.team2);
                 const similarity = colorSimilarity(firstFinal.color, secondFinal.color);
+                const league = match.league;
+                const resolvedLeague = resolveLeague(league);
+                const leagueLogoPreview = displayLogoUrl(resolvedLeague.logo);
+                const sourceLogoPreview = displayLogoUrl(league.logo);
                 return (
                 <section className="panel-card match-card" key={matchIndex}>
                   <div className="card-title-row">
@@ -1391,6 +1645,64 @@ export default function Home() {
                     <b>vs</b>
                     <div><span style={{ backgroundColor: safeColor(secondFinal.color) }} /><p><strong>{secondFinal.name || "Team 2"}</strong><small>{secondFinal.color}</small></p></div>
                     <p className="similarity-result"><span>Color comparison</span><strong>{similarity === null ? "Check colors" : `${similarity}% similar`}</strong><small>{similarity === null ? "Enter valid hex colors" : similarity > 80 ? "Too similar - choose an alternate" : "Good separation"}</small></p>
+                  </div>
+                  <div className="league-info">
+                    <div className="team-editor-title">
+                      <span className="team-logo-preview league-logo-preview" style={{ borderColor: safeColor(resolvedLeague.primaryColor) }}>
+                        {resolvedLeague.logo
+                          ? <img src={leagueLogoPreview} crossOrigin={leagueLogoPreview !== resolvedLeague.logo ? "anonymous" : undefined} alt="" />
+                          : (resolvedLeague.name || "LG").slice(0, 2).toUpperCase()}
+                      </span>
+                      <div><small>League info</small><strong>{resolvedLeague.name || "Awaiting league"}</strong></div>
+                      <button className="override-reset" type="button" onClick={() => resetLeagueOverrides(matchIndex)}>Reset league overrides</button>
+                    </div>
+                    <div className="source-data league-source-data">
+                      <span>Hub source</span>
+                      <p>
+                        <strong>{league.name || "No league loaded"}</strong>
+                        <small>
+                          {league.eventName || "No event"}
+                          {" · "}
+                          <i style={{ backgroundColor: safeColor(league.primaryColor) }} />
+                          {league.primaryColor}
+                          {" · "}
+                          <i style={{ backgroundColor: safeColor(league.secondaryColor) }} />
+                          {league.secondaryColor}
+                          {league.logo ? " · Logo synced" : " · No logo"}
+                        </small>
+                      </p>
+                      {league.logo ? <img className="league-source-logo" src={sourceLogoPreview} crossOrigin={sourceLogoPreview !== league.logo ? "anonymous" : undefined} alt="" /> : null}
+                    </div>
+                    <div className="form-grid two override-grid">
+                      <Field label="League name override" value={league.overrides.name} onChange={(value) => updateLeagueOverride(matchIndex, { name: value })} placeholder={league.name || "League name"} />
+                      <Field label="Event name override" value={league.overrides.eventName} onChange={(value) => updateLeagueOverride(matchIndex, { eventName: value })} placeholder={league.eventName || "Event name"} />
+                      <div className="wide-field"><Field label="League logo URL override" value={league.overrides.logo} onChange={(value) => updateLeagueOverride(matchIndex, { logo: value })} placeholder={league.logo || "https://..."} /></div>
+                    </div>
+                    <div className="form-grid two color-override-grid">
+                      <label className="field">
+                        <span className="field-label">Primary color override</span>
+                        <div className="color-field">
+                          <input aria-label={`Match ${matchIndex + 1} league primary color`} type="color" value={safeColor(league.overrides.primaryColor || resolvedLeague.primaryColor, "#F6AC18")} onChange={(event) => updateLeagueOverride(matchIndex, { primaryColor: event.target.value })} />
+                          <input aria-label={`Match ${matchIndex + 1} league primary color hex`} value={league.overrides.primaryColor} onChange={(event) => updateLeagueOverride(matchIndex, { primaryColor: event.target.value })} placeholder={league.primaryColor || "#RRGGBB"} maxLength={7} />
+                        </div>
+                        {league.overrides.primaryColor && !colorToRgb(league.overrides.primaryColor) ? <span className="field-error">Use a complete #RRGGBB value</span> : null}
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Secondary color override</span>
+                        <div className="color-field">
+                          <input aria-label={`Match ${matchIndex + 1} league secondary color`} type="color" value={safeColor(league.overrides.secondaryColor || resolvedLeague.secondaryColor, "#47213F")} onChange={(event) => updateLeagueOverride(matchIndex, { secondaryColor: event.target.value })} />
+                          <input aria-label={`Match ${matchIndex + 1} league secondary color hex`} value={league.overrides.secondaryColor} onChange={(event) => updateLeagueOverride(matchIndex, { secondaryColor: event.target.value })} placeholder={league.secondaryColor || "#RRGGBB"} maxLength={7} />
+                        </div>
+                        {league.overrides.secondaryColor && !colorToRgb(league.overrides.secondaryColor) ? <span className="field-error">Use a complete #RRGGBB value</span> : null}
+                      </label>
+                    </div>
+                    <div className="final-output-line league-final-line">
+                      <span>Final</span>
+                      <strong>{resolvedLeague.name || "No league"}</strong>
+                      <small>{resolvedLeague.eventName || "No event"}</small>
+                      <code style={{ borderColor: safeColor(resolvedLeague.primaryColor) }}>{resolvedLeague.primaryColor}</code>
+                      <code style={{ borderColor: safeColor(resolvedLeague.secondaryColor) }}>{resolvedLeague.secondaryColor}</code>
+                    </div>
                   </div>
                 </section>
                 );
@@ -1526,7 +1838,13 @@ export default function Home() {
               <section className="panel-card rocket-setup-card">
                 <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values control the VALORANT graphics.</p></div></div>
                 <div className="form-grid">
-                  <Field label="Scoreboard header" value={state.valorant.scoreboardHeader} onChange={(value) => updateValorant({ scoreboardHeader: value })} placeholder="Championship Match" />
+                  <Field
+                    label="Scoreboard header override"
+                    value={state.valorant.scoreboardHeader}
+                    onChange={(value) => updateValorant({ scoreboardHeader: value })}
+                    placeholder={state.general.eventName || "Uses Event name"}
+                    hint={state.valorant.scoreboardHeader.trim() ? `On-air: ${valorantHeader}` : "Leave blank to use General Info event name."}
+                  />
                   <label className="field"><span className="field-label">Series format</span><select value={state.valorant.bestOf} onChange={(event) => updateValorant({ bestOf: event.target.value as Valorant["bestOf"] })}><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
                 </div>
                 <div className="valorant-toggle-list">
@@ -1642,6 +1960,7 @@ export default function Home() {
         <div className="tabs" role="tablist" aria-label="Rocket League views">
           <button className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
           <button className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
+          <button className={rocketLeagueTab === "debug" ? "active" : ""} onClick={() => setRocketLeagueTab("debug")}>Debug</button>
         </div>
 
         {rocketLeagueTab === "results" ? (
@@ -1680,7 +1999,13 @@ export default function Home() {
               <section className="panel-card rocket-setup-card">
                 <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values feed the Rocket League graphics.</p></div></div>
                 <div className="form-grid">
-                  <Field label="Scoreboard header" value={state.rocketLeague.scoreboardHeader} onChange={(value) => updateRocketLeague({ scoreboardHeader: value })} placeholder="Championship Match" />
+                  <Field
+                    label="Scoreboard header override"
+                    value={state.rocketLeague.scoreboardHeader}
+                    onChange={(value) => updateRocketLeague({ scoreboardHeader: value })}
+                    placeholder={state.general.eventName || "Uses Event name"}
+                    hint={state.rocketLeague.scoreboardHeader.trim() ? `On-air: ${rocketLeagueHeader}` : "Leave blank to use General Info event name."}
+                  />
                   <label className="field">
                     <span className="field-label">Series format</span>
                     <select value={state.rocketLeague.bestOf} onChange={(event) => updateRocketLeague({ bestOf: event.target.value as RocketLeague["bestOf"] })}>
@@ -1710,7 +2035,7 @@ export default function Home() {
               </section>
             </div>
           </div>
-        ) : (
+        ) : rocketLeagueTab === "overlay" ? (
           <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="Browser overlay">
             <div className="card-title-row"><div><h2>Rocket League browser overlay</h2><p>Use this transparent PSD-aligned source as a vMix browser input. League colors and logo backgrounds come from Match 1 / Team Info.</p></div></div>
             <div className="browser-overlay-details">
@@ -1720,13 +2045,117 @@ export default function Home() {
             </div>
             <div className="browser-overlay-widget-controls" aria-label="Overlay widget visibility">
               <div className="browser-overlay-widget-toggle">
-                <div><strong>Player card</strong><small>Reserved for the selected-player widget in a later slice.</small></div>
+                <div><strong>Player card</strong><small>Shows the spectated player widget on the overlay. Use the Debug tab to preview scenarios until the live feed is connected.</small></div>
                 <label className="switch large"><input aria-label="Enable Rocket League player card" type="checkbox" checked={state.rocketLeague.playerCardEnabled} onChange={(event) => updateRocketLeague({ playerCardEnabled: event.target.checked })} /><span /></label>
               </div>
             </div>
             <label className="field browser-overlay-url"><span className="field-label">Local URL</span><input readOnly value={ROCKET_LEAGUE_OVERLAY_URL} /></label>
             <div className="browser-overlay-actions">
               <button className="button secondary" type="button" onClick={copyRocketLeagueOverlayLink}>Copy link</button>
+              <button className="button primary" type="button" onClick={openRocketLeagueOverlay}>Open overlay</button>
+            </div>
+          </section>
+        ) : (
+          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="Rocket League debug">
+            <div className="card-title-row">
+              <div>
+                <h2>Active player debug</h2>
+                <p>Enable debug, load a scenario if useful, then edit the live RL API fields. Changes push to the browser overlay immediately. Live spectated-player feed is not connected yet.</p>
+              </div>
+            </div>
+            <div className="valorant-toggle-row">
+              <div>
+                <strong>Enable debug</strong>
+                <p>When off, the overlay clears preview live data. When on, the fields below populate the active player and live game state.</p>
+              </div>
+              <label className="switch large">
+                <input
+                  aria-label="Enable Rocket League active player debug"
+                  type="checkbox"
+                  checked={state.rocketLeague.debugActivePlayerEnabled}
+                  onChange={(event) => updateRocketLeague({ debugActivePlayerEnabled: event.target.checked })}
+                />
+                <span />
+              </label>
+            </div>
+            {state.rocketLeague.debugActivePlayerEnabled ? (
+              <>
+                <label className="field">
+                  <span className="field-label">Scenario preset</span>
+                  <select
+                    aria-label="Active player debug scenario"
+                    value={state.rocketLeague.debugActivePlayerScenario}
+                    onChange={(event) => applyActivePlayerScenario(event.target.value)}
+                  >
+                    {ROCKET_LEAGUE_ACTIVE_PLAYER_SCENARIO_IDS.map((scenarioId) => (
+                      <option key={scenarioId} value={scenarioId}>
+                        {ROCKET_LEAGUE_ACTIVE_PLAYER_SCENARIOS[scenarioId as RocketLeagueActivePlayerScenario].label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="card-title-row" style={{ marginTop: 18 }}>
+                  <div><h2>Connection / game</h2><p>Fields the RL live feed will supply for match state.</p></div>
+                </div>
+                <div className="form-grid three">
+                  <div className="valorant-toggle-row" style={{ minHeight: 0, padding: "8px 0", borderBottom: 0 }}>
+                    <div><strong>Connected</strong></div>
+                    <label className="switch large"><input aria-label="Debug SOS connected" type="checkbox" checked={state.rocketLeague.debugLive.connected} onChange={(event) => updateDebugLive({ connected: event.target.checked })} /><span /></label>
+                  </div>
+                  <div className="valorant-toggle-row" style={{ minHeight: 0, padding: "8px 0", borderBottom: 0 }}>
+                    <div><strong>Has game</strong></div>
+                    <label className="switch large"><input aria-label="Debug has game" type="checkbox" checked={state.rocketLeague.debugLive.hasGame} onChange={(event) => updateDebugLive({ hasGame: event.target.checked })} /><span /></label>
+                  </div>
+                  <div className="valorant-toggle-row" style={{ minHeight: 0, padding: "8px 0", borderBottom: 0 }}>
+                    <div><strong>Has winner</strong></div>
+                    <label className="switch large"><input aria-label="Debug has winner" type="checkbox" checked={state.rocketLeague.debugLive.hasWinner} onChange={(event) => updateDebugLive({ hasWinner: event.target.checked })} /><span /></label>
+                  </div>
+                  <div className="valorant-toggle-row" style={{ minHeight: 0, padding: "8px 0", borderBottom: 0 }}>
+                    <div><strong>Overtime</strong></div>
+                    <label className="switch large"><input aria-label="Debug overtime" type="checkbox" checked={state.rocketLeague.debugLive.isOT} onChange={(event) => updateDebugLive({ isOT: event.target.checked })} /><span /></label>
+                  </div>
+                  <div className="valorant-toggle-row" style={{ minHeight: 0, padding: "8px 0", borderBottom: 0 }}>
+                    <div><strong>Replay</strong></div>
+                    <label className="switch large"><input aria-label="Debug replay" type="checkbox" checked={state.rocketLeague.debugLive.isReplay} onChange={(event) => updateDebugLive({ isReplay: event.target.checked })} /><span /></label>
+                  </div>
+                  <Field label="Clock (seconds)" value={String(state.rocketLeague.debugLive.timeSeconds)} onChange={(value) => updateDebugLive({ timeSeconds: Number.parseInt(value || "0", 10) || 0 })} placeholder="300" />
+                  <Field label="Score one" value={String(state.rocketLeague.debugLive.scoreOne)} onChange={(value) => updateDebugLive({ scoreOne: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
+                  <Field label="Score two" value={String(state.rocketLeague.debugLive.scoreTwo)} onChange={(value) => updateDebugLive({ scoreTwo: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
+                  <Field label="Target player id" value={state.rocketLeague.debugLive.target} onChange={(value) => updateDebugLive({ target: value })} placeholder="debug-skyljn3" />
+                </div>
+
+                <div className="card-title-row" style={{ marginTop: 18 }}>
+                  <div><h2>Target player</h2><p>Spectated player payload used by the active player card.</p></div>
+                </div>
+                <div className="form-grid three">
+                  <Field label="Player id" value={state.rocketLeague.debugLive.targetPlayer.id} onChange={(value) => updateDebugTargetPlayer({ id: value })} placeholder="debug-skyljn3" />
+                  <Field label="Player name" value={state.rocketLeague.debugLive.targetPlayer.name} onChange={(value) => updateDebugTargetPlayer({ name: value })} placeholder="SKYLIN3" />
+                  <label className="field">
+                    <span className="field-label">Team</span>
+                    <select
+                      aria-label="Debug target player team"
+                      value={String(state.rocketLeague.debugLive.targetPlayer.team)}
+                      onChange={(event) => updateDebugTargetPlayer({ team: Number.parseInt(event.target.value, 10) || 0 })}
+                    >
+                      <option value="0">Team one (0)</option>
+                      <option value="1">Team two (1)</option>
+                    </select>
+                  </label>
+                  <Field label="Goals" value={String(state.rocketLeague.debugLive.targetPlayer.goals)} onChange={(value) => updateDebugTargetPlayer({ goals: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
+                  <Field label="Shots" value={String(state.rocketLeague.debugLive.targetPlayer.shots)} onChange={(value) => updateDebugTargetPlayer({ shots: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
+                  <Field label="Saves" value={String(state.rocketLeague.debugLive.targetPlayer.saves)} onChange={(value) => updateDebugTargetPlayer({ saves: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
+                  <Field label="Assists" value={String(state.rocketLeague.debugLive.targetPlayer.assists)} onChange={(value) => updateDebugTargetPlayer({ assists: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
+                  <Field label="Boost (0-100)" value={String(state.rocketLeague.debugLive.targetPlayer.boost)} onChange={(value) => updateDebugTargetPlayer({ boost: Number.parseInt(value || "0", 10) || 0 })} placeholder="45" />
+                  <div className="valorant-toggle-row" style={{ minHeight: 0, padding: "8px 0", borderBottom: 0 }}>
+                    <div><strong>Is dead / demoed</strong></div>
+                    <label className="switch large"><input aria-label="Debug target player is dead" type="checkbox" checked={state.rocketLeague.debugLive.targetPlayer.isDead} onChange={(event) => updateDebugTargetPlayer({ isDead: event.target.checked })} /><span /></label>
+                  </div>
+                </div>
+              </>
+            ) : null}
+            <div className="browser-overlay-actions">
+              <button className="button secondary" type="button" onClick={copyRocketLeagueOverlayLink}>Copy overlay link</button>
               <button className="button primary" type="button" onClick={openRocketLeagueOverlay}>Open overlay</button>
             </div>
           </section>

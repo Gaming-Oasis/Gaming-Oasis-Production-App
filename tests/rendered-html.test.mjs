@@ -6,8 +6,16 @@ import test from "node:test";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { calculateRocketLeagueSeries, formatRocketLeagueScore } from "../lib/rocket-league.mjs";
 import { buildRocketLeagueOverlayState } from "../lib/rocket-league-live.mjs";
+import { resolveScoreboardHeader } from "../lib/scoreboard-header.mjs";
 import { buildValorantFields, buildValorantOverlayState, calculateValorantSeries, formatValorantScore, getValorantCurrentMap, getValorantCurrentSides, VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
 import { JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
+
+test("resolves scoreboard headers from event name with game-level override", () => {
+  assert.equal(resolveScoreboardHeader("", "Spring Invitational"), "Spring Invitational");
+  assert.equal(resolveScoreboardHeader("  ", "Spring Invitational"), "Spring Invitational");
+  assert.equal(resolveScoreboardHeader("RL Finals", "Spring Invitational"), "RL Finals");
+  assert.equal(resolveScoreboardHeader("", ""), "");
+});
 
 async function render(pathname = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -167,7 +175,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /nameFill/);
   assert.match(page, /--team-one/);
   assert.match(page, /--team-two/);
-  assert.match(page, /readableText\(overlay\.leagueSecondary\)/);
+  assert.match(page, /readableText\(SCORE_PANEL_NAVY\)/);
   assert.match(page, /--score-text/);
   assert.match(page, /scoreLabel/);
   assert.match(page, /SeriesPills/);
@@ -186,6 +194,22 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.scoreboardSlot \{[\s\S]*width: 1000px;[\s\S]*height: 156\.25px/);
   assert.match(css, /\.scoreboard \{[\s\S]*transform: scale\(0\.5208333333\);[\s\S]*transform-origin: 0 0/);
   assert.match(css, /Orbitron/);
+  assert.match(page, /ActivePlayerCard/);
+  assert.match(page, /active-background\.png/);
+  assert.match(page, /active-border-fill\.png/);
+  assert.match(page, /active-stat-labels\.png/);
+  assert.match(page, /playerCardEnabled && targetPlayer/);
+  assert.match(css, /\.secondaryFill \{[\s\S]*background: #0e1520/);
+  assert.doesNotMatch(css, /\.secondaryFill \{[\s\S]*background-image/);
+  assert.match(css, /\.activeBorder \{[\s\S]*--league-primary[\s\S]*active-border-mask\.png/);
+  assert.match(css, /\.activePlayerSlot \{[\s\S]*top: 930px;[\s\S]*width: 970px/);
+  assert.match(css, /\.activePlayer \{[\s\S]*transform: scale\(0\.5052083333\)/);
+  assert.match(css, /\.activeBoost \{[\s\S]*width: 1661px/);
+  assert.match(css, /\.activeStatGoals \{[\s\S]*left: 470px/);
+  assert.match(css, /\.activeStatShots \{[\s\S]*left: 799px/);
+  assert.match(css, /\.activeStatSaves \{[\s\S]*left: 1116px/);
+  assert.match(css, /\.activeStatAssists \{[\s\S]*left: 1464px/);
+  assert.match(css, /\.activeStat \{[\s\S]*top: 131px;[\s\S]*height: 38px/);
 });
 
 test("builds Rocket League overlay state from Match 1 teams and league colors", () => {
@@ -195,6 +219,8 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
       bestOf: "Bo5",
       flipSides: false,
       playerCardEnabled: true,
+      debugActivePlayerEnabled: false,
+      debugActivePlayerScenario: "skyljn3",
       games: [{ home: "3", away: "1" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
       savedGames: [{ home: "3", away: "1" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
     },
@@ -215,7 +241,149 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
   assert.equal(state.winsNeeded, 3);
   assert.equal(state.game.hasGame, false);
   assert.equal(state.game.scoreOne, 0);
+  assert.equal(state.game.targetPlayer, null);
   assert.equal(state.connection.connected, false);
+
+  const fromEvent = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      flipSides: false,
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: false,
+      debugActivePlayerScenario: "skyljn3",
+      games: [{ home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
+      savedGames: [{ home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
+    },
+    { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
+    { primaryColor: "#1A75FD", secondaryColor: "#FCC500" },
+    { eventName: "Spring Invitational" },
+  );
+  assert.equal(fromEvent.header, "Spring Invitational");
+});
+
+test("fills Rocket League active player debug scenarios into overlay targetPlayer", () => {
+  const teams = [
+    { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
+  ];
+  const emptyGames = Array.from({ length: 7 }, () => ({ home: "", away: "" }));
+
+  const off = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: false,
+      debugActivePlayerScenario: "skyljn3",
+      games: emptyGames,
+      savedGames: emptyGames,
+    },
+    teams[0],
+    teams[1],
+  );
+  assert.equal(off.game.hasGame, false);
+  assert.equal(off.game.targetPlayer, null);
+
+  const on = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: true,
+      debugActivePlayerScenario: "skyljn3",
+      games: emptyGames,
+      savedGames: emptyGames,
+    },
+    teams[0],
+    teams[1],
+  );
+  assert.equal(on.game.hasGame, true);
+  assert.equal(on.game.targetPlayer?.name, "SKYLIN3");
+  assert.equal(on.game.targetPlayer?.team, 0);
+  assert.equal(on.game.targetPlayer?.goals, 0);
+  assert.equal(on.game.targetPlayer?.shots, 3);
+  assert.equal(on.game.targetPlayer?.saves, 2);
+  assert.equal(on.game.targetPlayer?.assists, 0);
+  assert.equal(on.game.targetPlayer?.boost, 45);
+  assert.equal(on.game.targetPlayer?.isDead, false);
+
+  const teamTwo = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: true,
+      debugActivePlayerScenario: "team-two",
+      games: emptyGames,
+      savedGames: emptyGames,
+    },
+    teams[0],
+    teams[1],
+  );
+  assert.equal(teamTwo.game.targetPlayer?.team, 1);
+  assert.equal(teamTwo.game.targetPlayer?.name, "ORANG3");
+
+  const emptyBoost = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: true,
+      debugActivePlayerScenario: "empty-boost",
+      games: emptyGames,
+      savedGames: emptyGames,
+    },
+    teams[0],
+    teams[1],
+  );
+  assert.equal(emptyBoost.game.targetPlayer?.boost, 0);
+  assert.equal(emptyBoost.game.targetPlayer?.isDead, true);
+
+  const custom = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: true,
+      debugActivePlayerScenario: "skyljn3",
+      debugLive: {
+        connected: true,
+        hasGame: true,
+        hasWinner: false,
+        isOT: true,
+        isReplay: false,
+        timeSeconds: 42,
+        target: "custom-id",
+        scoreOne: 3,
+        scoreTwo: 2,
+        targetPlayer: {
+          id: "custom-id",
+          name: "CUSTOM",
+          team: 1,
+          goals: 4,
+          shots: 7,
+          saves: 1,
+          assists: 2,
+          boost: 88,
+          isDead: false,
+        },
+      },
+      games: emptyGames,
+      savedGames: emptyGames,
+    },
+    teams[0],
+    teams[1],
+  );
+  assert.equal(custom.connection.connected, true);
+  assert.equal(custom.game.isOT, true);
+  assert.equal(custom.game.timeSeconds, 42);
+  assert.equal(custom.game.scoreOne, 3);
+  assert.equal(custom.game.scoreTwo, 2);
+  assert.equal(custom.game.targetPlayer?.name, "CUSTOM");
+  assert.equal(custom.game.targetPlayer?.team, 1);
+  assert.equal(custom.game.targetPlayer?.boost, 88);
 });
 
 test("fills Rocket League series pills from draft game wins left to right", () => {
@@ -375,16 +543,32 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /\/overlays\/valorant/);
   assert.match(page, /\/overlays\/rocket-league/);
   assert.match(page, /useState<"results" \| "pickBans" \| "mapArtwork" \| "overlay">/);
-  assert.match(page, /useState<"results" \| "overlay">\("results"\)/);
+  assert.match(page, /useState<"results" \| "overlay" \| "debug">\("results"\)/);
   assert.match(page, /setValorantTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("overlay"\)/);
+  assert.match(page, /setRocketLeagueTab\("debug"\)/);
   assert.match(page, /setValorantTab\("mapArtwork"\)/);
   assert.match(page, /VALORANT MAP DATA\.json/);
   assert.match(page, /buildRocketLeagueOverlayState/);
   assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay \}/);
-  assert.match(page, /Rocket League browser overlay/);
-  assert.match(page, /Enable Rocket League player card/);
+  assert.match(page, /Scoreboard header override/);
+  assert.match(page, /Leave blank to use General Info event name\./);
+  assert.match(page, /resolveScoreboardHeader/);
+  assert.match(page, /Event name \/ header not configured/);
+  assert.match(page, /Enable Rocket League active player debug/);
+  assert.match(page, /debugActivePlayerEnabled/);
+  assert.match(page, /debugActivePlayerScenario/);
+  assert.match(page, /debugLive/);
+  assert.match(page, /updateDebugLive/);
+  assert.match(page, /updateDebugTargetPlayer/);
+  assert.match(page, /applyActivePlayerScenario/);
+  assert.match(page, /Target player/);
+  assert.match(page, /Clock \(seconds\)/);
+  assert.match(page, /Boost \(0-100\)/);
+  assert.match(page, /Active player debug/);
+  assert.match(page, /Use the Debug tab to preview scenarios/);
   assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 2);
+  assert.match(page, /aria-label="Rocket League debug"/);
   assert.match(page, /valorant-reference-ban-control/);
   assert.match(page, /Ban Team A/);
   assert.match(page, /Ban Team B/);
@@ -413,6 +597,19 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /parseExcelPool/);
   assert.match(page, /selectedTeamColor/);
   assert.match(page, /resolveTeam\(team\)/);
+  assert.match(page, /function resolveLeague\(/);
+  assert.match(page, /function normalizeLeague\(/);
+  assert.match(page, /League info/);
+  assert.match(page, /Reset league overrides/);
+  assert.match(page, /League name override/);
+  assert.match(page, /Event name override/);
+  assert.match(page, /League logo URL override/);
+  assert.match(page, /Primary color override/);
+  assert.match(page, /Secondary color override/);
+  assert.match(page, /updateLeagueOverride/);
+  assert.match(page, /matchOneLeague\.primaryColor/);
+  assert.match(page, /matchOneLeague\.secondaryColor/);
+  assert.match(css, /\.league-info/);
   assert.doesNotMatch(page, /broadcastdate:\s*general\.broadcastDate/);
   assert.doesNotMatch(page, /label="Broadcast date"/);
   assert.doesNotMatch(page, /productionnote:\s*general\.productionNote/);
@@ -538,6 +735,18 @@ test("routes editable map artwork into the legacy Bo3 and Bo5 scene fields", () 
   ]);
   assert.equal(fields.valbo3nextmapi, "next-3.png");
   assert.equal(fields.valbo5nextmapi, "next-3.png");
+  assert.equal(fields.valheader, "Final");
+
+  const fromEvent = buildValorantFields({
+    scoreboardHeader: "",
+    bestOf: "Bo3",
+    flipSides: false,
+    banSwap: false,
+    games: Array.from({ length: 5 }, () => ({ home: "", away: "" })),
+    bo3: { ban1: names[0], ban2: names[1], pick1: names[2], pick2: names[3], ban3: names[4], ban4: names[5], decider: names[6], side1: "", side2: "", side3: "" },
+    bo5: { ban1: names[0], ban2: names[1], pick1: names[2], pick2: names[3], pick3: names[4], pick4: names[5], decider: names[6], side1: "", side2: "", side3: "", side4: "", side5: "" },
+  }, teamOne, teamTwo, artwork, { eventName: "Spring Invitational" });
+  assert.equal(fromEvent.valheader, "Spring Invitational");
 });
 
 test("builds the VALORANT overlay from saved results and flips all team fields together", () => {

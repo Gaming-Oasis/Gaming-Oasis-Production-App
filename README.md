@@ -50,7 +50,7 @@ Operators enter only a match ID. The local writer requests the fixed public endp
 GET https://hub.gamingoasis.gg/api/public/matches/:matchId
 ```
 
-No production credentials or configurable API settings are required. The response's `match.team1` and `match.team2` provide team identity, seed, and home/away colors, `standings` provides placement and record, `league.primaryColor` and `league.secondaryColor` provide the two backup colors, and `event.name` updates the event name. Each team can output its standing record (the default when available), placement (such as `3rd`), or stage seed (such as `#2`).
+No production credentials or configurable API settings are required. The response's `match.team1` and `match.team2` provide team identity, seed, and home/away colors, `standings` provides placement and record, and `league` plus `event` populate per-match League info. Each match stores Hub source league name, logo (`league.logo` or `league.logoUrl`), primary/secondary colors, and event name separately from manual overrides. Resolved league colors become each team's Backup 1/2 swatches. Match 1's resolved event name updates General Info / `FinalOutput.eventname`, and Match 1's resolved league colors feed the Rocket League and VALORANT overlays. Each team can output its standing record (the default when available), placement (such as `3rd`), or stage seed (such as `#2`).
 
 The local writer proxies the match response and Hub-hosted logo previews because the production interface runs on localhost while the public League Hub endpoints are hosted at `hub.gamingoasis.gg`. Exported JSON keeps the original public logo URL.
 

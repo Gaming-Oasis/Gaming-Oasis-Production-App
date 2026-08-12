@@ -63,6 +63,8 @@ const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/rocket-league";
 const TEAM_NAME_MAX_PX = 42;
 const TEAM_NAME_MIN_PX = 18;
 const PREFERRED_WHITE_MIN_CONTRAST = 2.5;
+/** Opaque navy plate from the active-player card body (active-border-fill). */
+const SCORE_PANEL_NAVY = "#0E1520";
 
 function colorChannels(value: string) {
   const hex = value.trim().replace(/^#/, "");
@@ -230,6 +232,93 @@ function SeriesPills({ wins, needed }: { wins: number; needed: number }) {
   );
 }
 
+const ACTIVE_PLAYER_NAME_MAX = 12;
+const ACTIVE_PLAYER_NAME_MAX_PX = 36;
+const ACTIVE_PLAYER_NAME_MIN_PX = 18;
+
+function formatActivePlayerName(name: string) {
+  const normalized = String(name || "").trim().toUpperCase();
+  return normalized.length > ACTIVE_PLAYER_NAME_MAX
+    ? normalized.slice(0, ACTIVE_PLAYER_NAME_MAX)
+    : normalized;
+}
+
+function FitActivePlayerName({ name, className }: { name: string; className: string }) {
+  const ref = useRef<HTMLElement>(null);
+  const displayName = formatActivePlayerName(name);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let cancelled = false;
+
+    function fit() {
+      if (cancelled || !el) return;
+      let size = ACTIVE_PLAYER_NAME_MAX_PX;
+      el.style.fontSize = `${size}px`;
+      while (size > ACTIVE_PLAYER_NAME_MIN_PX && el.scrollWidth > el.clientWidth + 0.5) {
+        size -= 1;
+        el.style.fontSize = `${size}px`;
+      }
+    }
+
+    fit();
+    const fontsReady = document.fonts?.ready;
+    if (fontsReady) fontsReady.then(fit);
+    return () => {
+      cancelled = true;
+    };
+  }, [displayName]);
+
+  return <strong ref={ref} className={className}>{displayName}</strong>;
+}
+
+function ActivePlayerCard({
+  player,
+  plateColor,
+  nameTextColor,
+}: {
+  player: OverlayPlayer;
+  plateColor: string;
+  nameTextColor: string;
+}) {
+  const boost = player.isDead ? 0 : Math.min(100, Math.max(0, player.boost));
+  return (
+    <div className={styles.activePlayerSlot} aria-label="Active player">
+      <section
+        className={styles.activePlayer}
+        style={{
+          "--active-name-text": nameTextColor,
+        } as React.CSSProperties}
+      >
+        <img
+          className={`${styles.activeLayer} ${styles.activeBackground}`}
+          src="/rocket-league-overlay/nel/active-background.png"
+          alt=""
+        />
+        <div className={styles.activeNamePlate} style={{ background: plateColor }} />
+        <img
+          className={`${styles.activeLayer} ${styles.activeBorderFill}`}
+          src="/rocket-league-overlay/nel/active-border-fill.png"
+          alt=""
+        />
+        <div className={`${styles.activeLayer} ${styles.activeBorder}`} aria-hidden="true" />
+        <img
+          className={`${styles.activeLayer} ${styles.activeStatLabels}`}
+          src="/rocket-league-overlay/nel/active-stat-labels.png"
+          alt=""
+        />
+        <FitActivePlayerName name={player.name} className={styles.activeName} />
+        <div className={`${styles.activeStat} ${styles.activeStatGoals}`}>{player.goals}</div>
+        <div className={`${styles.activeStat} ${styles.activeStatShots}`}>{player.shots}</div>
+        <div className={`${styles.activeStat} ${styles.activeStatSaves}`}>{player.saves}</div>
+        <div className={`${styles.activeStat} ${styles.activeStatAssists}`}>{player.assists}</div>
+        <progress className={styles.activeBoost} max={100} value={boost} aria-label="Boost" />
+      </section>
+    </div>
+  );
+}
+
 export default function RocketLeagueOverlay() {
   const [overlay, setOverlay] = useState<RocketLeagueOverlayState | null>(null);
   const [frame, setFrame] = useState({ scale: 1, left: 0 });
@@ -289,7 +378,7 @@ export default function RocketLeagueOverlay() {
       "--team-two-text": teamTwoText,
       "--logo-one-bg": leftTeam.logoBackground,
       "--logo-two-bg": rightTeam.logoBackground,
-      "--score-text": readableText(overlay.leagueSecondary),
+      "--score-text": readableText(SCORE_PANEL_NAVY),
       "--header-text": readableText(overlay.leaguePrimary),
     } as React.CSSProperties;
   }, [overlay, leftTeam, rightTeam]);
@@ -298,6 +387,12 @@ export default function RocketLeagueOverlay() {
   const winsNeeded = overlay?.winsNeeded ?? 1;
   const winsOne = Number.parseInt(leftTeam?.seriesScore || "0", 10) || 0;
   const winsTwo = Number.parseInt(rightTeam?.seriesScore || "0", 10) || 0;
+  const targetPlayer = game?.targetPlayer ?? null;
+  const showActivePlayer = Boolean(overlay?.playerCardEnabled && targetPlayer);
+  const activePlateColor = targetPlayer?.team === 1
+    ? (overlay?.teamTwo.color ?? "#F8871E")
+    : (overlay?.teamOne.color ?? "#1A75FD");
+  const activeNameText = readableText(activePlateColor);
 
   return (
     <main className={styles.viewport}>
@@ -337,6 +432,13 @@ export default function RocketLeagueOverlay() {
                 <div className={`${styles.score} ${styles.scoreTwo}`}><span key={`two-${scoreTwo}`}>{live ? scoreTwo : 0}</span></div>
               </section>
             </div>
+            {showActivePlayer && targetPlayer ? (
+              <ActivePlayerCard
+                player={targetPlayer}
+                plateColor={activePlateColor}
+                nameTextColor={activeNameText}
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
