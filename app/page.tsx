@@ -156,6 +156,7 @@ type RocketLeague = {
   bestOf: "Bo1" | "Bo3" | "Bo5" | "Bo7";
   flipSides: boolean;
   playerCardEnabled: boolean;
+  sponsorWidgetEnabled: boolean;
   debugActivePlayerEnabled: boolean;
   debugActivePlayerScenario: RocketLeagueActivePlayerScenario;
   debugLive: RocketLeagueDebugLive;
@@ -379,6 +380,7 @@ function createInitialState(): ProductionState {
       bestOf: "Bo3",
       flipSides: false,
       playerCardEnabled: true,
+      sponsorWidgetEnabled: true,
       debugActivePlayerEnabled: false,
       debugActivePlayerScenario: "skyljn3",
       debugLive: createDefaultDebugLive("skyljn3") as RocketLeagueDebugLive,
@@ -556,6 +558,7 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
         : initial.rocketLeague.bestOf,
       flipSides: Boolean(saved.rocketLeague?.flipSides),
       playerCardEnabled: saved.rocketLeague?.playerCardEnabled !== false,
+      sponsorWidgetEnabled: saved.rocketLeague?.sponsorWidgetEnabled !== false,
       debugActivePlayerEnabled: Boolean(saved.rocketLeague?.debugActivePlayerEnabled),
       debugActivePlayerScenario: normalizeActivePlayerScenario(
         saved.rocketLeague?.debugActivePlayerScenario,
@@ -1042,7 +1045,8 @@ export default function Home() {
       secondaryColor: matchOneLeague.secondaryColor,
     },
     { eventName: state.general.eventName },
-  ), [state.rocketLeague, state.general.eventName, state.general.matches, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
+    state.sponsors,
+  ), [state.rocketLeague, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
   const hasLiveProductionContent = useMemo(() => hasProductionContent(state), [state]);
   const filledSponsors = state.sponsors.filter((sponsor) => sponsor.name.trim() || sponsor.logo.trim()).length;
   const filledMatches = state.general.matches.filter((match) => resolveTeam(match.team1).name && resolveTeam(match.team2).name).length;
@@ -2047,6 +2051,10 @@ export default function Home() {
               <div className="browser-overlay-widget-toggle">
                 <div><strong>Player card</strong><small>Shows the spectated player widget on the overlay. Use the Debug tab to preview scenarios until the live feed is connected.</small></div>
                 <label className="switch large"><input aria-label="Enable Rocket League player card" type="checkbox" checked={state.rocketLeague.playerCardEnabled} onChange={(event) => updateRocketLeague({ playerCardEnabled: event.target.checked })} /><span /></label>
+              </div>
+              <div className="browser-overlay-widget-toggle">
+                <div><strong>Sponsor box</strong><small>Shows the shared Sponsors list in the bottom-right corner of the overlay.</small></div>
+                <label className="switch large"><input aria-label="Enable Rocket League sponsor widget" type="checkbox" checked={state.rocketLeague.sponsorWidgetEnabled} onChange={(event) => updateRocketLeague({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
             </div>
             <label className="field browser-overlay-url"><span className="field-label">Local URL</span><input readOnly value={ROCKET_LEAGUE_OVERLAY_URL} /></label>

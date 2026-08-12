@@ -41,6 +41,12 @@ type OverlayConnection = {
   lastEventAt: string | null;
 };
 
+type OverlaySponsor = {
+  id: string;
+  name: string;
+  logo: string;
+};
+
 type RocketLeagueOverlayState = {
   version: 1;
   updatedAt: string;
@@ -49,6 +55,8 @@ type RocketLeagueOverlayState = {
   bestOf: string;
   flipSides: boolean;
   playerCardEnabled: boolean;
+  sponsorWidgetEnabled: boolean;
+  sponsors: OverlaySponsor[];
   roundNumber: number;
   winsNeeded: number;
   leaguePrimary: string;
@@ -137,6 +145,8 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && typeof state.bestOf === "string"
     && typeof state.flipSides === "boolean"
     && typeof state.playerCardEnabled === "boolean"
+    && typeof state.sponsorWidgetEnabled === "boolean"
+    && isOverlaySponsors(state.sponsors)
     && typeof state.roundNumber === "number"
     && typeof state.winsNeeded === "number"
     && typeof state.leaguePrimary === "string"
@@ -147,6 +157,16 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && typeof connection.connected === "boolean"
     && (connection.lastEventAt === null || typeof connection.lastEventAt === "string")
     && isOverlayGame(state.game);
+}
+
+function isOverlaySponsors(value: unknown): value is OverlaySponsor[] {
+  return Array.isArray(value) && value.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const sponsor = entry as Record<string, unknown>;
+    return typeof sponsor.id === "string"
+      && typeof sponsor.name === "string"
+      && typeof sponsor.logo === "string";
+  });
 }
 
 function localLogoUrl(value: string) {
@@ -229,6 +249,106 @@ function SeriesPills({ wins, needed }: { wins: number; needed: number }) {
         );
       })}
     </div>
+  );
+}
+
+const SPONSOR_ROTATION_MS = 15000;
+
+function sponsorAssetKey(sponsor: OverlaySponsor) {
+  return `${sponsor.id}\u0000${sponsor.logo}`;
+}
+
+function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
+  const [rotation, setRotation] = useState({ currentId: "", previousId: "" });
+  const [assetState, setAssetState] = useState<Record<string, "loaded" | "failed">>({});
+  const sponsorSignature = JSON.stringify(sponsors);
+
+  useEffect(() => {
+    let active = true;
+    const loaders: HTMLImageElement[] = [];
+
+    sponsors.forEach((sponsor) => {
+      if (!sponsor.logo) return;
+      const key = sponsorAssetKey(sponsor);
+      const image = new Image();
+      loaders.push(image);
+      image.onload = () => {
+        if (active) setAssetState((current) => ({ ...current, [key]: "loaded" }));
+      };
+      image.onerror = () => {
+        if (active) setAssetState((current) => ({ ...current, [key]: "failed" }));
+      };
+      image.src = localLogoUrl(sponsor.logo);
+    });
+
+    return () => {
+      active = false;
+      loaders.forEach((image) => {
+        image.onload = null;
+        image.onerror = null;
+      });
+    };
+  }, [sponsorSignature]);
+
+  const displayableSponsors = sponsors.filter((sponsor) => {
+    if (!sponsor.logo) return Boolean(sponsor.name);
+    const status = assetState[sponsorAssetKey(sponsor)];
+    return status === "loaded" || (status === "failed" && Boolean(sponsor.name));
+  });
+  const displayableSignature = displayableSponsors
+    .map((sponsor) => `${sponsorAssetKey(sponsor)}\u0000${assetState[sponsorAssetKey(sponsor)] || "name"}`)
+    .join("\u0001");
+
+  useEffect(() => {
+    if (!displayableSponsors.length) {
+      setRotation({ currentId: "", previousId: "" });
+      return undefined;
+    }
+
+    setRotation((current) => {
+      if (displayableSponsors.some((sponsor) => sponsor.id === current.currentId)) return current;
+      return { currentId: displayableSponsors[0].id, previousId: current.currentId };
+    });
+    if (displayableSponsors.length === 1) return undefined;
+
+    const timer = window.setInterval(() => {
+      setRotation((current) => {
+        const currentIndex = displayableSponsors.findIndex((sponsor) => sponsor.id === current.currentId);
+        const nextId = displayableSponsors[(currentIndex + 1 + displayableSponsors.length) % displayableSponsors.length].id;
+        return { currentId: nextId, previousId: current.currentId };
+      });
+    }, SPONSOR_ROTATION_MS);
+    return () => window.clearInterval(timer);
+  }, [displayableSignature]);
+
+  const sponsor = displayableSponsors.find((entry) => entry.id === rotation.currentId) || displayableSponsors[0];
+  if (!sponsor) return null;
+  const previousSponsor = displayableSponsors.find((entry) => entry.id === rotation.previousId && entry.id !== sponsor.id);
+  const logoLoaded = sponsor.logo && assetState[sponsorAssetKey(sponsor)] === "loaded";
+  const slideKey = `${sponsorAssetKey(sponsor)}\u0000${logoLoaded ? "logo" : "name"}`;
+
+  function slideContent(entry: OverlaySponsor) {
+    const entryLogoLoaded = entry.logo && assetState[sponsorAssetKey(entry)] === "loaded";
+    return entryLogoLoaded ? (
+      <img
+        src={localLogoUrl(entry.logo)}
+        alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
+        onError={() => setAssetState((current) => ({ ...current, [sponsorAssetKey(entry)]: "failed" }))}
+      />
+    ) : <span>{entry.name}</span>;
+  }
+
+  return (
+    <aside className={styles.sponsorCard} aria-label="Sponsor rotation">
+      {previousSponsor ? (
+        <div key={`${sponsorAssetKey(previousSponsor)}-leaving`} className={`${styles.sponsorSlide} ${styles.sponsorSlideLeaving}`} aria-hidden="true">
+          {slideContent(previousSponsor)}
+        </div>
+      ) : null}
+      <div key={slideKey} className={`${styles.sponsorSlide} ${styles.sponsorSlideEntering}`}>
+        {slideContent(sponsor)}
+      </div>
+    </aside>
   );
 }
 
@@ -439,6 +559,7 @@ export default function RocketLeagueOverlay() {
                 nameTextColor={activeNameText}
               />
             ) : null}
+            {overlay.sponsorWidgetEnabled ? <SponsorCarousel sponsors={overlay.sponsors} /> : null}
           </div>
         ) : null}
       </div>

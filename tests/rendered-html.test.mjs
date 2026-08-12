@@ -210,6 +210,9 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.activeStatSaves \{[\s\S]*left: 1116px/);
   assert.match(css, /\.activeStatAssists \{[\s\S]*left: 1464px/);
   assert.match(css, /\.activeStat \{[\s\S]*top: 131px;[\s\S]*height: 38px/);
+  assert.match(page, /SponsorCarousel/);
+  assert.match(page, /sponsorWidgetEnabled/);
+  assert.match(css, /\.sponsorCard \{[\s\S]*right: 16px;[\s\S]*bottom: calc\(1080px - 930px - 151\.5625px\)/);
 });
 
 test("builds Rocket League overlay state from Match 1 teams and league colors", () => {
@@ -219,6 +222,7 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
       bestOf: "Bo5",
       flipSides: false,
       playerCardEnabled: true,
+      sponsorWidgetEnabled: true,
       debugActivePlayerEnabled: false,
       debugActivePlayerScenario: "skyljn3",
       games: [{ home: "3", away: "1" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
@@ -227,6 +231,8 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
     { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF" },
     { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#000000" },
     { primaryColor: "#1A75FD", secondaryColor: "#FCC500" },
+    {},
+    [{ id: "oasis", name: "Gaming Oasis", logo: "oasis.png", enabled: true }],
   );
 
   assert.equal(state.version, 1);
@@ -243,6 +249,8 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
   assert.equal(state.game.scoreOne, 0);
   assert.equal(state.game.targetPlayer, null);
   assert.equal(state.connection.connected, false);
+  assert.equal(state.sponsorWidgetEnabled, true);
+  assert.deepEqual(state.sponsors, [{ id: "oasis", name: "Gaming Oasis", logo: "oasis.png" }]);
 
   const fromEvent = buildRocketLeagueOverlayState(
     {
@@ -250,6 +258,7 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
       bestOf: "Bo3",
       flipSides: false,
       playerCardEnabled: true,
+      sponsorWidgetEnabled: false,
       debugActivePlayerEnabled: false,
       debugActivePlayerScenario: "skyljn3",
       games: [{ home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }, { home: "", away: "" }],
@@ -261,6 +270,8 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
     { eventName: "Spring Invitational" },
   );
   assert.equal(fromEvent.header, "Spring Invitational");
+  assert.equal(fromEvent.sponsorWidgetEnabled, false);
+  assert.deepEqual(fromEvent.sponsors, []);
 });
 
 test("fills Rocket League active player debug scenarios into overlay targetPlayer", () => {
@@ -1059,6 +1070,8 @@ test("serves the latest non-exported Rocket League overlay state without changin
     bestOf: "Bo5",
     flipSides: false,
     playerCardEnabled: true,
+    sponsorWidgetEnabled: true,
+    sponsors: [{ id: "oasis", name: "Gaming Oasis", logo: "oasis.png" }],
     roundNumber: 2,
     winsNeeded: 3,
     leaguePrimary: "#1A75FD",

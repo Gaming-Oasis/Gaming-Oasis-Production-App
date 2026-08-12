@@ -137,6 +137,8 @@ function validRocketLeagueOverlay(value) {
     && typeof value.bestOf === "string"
     && typeof value.flipSides === "boolean"
     && typeof value.playerCardEnabled === "boolean"
+    && typeof value.sponsorWidgetEnabled === "boolean"
+    && validOverlaySponsors(value.sponsors)
     && typeof value.roundNumber === "number"
     && typeof value.winsNeeded === "number"
     && typeof value.leaguePrimary === "string"
