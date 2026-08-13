@@ -4,6 +4,8 @@ Source: `assets/valorant/Valorant Game Overlay Master.psd`
 
 The browser overlay uses the PSD's rendered alpha edges as masks so the live shapes match the master at native 1920 × 1080 resolution.
 
+Colors: see **Browser overlays color scheme** in [`GAMING-OASIS-TOOL-BRAND-GUIDE.md`](./GAMING-OASIS-TOOL-BRAND-GUIDE.md). Map-widget bases and the decider slot use plate `#171717`; team / league colors stay live from Match 1.
+
 | Browser layer | PSD layer | Native bounds |
 | --- | --- | --- |
 | Center rail | Layer 2 copy | 0, 0, 1920, 39 |

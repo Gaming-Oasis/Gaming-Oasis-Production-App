@@ -35,6 +35,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Local live JSON writer outputs (workstation production data)
+/JSONs/FinalOutput.json
+/JSONs/sponsors.json
+
 # typescript
 next-env.d.ts
 /dist/

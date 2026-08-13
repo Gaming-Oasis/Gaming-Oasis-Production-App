@@ -31,7 +31,7 @@ Attach this guide, `AGENTS.md`, and `docs/GAMING-OASIS-TOOL-BRAND-GUIDE.md` when
 ## Brand implementation checklist
 
 - [ ] Master palette values match the brand guide exactly.
-- [ ] Overlay plate fills use `#0E1520` (not `#191919` or other invented near-blacks) for score panels, player cards, sponsor boxes, and map-widget bases.
+- [ ] Browser overlays follow the brand-guide **Browser overlays color scheme**: plate `#171717`, text `#FFFFFF` / `#171717` by contrast, RL boost `#fefe13` only; no `#0E1520`, `#191919`, or `#222222` on overlay plates.
 - [ ] Operational copy uses the system UI font; Oxanium is limited to approved brand and product labels.
 - [ ] Official Gaming Oasis logo files are used without modification.
 - [ ] Primary actions use brand gold and dark contrast text.

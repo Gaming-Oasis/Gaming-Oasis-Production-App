@@ -71,8 +71,8 @@ const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/rocket-league";
 const TEAM_NAME_MAX_PX = 42;
 const TEAM_NAME_MIN_PX = 18;
 const PREFERRED_WHITE_MIN_CONTRAST = 2.5;
-/** Opaque navy plate from the active-player card body (active-border-fill). */
-const SCORE_PANEL_NAVY = "#0E1520";
+/** Opaque plate from the active-player card body (active-border-fill). */
+const SCORE_PANEL_NAVY = "#171717";
 
 function colorChannels(value: string) {
   const hex = value.trim().replace(/^#/, "");

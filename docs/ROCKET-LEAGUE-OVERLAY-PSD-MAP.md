@@ -8,16 +8,18 @@ Sources:
 
 The browser overlay keeps the PSD/header geometry and tints color regions with CSS masks so league primary/secondary, team colors, and Team Info logo backgrounds update live.
 
+Colors: see **Browser overlays color scheme** in [`GAMING-OASIS-TOOL-BRAND-GUIDE.md`](./GAMING-OASIS-TOOL-BRAND-GUIDE.md).
+
 | Browser layer | Asset / source | Native bounds (within 1920 × 300 strip) |
 | --- | --- | --- |
-| Secondary fill | Solid `#0E1520` overlay navy via `secondary-mask.png` | Rectangular score boxes only |
-| Sponsor box | Solid `#0E1520` overlay navy (same token as score / player plates) | Bottom-right `380 × 164`, bottom-aligned with active player plate chrome (native y 201) |
+| Secondary fill | Solid `#171717` plate via `secondary-mask.png` | Rectangular score boxes only |
+| Sponsor box | Solid `#171717` plate (same token as score / player plates) | Bottom-right `380 × 164`, bottom-aligned with active player plate chrome (native y 201) |
 | Logo fills | `logo-one-mask.png` / `logo-two-mask.png` | 97–238 / 832–971 × 99–234 |
 | Name fills | CSS `--team-one` / `--team-two` | 238–707 / 971–1441 × 99–234 |
 | Primary fill | `primary-mask.png` | Frame / top bar / end cap (above fills) |
 | Header text | `overlay.header` (`--header-text`) | 110, 54, 1090, 99 |
 | Team stacks | name + series pills | 238 / 971 × 99–234 |
-| Series pills | Overlay navy `#0E1520` (white when team color is too close) | Under each team name; count = `winsNeeded` |
+| Series pills | Plate `#171717` (white when team color is too close) | Under each team name; count = `winsNeeded` |
 | Score labels/values | text (`--score-text`) | 707 / 1440 × 99–234 |
 
 Layer order: secondary / logo bg / name fills → primary border → logos → text & pills (highest).
@@ -28,9 +30,9 @@ On the fixed 1920 × 1080 canvas, the strip is scaled to **1000 × 156.25** and 
 
 Sources in `public/rocket-league-overlay/nel/`:
 
-- `active-border-fill.png` — dark plate fill from `1_active` (blue chrome removed)
+- `active-border-fill.png` — dark plate fill from `1_active` (blue chrome removed); solid `#171717`
 - `active-border-mask.png` — tintable blue chrome mask, filled with `--league-primary`
-- `active-background.png` (3_active) — navy decorative plate (also used for scoreboard score panels)
+- `active-background.png` (3_active) — decorative plate accents (also used for scoreboard score panels)
 - `active-stat-labels.png` (4_active — Goals / Shots / Saves / Assist)
 
 On the 1920 × 1080 canvas the strip is scaled to **970 × 151.5625** and pinned at **top 930**, with slot `left` offset so plate chrome (native x 108) aligns with scoreboard chrome (native x 89 @ 1000 scale). Native coordinates stay in 1920 × 300 space.
@@ -38,7 +40,7 @@ On the 1920 × 1080 canvas the strip is scaled to **970 × 151.5625** and pinned
 Layout notes:
 
 - Name plate tint from `targetPlayer.team` → Match 1 `teamOne` / `teamTwo` color at native `117, 119, 350 × 75`
-- Boost bar across the full plate interior (`1661 × 12` at `117, 182`)
+- Boost bar across the full plate interior (`1661 × 12` at `117, 182`), fill `#fefe13`
 - Stat values right-aligned in the gaps immediately left of each icon group in `active-stat-labels.png` (icon left edges ≈ `556 / 885 / 1202 / 1550`), vertically aligned to the label band `y 131–169`
 
 Preview data comes from the Rocket League **Debug** tab:

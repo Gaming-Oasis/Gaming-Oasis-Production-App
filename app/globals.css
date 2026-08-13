@@ -373,7 +373,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
 .excel-paste-panel { margin-bottom: 14px; padding: 12px; display: grid; gap: 10px; border: 1px solid color-mix(in srgb, var(--brand) 38%, var(--border)); border-radius: 6px; background: #222222; }
 .excel-paste-panel label { display: grid; gap: 7px; }
 .excel-paste-panel label > span { color: #d0d0d0; font-size: 10px; font-weight: 600; }
-.excel-paste-panel textarea { width: 100%; min-height: 120px; padding: 10px; resize: vertical; border: 1px solid var(--border); border-radius: 5px; background: #0E1520; color: var(--foreground); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.excel-paste-panel textarea { width: 100%; min-height: 120px; padding: 10px; resize: vertical; border: 1px solid var(--border); border-radius: 5px; background: #171717; color: var(--foreground); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .excel-paste-panel textarea:focus { border-color: var(--brand); outline: none; }
 .excel-paste-panel > div { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 7px; }
 .excel-paste-panel > div small { color: var(--muted); font-size: 9px; }

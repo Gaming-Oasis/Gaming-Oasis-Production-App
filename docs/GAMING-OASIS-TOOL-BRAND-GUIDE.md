@@ -24,11 +24,47 @@ This guide defines the shared visual language for Gaming Oasis internal tools, o
 | `--brand-purple` | `#47213F` | Reserved brand depth; use sparingly in tools |
 | `--accent-orange` | `#C7564B` | Warm secondary accent |
 | `--accent-purple` | `#713060` | Cool secondary accent |
-| Overlay navy | `#0E1520` | Browser-overlay plates: score panels, active player card fills, sponsor boxes, VALORANT map-widget bases, and matching dense fills in the operator tool |
+| Overlay plate | `#171717` | Browser-overlay plates: score panels, active player card fills, sponsor boxes, VALORANT map-widget bases, and matching dense fills in the operator tool |
 
 Functional success and error colors may be used for system state. Do not use brand gold to imply an error.
 
-Do **not** invent near-black overlay fills such as `#191919`. When a graphic plate needs a solid dark navy behind scores, sponsors, or map chrome, use `#0E1520`.
+## Browser overlays color scheme
+
+Applies to `/overlays/rocket-league` and `/overlays/valorant` (browser sources for OBS). Operator chrome uses the core tokens above; overlays use this tighter fixed set plus live Match 1 / league colors.
+
+### Fixed colors
+
+| Color | Role |
+| --- | --- |
+| `#171717` | Plate fill — score panels, RL active-player card body (`active-border-fill.png` + CSS plates), sponsor boxes, series pills (default), VALORANT map-widget bases and decider slot, and readable contrast text when white fails on a light fill |
+| `#FFFFFF` | Primary overlay text; series pills when the team color is too close to `#171717` |
+| `#fefe13` | Rocket League boost bar fill only |
+
+### Live colors (from production data)
+
+| Source | Role |
+| --- | --- |
+| League primary / secondary | Scoreboard chrome, header, RL active-player border tint, sponsor gradient, VALORANT rail / map accents |
+| Team one / team two colors | Name fills, RL active name plate, score accents, series context |
+
+Text on live fills picks `#FFFFFF` or `#171717` from contrast (`readableText`). Do not hard-code team or league colors into overlay CSS except as short-lived fallbacks when preview data is missing.
+
+### Mix / shadow helpers only
+
+These are not plate fills. Use only inside `color-mix`, gradients, or text shadows:
+
+- `#121212`, `#111111` — darken live colors in VALORANT panel gradients
+- Translucent black / white (`rgb(0 0 0 / …)`, `rgb(255 255 255 / …)`) — shadows and soft overlays
+
+### Do not use on overlay plates
+
+| Color | Why |
+| --- | --- |
+| `#0E1520` | Retired overlay navy — replaced by `#171717` |
+| `#191919` | Invented near-black |
+| `#222222` | Operator-tool surface only; not an overlay plate (including VALORANT map decider) |
+
+When regenerating RL plate PNGs or CSS solid fills, keep opaque plate pixels at `#171717`.
 
 ## Typography
 
