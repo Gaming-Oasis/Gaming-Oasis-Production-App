@@ -11,13 +11,13 @@ The browser overlay keeps the PSD/header geometry and tints color regions with C
 | Browser layer | Asset / source | Native bounds (within 1920 × 300 strip) |
 | --- | --- | --- |
 | Secondary fill | Solid `#0E1520` overlay navy via `secondary-mask.png` | Rectangular score boxes only |
-| Sponsor box | Solid `#0E1520` overlay navy (same token as score / player plates) | Bottom-right `380 × 164`, bottom-aligned with active player slot |
+| Sponsor box | Solid `#0E1520` overlay navy (same token as score / player plates) | Bottom-right `380 × 164`, bottom-aligned with active player plate chrome (native y 201) |
 | Logo fills | `logo-one-mask.png` / `logo-two-mask.png` | 97–238 / 832–971 × 99–234 |
 | Name fills | CSS `--team-one` / `--team-two` | 238–707 / 971–1441 × 99–234 |
 | Primary fill | `primary-mask.png` | Frame / top bar / end cap (above fills) |
 | Header text | `overlay.header` (`--header-text`) | 110, 54, 1090, 99 |
 | Team stacks | name + series pills | 238 / 971 × 99–234 |
-| Series pills | CSS `--league-secondary` | Under each team name; count = `winsNeeded` |
+| Series pills | Overlay navy `#0E1520` (white when team color is too close) | Under each team name; count = `winsNeeded` |
 | Score labels/values | text (`--score-text`) | 707 / 1440 × 99–234 |
 
 Layer order: secondary / logo bg / name fills → primary border → logos → text & pills (highest).
@@ -33,7 +33,7 @@ Sources in `public/rocket-league-overlay/nel/`:
 - `active-background.png` (3_active) — navy decorative plate (also used for scoreboard score panels)
 - `active-stat-labels.png` (4_active — Goals / Shots / Saves / Assist)
 
-On the 1920 × 1080 canvas the strip is scaled to **970 × 151.5625** and pinned at **`(0, 930)`** (SEL selected-player geometry). Native coordinates stay in 1920 × 300 space.
+On the 1920 × 1080 canvas the strip is scaled to **970 × 151.5625** and pinned at **top 930**, with slot `left` offset so plate chrome (native x 108) aligns with scoreboard chrome (native x 89 @ 1000 scale). Native coordinates stay in 1920 × 300 space.
 
 Layout notes:
 

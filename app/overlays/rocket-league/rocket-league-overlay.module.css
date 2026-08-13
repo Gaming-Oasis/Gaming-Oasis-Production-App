@@ -246,7 +246,7 @@
   width: 44px;
   height: 14px;
   border-radius: 7px;
-  border: 3px solid var(--league-secondary);
+  border: 3px solid var(--pill-color);
   flex: 0 0 auto;
 }
 
@@ -256,7 +256,7 @@
 }
 
 .pillFilled {
-  background: var(--league-secondary);
+  background: var(--pill-color);
   opacity: 1;
 }
 
@@ -300,11 +300,12 @@
 }
 
 /* Active player card — SEL geometry: 970px-wide strip at bottom-left (top 930).
-   Assets are 1920×300; content band is y 110–201. Stat icons/labels sit at y 131–169. */
+   Assets are 1920×300; content band is y 110–201. Stat icons/labels sit at y 131–169.
+   Slot left shifts so plate chrome (native x 108) lines up with scoreboard chrome (native x 89). */
 .activePlayerSlot {
   position: absolute;
   top: 930px;
-  left: 0;
+  left: calc((89 * 1000px / 1920) - (108 * 970px / 1920));
   width: 970px;
   height: 151.5625px;
   overflow: hidden;
@@ -456,12 +457,13 @@
   width: 76px;
 }
 
-/* Same sponsor box as VALORANT, bottom-right; bottom edge matches .activePlayerSlot. */
+/* Same sponsor box as VALORANT, bottom-right; bottom edge matches the visible
+   active-player plate chrome (native content band end y 201 within 1920×300). */
 .sponsorCard {
   position: absolute;
   z-index: 8;
   right: 16px;
-  bottom: calc(1080px - 930px - 151.5625px);
+  bottom: calc(1080px - 930px - (201 * 970px / 1920));
   width: 380px;
   height: 164px;
   display: grid;

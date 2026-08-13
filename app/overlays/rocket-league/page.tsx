@@ -86,17 +86,34 @@ function colorChannels(value: string) {
   return rgb ? rgb.slice(1).map(Number) : [26, 117, 253];
 }
 
-function readableText(color: string) {
+function relativeLuminance(color: string) {
   const linearChannels = colorChannels(color).map((value) => {
     const channel = Math.min(255, Math.max(0, value)) / 255;
     return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
   });
-  const background = 0.2126 * linearChannels[0] + 0.7152 * linearChannels[1] + 0.0722 * linearChannels[2];
+  return 0.2126 * linearChannels[0] + 0.7152 * linearChannels[1] + 0.0722 * linearChannels[2];
+}
+
+function contrastRatio(foreground: string, background: string) {
+  const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function readableText(color: string) {
+  const background = relativeLuminance(color);
   const dark = 0.008568125618069307;
   const whiteContrast = 1.05 / (background + 0.05);
   const darkContrast = (Math.max(background, dark) + 0.05) / (Math.min(background, dark) + 0.05);
   const whiteIsReadable = whiteContrast >= PREFERRED_WHITE_MIN_CONTRAST;
   return whiteIsReadable || whiteContrast >= darkContrast ? "#FFFFFF" : "#171717";
+}
+
+/** Navy pills on the name plate; white when the team color is too close to navy. */
+function seriesPillColor(teamColor: string) {
+  return contrastRatio(SCORE_PANEL_NAVY, teamColor) < PREFERRED_WHITE_MIN_CONTRAST
+    ? "#FFFFFF"
+    : SCORE_PANEL_NAVY;
 }
 
 function isOverlayTeam(value: unknown): value is OverlayTeam {
@@ -232,12 +249,12 @@ function FitTeamName({ name, className }: { name: string; className: string }) {
   return <strong ref={ref} className={className}>{name}</strong>;
 }
 
-function SeriesPills({ wins, needed }: { wins: number; needed: number }) {
+function SeriesPills({ wins, needed, color }: { wins: number; needed: number; color: string }) {
   // Bo1→1, Bo3→2, Bo5→3, Bo7→4. Fill left-to-right: 1st win → 1st pill, etc.
   const count = Math.min(4, Math.max(1, Math.floor(needed) || 1));
   const filled = Math.min(count, Math.max(0, Math.floor(wins) || 0));
   return (
-    <div className={styles.pills} aria-hidden="true">
+    <div className={styles.pills} style={{ "--pill-color": color } as React.CSSProperties} aria-hidden="true">
       {Array.from({ length: count }, (_, index) => {
         const isFilled = index < filled;
         return (
@@ -540,11 +557,11 @@ export default function RocketLeagueOverlay() {
                 {headerText ? <div className={styles.header}>{headerText}</div> : null}
                 <div className={`${styles.teamStack} ${styles.teamOneStack}`}>
                   <FitTeamName name={leftTeam.name} className={`${styles.teamName} ${styles.teamOneName}`} />
-                  <SeriesPills wins={winsOne} needed={winsNeeded} />
+                  <SeriesPills wins={winsOne} needed={winsNeeded} color={seriesPillColor(leftTeam.color)} />
                 </div>
                 <div className={`${styles.teamStack} ${styles.teamTwoStack}`}>
                   <FitTeamName name={rightTeam.name} className={`${styles.teamName} ${styles.teamTwoName}`} />
-                  <SeriesPills wins={winsTwo} needed={winsNeeded} />
+                  <SeriesPills wins={winsTwo} needed={winsNeeded} color={seriesPillColor(rightTeam.color)} />
                 </div>
                 <div className={`${styles.scoreLabel} ${styles.scoreLabelOne}`}>Score</div>
                 <div className={`${styles.scoreLabel} ${styles.scoreLabelTwo}`}>Score</div>

@@ -191,7 +191,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.primaryFill \{[\s\S]*z-index: 3/);
   assert.match(css, /\.teamStack \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
   assert.match(css, /\.score \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
-  assert.match(css, /\.pillFilled \{[\s\S]*background: var\(--league-secondary\)/);
+  assert.match(css, /\.pillFilled \{[\s\S]*background: var\(--pill-color\)/);
   assert.match(css, /\.scoreboardSlot \{[\s\S]*width: 1000px;[\s\S]*height: 156\.25px/);
   assert.match(css, /\.scoreboard \{[\s\S]*transform: scale\(0\.5208333333\);[\s\S]*transform-origin: 0 0/);
   assert.match(css, /Orbitron/);
@@ -203,7 +203,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.secondaryFill \{[\s\S]*background: #0E1520/);
   assert.doesNotMatch(css, /\.secondaryFill \{[\s\S]*background-image/);
   assert.match(css, /\.activeBorder \{[\s\S]*--league-primary[\s\S]*active-border-mask\.png/);
-  assert.match(css, /\.activePlayerSlot \{[\s\S]*top: 930px;[\s\S]*width: 970px/);
+  assert.match(css, /\.activePlayerSlot \{[\s\S]*top: 930px;[\s\S]*left: calc\(\(89 \* 1000px \/ 1920\) - \(108 \* 970px \/ 1920\)\);[\s\S]*width: 970px/);
   assert.match(css, /\.activePlayer \{[\s\S]*transform: scale\(0\.5052083333\)/);
   assert.match(css, /\.activeBoost \{[\s\S]*width: 1661px/);
   assert.match(css, /\.activeStatGoals \{[\s\S]*left: 470px/);
@@ -213,7 +213,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.activeStat \{[\s\S]*top: 131px;[\s\S]*height: 38px/);
   assert.match(page, /SponsorCarousel/);
   assert.match(page, /sponsorWidgetEnabled/);
-  assert.match(css, /\.sponsorCard \{[\s\S]*right: 16px;[\s\S]*bottom: calc\(1080px - 930px - 151\.5625px\)/);
+  assert.match(css, /\.sponsorCard \{[\s\S]*right: 16px;[\s\S]*bottom: calc\(1080px - 930px - \(201 \* 970px \/ 1920\)\)/);
   assert.match(css, /\.sponsorCard \{[\s\S]*background: #0E1520/);
 });
 
