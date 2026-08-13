@@ -355,10 +355,11 @@
   z-index: 5;
 }
 
-/* Name plate: SEL 59×990 / 177×38 on the 970-wide strip → native 117×119 / 350×75. */
+/* Name plate: SEL 59×990 / 177×38 on the 970-wide strip → native 117×119 / 350×75.
+   Above active-border-fill so the team color is not covered by the #171717 plate. */
 .activeNamePlate {
   position: absolute;
-  z-index: 2;
+  z-index: 5;
   top: 119px;
   left: 117px;
   width: 350px;
@@ -385,7 +386,7 @@
   text-transform: uppercase;
   white-space: nowrap;
   line-height: 1;
-  color: var(--active-name-text, #ffffff);
+  color: #ffffff;
 }
 
 /* Boost spans the full plate interior (SEL 59×1022 / 839×6 on the 970-wide strip). */

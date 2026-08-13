@@ -203,6 +203,11 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.secondaryFill \{[\s\S]*background: #171717/);
   assert.doesNotMatch(css, /\.secondaryFill \{[\s\S]*background-image/);
   assert.match(css, /\.activeBorder \{[\s\S]*--league-primary[\s\S]*active-border-mask\.png/);
+  assert.match(page, /activeNamePlate[\s\S]*background: plateColor/);
+  assert.match(page, /readableText\(plateColor\)/);
+  assert.match(page, /color: nameTextColor/);
+  assert.match(page, /activePlateColor/);
+  assert.match(css, /\.activeNamePlate \{[\s\S]*z-index: 5/);
   assert.match(css, /\.activePlayerSlot \{[\s\S]*top: 930px;[\s\S]*left: calc\(\(89 \* 1000px \/ 1920\) - \(108 \* 970px \/ 1920\)\);[\s\S]*width: 970px/);
   assert.match(css, /\.activePlayer \{[\s\S]*transform: scale\(0\.5052083333\)/);
   assert.match(css, /\.activeBoost \{[\s\S]*width: 1661px/);

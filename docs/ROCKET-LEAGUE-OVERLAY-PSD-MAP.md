@@ -39,7 +39,7 @@ On the 1920 × 1080 canvas the strip is scaled to **970 × 151.5625** and pinned
 
 Layout notes:
 
-- Name plate tint from `targetPlayer.team` → Match 1 `teamOne` / `teamTwo` color at native `117, 119, 350 × 75`
+- Name plate tint from `targetPlayer.team` → Match 1 `teamOne` / `teamTwo` color at native `117, 119, 350 × 75` (CSS layer above `active-border-fill.png` so the team color stays visible); name text uses `readableText` (`#FFFFFF` or `#171717`) against that fill
 - Boost bar across the full plate interior (`1661 × 12` at `117, 182`), fill `#fefe13`
 - Stat values right-aligned in the gaps immediately left of each icon group in `active-stat-labels.png` (icon left edges ≈ `556 / 885 / 1202 / 1550`), vertically aligned to the label band `y 131–169`
 

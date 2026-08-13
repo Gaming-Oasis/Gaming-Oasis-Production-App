@@ -380,7 +380,15 @@ function formatActivePlayerName(name: string) {
     : normalized;
 }
 
-function FitActivePlayerName({ name, className }: { name: string; className: string }) {
+function FitActivePlayerName({
+  name,
+  className,
+  style,
+}: {
+  name: string;
+  className: string;
+  style?: React.CSSProperties;
+}) {
   const ref = useRef<HTMLElement>(null);
   const displayName = formatActivePlayerName(name);
 
@@ -407,27 +415,21 @@ function FitActivePlayerName({ name, className }: { name: string; className: str
     };
   }, [displayName]);
 
-  return <strong ref={ref} className={className}>{displayName}</strong>;
+  return <strong ref={ref} className={className} style={style}>{displayName}</strong>;
 }
 
 function ActivePlayerCard({
   player,
   plateColor,
-  nameTextColor,
 }: {
   player: OverlayPlayer;
   plateColor: string;
-  nameTextColor: string;
 }) {
   const boost = player.isDead ? 0 : Math.min(100, Math.max(0, player.boost));
+  const nameTextColor = readableText(plateColor);
   return (
     <div className={styles.activePlayerSlot} aria-label="Active player">
-      <section
-        className={styles.activePlayer}
-        style={{
-          "--active-name-text": nameTextColor,
-        } as React.CSSProperties}
-      >
+      <section className={styles.activePlayer}>
         <img
           className={`${styles.activeLayer} ${styles.activeBackground}`}
           src="/rocket-league-overlay/nel/active-background.png"
@@ -445,7 +447,11 @@ function ActivePlayerCard({
           src="/rocket-league-overlay/nel/active-stat-labels.png"
           alt=""
         />
-        <FitActivePlayerName name={player.name} className={styles.activeName} />
+        <FitActivePlayerName
+          name={player.name}
+          className={styles.activeName}
+          style={{ color: nameTextColor }}
+        />
         <div className={`${styles.activeStat} ${styles.activeStatGoals}`}>{player.goals}</div>
         <div className={`${styles.activeStat} ${styles.activeStatShots}`}>{player.shots}</div>
         <div className={`${styles.activeStat} ${styles.activeStatSaves}`}>{player.saves}</div>
@@ -529,7 +535,6 @@ export default function RocketLeagueOverlay() {
   const activePlateColor = targetPlayer?.team === 1
     ? (overlay?.teamTwo.color ?? "#F8871E")
     : (overlay?.teamOne.color ?? "#1A75FD");
-  const activeNameText = readableText(activePlateColor);
 
   return (
     <main className={styles.viewport}>
@@ -573,7 +578,6 @@ export default function RocketLeagueOverlay() {
               <ActivePlayerCard
                 player={targetPlayer}
                 plateColor={activePlateColor}
-                nameTextColor={activeNameText}
               />
             ) : null}
             {overlay.sponsorWidgetEnabled ? <SponsorCarousel sponsors={overlay.sponsors} /> : null}
