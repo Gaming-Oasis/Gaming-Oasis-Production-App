@@ -73,7 +73,7 @@ The app runs at `http://localhost:3000` by default. Production drafts and sideba
 
 ## Brand system
 
-The interface uses the official Gaming Oasis master-brand system: Oxanium, Brand Gold (`#F6AC18`), Brand Purple (`#47213F`), Accent Orange (`#C7564B`), charcoal surfaces, the official wordmark/favicon, and the official chromatic background. All brand assets and font files are stored locally so the tool retains its intended appearance without an internet connection.
+The interface uses the official Gaming Oasis master-brand system: Oxanium, Brand Gold (`#F6AC18`), Brand Purple (`#47213F`), Accent Orange (`#C7564B`), charcoal surfaces, overlay navy (`#0E1520`) for browser-overlay plates, the official wordmark/favicon, and the official chromatic background. All brand assets and font files are stored locally so the tool retains its intended appearance without an internet connection.
 
 ## Validation
 

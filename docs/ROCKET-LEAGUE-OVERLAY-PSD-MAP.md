@@ -10,7 +10,8 @@ The browser overlay keeps the PSD/header geometry and tints color regions with C
 
 | Browser layer | Asset / source | Native bounds (within 1920 × 300 strip) |
 | --- | --- | --- |
-| Secondary fill | Solid `#0E1520` navy via `secondary-mask.png` | Rectangular score boxes only |
+| Secondary fill | Solid `#0E1520` overlay navy via `secondary-mask.png` | Rectangular score boxes only |
+| Sponsor box | Solid `#0E1520` overlay navy (same token as score / player plates) | Bottom-right `380 × 164`, bottom-aligned with active player slot |
 | Logo fills | `logo-one-mask.png` / `logo-two-mask.png` | 97–238 / 832–971 × 99–234 |
 | Name fills | CSS `--team-one` / `--team-two` | 238–707 / 971–1441 × 99–234 |
 | Primary fill | `primary-mask.png` | Frame / top bar / end cap (above fills) |

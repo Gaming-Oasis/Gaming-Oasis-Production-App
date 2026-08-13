@@ -102,6 +102,7 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(css, /\.mapLogoSmall \{[\s\S]*width: 23px;[\s\S]*height: 23px/);
   assert.match(css, /\.mapLogoSmall \.logoImage \{[\s\S]*width: 22px;[\s\S]*height: 22px/);
   assert.match(css, /\.sponsorCard \{[\s\S]*left: 16px;[\s\S]*bottom: 57\.4px;[\s\S]*width: 380px;[\s\S]*height: 164px/);
+  assert.match(css, /\.sponsorCard \{[\s\S]*background: #0E1520/);
   assert.match(css, /@keyframes sponsorFadeIn/);
   assert.match(css, /@keyframes sponsorFadeOut/);
   assert.match(css, /animation: sponsorFadeIn 400ms ease-out both/);
@@ -199,7 +200,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /active-border-fill\.png/);
   assert.match(page, /active-stat-labels\.png/);
   assert.match(page, /playerCardEnabled && targetPlayer/);
-  assert.match(css, /\.secondaryFill \{[\s\S]*background: #0e1520/);
+  assert.match(css, /\.secondaryFill \{[\s\S]*background: #0E1520/);
   assert.doesNotMatch(css, /\.secondaryFill \{[\s\S]*background-image/);
   assert.match(css, /\.activeBorder \{[\s\S]*--league-primary[\s\S]*active-border-mask\.png/);
   assert.match(css, /\.activePlayerSlot \{[\s\S]*top: 930px;[\s\S]*width: 970px/);
@@ -213,6 +214,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /SponsorCarousel/);
   assert.match(page, /sponsorWidgetEnabled/);
   assert.match(css, /\.sponsorCard \{[\s\S]*right: 16px;[\s\S]*bottom: calc\(1080px - 930px - 151\.5625px\)/);
+  assert.match(css, /\.sponsorCard \{[\s\S]*background: #0E1520/);
 });
 
 test("builds Rocket League overlay state from Match 1 teams and league colors", () => {

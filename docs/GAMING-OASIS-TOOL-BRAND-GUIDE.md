@@ -24,8 +24,11 @@ This guide defines the shared visual language for Gaming Oasis internal tools, o
 | `--brand-purple` | `#47213F` | Reserved brand depth; use sparingly in tools |
 | `--accent-orange` | `#C7564B` | Warm secondary accent |
 | `--accent-purple` | `#713060` | Cool secondary accent |
+| Overlay navy | `#0E1520` | Browser-overlay plates: score panels, active player card fills, sponsor boxes, VALORANT map-widget bases, and matching dense fills in the operator tool |
 
 Functional success and error colors may be used for system state. Do not use brand gold to imply an error.
+
+Do **not** invent near-black overlay fills such as `#191919`. When a graphic plate needs a solid dark navy behind scores, sponsors, or map chrome, use `#0E1520`.
 
 ## Typography
 

@@ -74,7 +74,7 @@
 .secondaryFill {
   z-index: 1;
   /* Solid navy plate matching the active-player card body — no decorative texture. */
-  background: #0e1520;
+  background: #0E1520;
   -webkit-mask-image: url("/rocket-league-overlay/nel/secondary-mask.png");
   mask-image: url("/rocket-league-overlay/nel/secondary-mask.png");
 }
@@ -469,7 +469,7 @@
   overflow: hidden;
   padding: 10px 16px 8px;
   pointer-events: none;
-  background: #191919;
+  background: #0E1520;
   color: #fff;
 }
 
