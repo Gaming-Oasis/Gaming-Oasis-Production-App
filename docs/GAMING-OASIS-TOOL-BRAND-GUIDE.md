@@ -30,14 +30,14 @@ Functional success and error colors may be used for system state. Do not use bra
 
 ## Browser overlays color scheme
 
-Applies to `/overlays/rocket-league` and `/overlays/valorant` (browser sources for OBS). Operator chrome uses the core tokens above; overlays use this tighter fixed set plus live Match 1 / league colors.
+Applies to `/overlays/rocket-league`, `/overlays/rocket-league/vs`, `/overlays/valorant`, and `/overlays/valorant/vs` (browser sources for OBS). Operator chrome uses the core tokens above; overlays use this tighter fixed set plus live Match 1 / league colors.
 
 ### Fixed colors
 
 | Color | Role |
 | --- | --- |
 | `#171717` | Plate fill — score panels, RL active-player card body (`active-border-fill.png` + CSS plates), sponsor boxes, series pills (default), VALORANT map-widget bases and decider slot, and readable contrast text when white fails on a light fill |
-| `#FFFFFF` | Primary overlay text; series pills when the team color is too close to `#171717` |
+| `#FFFFFF` | Primary overlay text; series pills when `readableText` picks white on the team fill |
 | `#fefe13` | Rocket League boost bar fill only |
 
 ### Live colors (from production data)
@@ -47,7 +47,7 @@ Applies to `/overlays/rocket-league` and `/overlays/valorant` (browser sources f
 | League primary / secondary | Scoreboard chrome, header, RL active-player border tint, sponsor gradient, VALORANT rail / map accents |
 | Team one / team two colors | Name fills, RL active name plate, score accents, series context |
 
-Text on live fills picks `#FFFFFF` or `#171717` from contrast (`readableText`). Do not hard-code team or league colors into overlay CSS except as short-lived fallbacks when preview data is missing.
+Text on live fills picks `#FFFFFF` or `#171717` from shared `readableText` in `lib/readable-text.mjs` (white-biased: prefer white unless the fill is clearly light). Logo and other image plates use the same module (`resolveImagePlate` / `detectImagePlate` / `preferredImagePlate`) and only resolve to white or overlay navy `#171717` (legacy pure black maps to navy), favoring white unless the artwork is clearly light. Do not fall back to team color behind logos. Do not hard-code team or league colors into overlay CSS except as short-lived fallbacks when preview data is missing. The Rocket League lobby **VS** screen (when `!hasGame`) uses the same plate, text, and logo helpers on a diagonal team split with a `#171717` VS chip.
 
 ### Mix / shadow helpers only
 

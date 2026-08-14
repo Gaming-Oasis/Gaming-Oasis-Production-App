@@ -2,6 +2,10 @@ import { createServer } from "node:http";
 import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  mergeRocketLeagueOverlayLive,
+  startRocketLeagueStatsApiClient,
+} from "../lib/rocket-league-stats-api.mjs";
 
 export const LIVE_JSON_PORT = 4877;
 export const LEAGUE_HUB_PUBLIC_URL = "https://hub.gamingoasis.gg/api/public";
@@ -127,6 +131,36 @@ function validRocketLeagueOverlayGame(value) {
     && (value.targetPlayer === null || validRocketLeagueOverlayPlayer(value.targetPlayer));
 }
 
+function validRocketLeagueOverlayActivity(value) {
+  return value && typeof value === "object"
+    && typeof value.id === "string"
+    && typeof value.type === "string"
+    && typeof value.primaryName === "string"
+    && typeof value.secondaryName === "string"
+    && typeof value.team === "number"
+    && typeof value.createdAt === "string";
+}
+
+function validRocketLeagueOverlayActivities(value) {
+  return Array.isArray(value) && value.every(validRocketLeagueOverlayActivity);
+}
+
+function validRocketLeagueOverlayReplayCard(value) {
+  return value === null
+    || (value && typeof value === "object"
+      && typeof value.scorerName === "string"
+      && typeof value.assisterName === "string"
+      && typeof value.team === "number"
+      && typeof value.scorerId === "string"
+      && typeof value.goals === "number"
+      && typeof value.assists === "number"
+      && typeof value.saves === "number"
+      && typeof value.shots === "number"
+      && typeof value.score === "number"
+      && typeof value.ballSpeedMph === "number"
+      && typeof value.createdAt === "string");
+}
+
 function validRocketLeagueOverlay(value) {
   const connection = value?.connection;
   return value && typeof value === "object"
@@ -138,6 +172,7 @@ function validRocketLeagueOverlay(value) {
     && typeof value.flipSides === "boolean"
     && typeof value.playerCardEnabled === "boolean"
     && typeof value.sponsorWidgetEnabled === "boolean"
+    && typeof value.broadcastSetupEnabled === "boolean"
     && validOverlaySponsors(value.sponsors)
     && typeof value.roundNumber === "number"
     && typeof value.winsNeeded === "number"
@@ -145,10 +180,13 @@ function validRocketLeagueOverlay(value) {
     && typeof value.leagueSecondary === "string"
     && validOverlayTeam(value.teamOne)
     && validOverlayTeam(value.teamTwo)
+    && typeof value.debugLiveOverride === "boolean"
     && connection && typeof connection === "object"
     && typeof connection.connected === "boolean"
     && (connection.lastEventAt === null || typeof connection.lastEventAt === "string")
-    && validRocketLeagueOverlayGame(value.game);
+    && validRocketLeagueOverlayGame(value.game)
+    && validRocketLeagueOverlayActivities(value.activities)
+    && validRocketLeagueOverlayReplayCard(value.replayCard ?? null);
 }
 
 function validValorantMapData(value) {
@@ -166,6 +204,7 @@ export async function startJsonWriter({
   port = LIVE_JSON_PORT,
   outputDir = path.resolve("JSONs"),
   fetchImpl = fetch,
+  enableRocketLeagueStatsApi = true,
 } = {}) {
   await mkdir(outputDir, { recursive: true });
   let writeQueue = Promise.resolve();
@@ -173,6 +212,9 @@ export async function startJsonWriter({
   let valorantOverlayState = null;
   let rocketLeagueOverlayState = null;
   const mapArtworkCache = new Map();
+  const rocketLeagueStatsApi = enableRocketLeagueStatsApi
+    ? startRocketLeagueStatsApiClient()
+    : null;
 
   const server = createServer(async (request, response) => {
     const headers = corsHeaders(request.headers.origin);
@@ -185,7 +227,18 @@ export async function startJsonWriter({
 
     if (request.method === "GET" && request.url === "/api/live-json/status") {
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ ok: true, outputDir, lastWrite }));
+      response.end(JSON.stringify({
+        ok: true,
+        outputDir,
+        lastWrite,
+        rocketLeagueStatsApi: rocketLeagueStatsApi
+          ? {
+              connected: Boolean(rocketLeagueStatsApi.getFeed().connection?.connected),
+              lastEventAt: rocketLeagueStatsApi.getFeed().connection?.lastEventAt ?? null,
+              broadcastSetupEnabled: rocketLeagueStatsApi.getBroadcastSetupEnabled?.() !== false,
+            }
+          : null,
+      }));
       return;
     }
 
@@ -204,8 +257,10 @@ export async function startJsonWriter({
         response.writeHead(204).end();
         return;
       }
+      const liveFeed = rocketLeagueStatsApi?.getFeed() ?? null;
+      const merged = mergeRocketLeagueOverlayLive(rocketLeagueOverlayState, liveFeed);
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify(rocketLeagueOverlayState));
+      response.end(JSON.stringify(merged));
       return;
     }
 
@@ -286,6 +341,47 @@ export async function startJsonWriter({
       return;
     }
 
+    if (request.method === "POST" && request.url === "/api/rocket-league/match-paused") {
+      try {
+        const payload = await readBody(request);
+        const paused = payload?.paused !== false && payload?.paused !== "false";
+        if (!rocketLeagueStatsApi) {
+          response.writeHead(503, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: "Rocket League Stats API client is disabled" }));
+          return;
+        }
+        const connected = Boolean(rocketLeagueStatsApi.getFeed().connection?.connected);
+        if (!connected) {
+          response.writeHead(503, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: "Rocket League Stats API is not connected" }));
+          return;
+        }
+        const result = await rocketLeagueStatsApi.setMatchPaused?.(paused);
+        if (!result?.sent) {
+          response.writeHead(502, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({
+            error: "Could not send SetMatchPaused to Rocket League",
+            ...result,
+          }));
+          return;
+        }
+        response.writeHead(result.confirmed ? 200 : 202, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({
+          ok: true,
+          paused: Boolean(paused),
+          confirmed: Boolean(result.confirmed),
+          matchPaused: Boolean(result.matchPaused),
+          hint: result.confirmed
+            ? undefined
+            : "Command sent, but Rocket League did not confirm. Pause usually requires this client to be match admin/host (not only a spectator).",
+        }));
+      } catch (error) {
+        response.writeHead(400, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: error.message || "Invalid pause request" }));
+      }
+      return;
+    }
+
     if (request.method !== "POST" || request.url !== "/api/live-json") {
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "Not found" }));
@@ -326,7 +422,10 @@ export async function startJsonWriter({
         await Promise.all(payload.files.map((file) => writeJsonWithRetry(outputDir, file.filename, file.data)));
         if (nextValorantMapData !== undefined) await writeJsonWithRetry(outputDir, VALORANT_MAP_DATA_FILENAME, nextValorantMapData);
         if (nextValorantOverlay !== undefined) valorantOverlayState = nextValorantOverlay;
-        if (nextRocketLeagueOverlay !== undefined) rocketLeagueOverlayState = nextRocketLeagueOverlay;
+        if (nextRocketLeagueOverlay !== undefined) {
+          rocketLeagueOverlayState = nextRocketLeagueOverlay;
+          rocketLeagueStatsApi?.setBroadcastSetupEnabled?.(nextRocketLeagueOverlay.broadcastSetupEnabled !== false);
+        }
         lastWrite = new Date().toISOString();
       });
       await writeQueue;
@@ -351,7 +450,10 @@ export async function startJsonWriter({
     server,
     outputDir,
     url: `http://127.0.0.1:${activePort}`,
-    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+    close: async () => {
+      rocketLeagueStatsApi?.stop();
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    },
   };
 }
 

@@ -32,6 +32,41 @@
   text-rendering: geometricPrecision;
 }
 
+/* VS ↔ gameplay: short opacity crossfade (both layers briefly overlap). */
+.sceneLayer {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+  pointer-events: none;
+}
+
+.sceneLayerVs {
+  z-index: 2;
+}
+
+.sceneLayerGame {
+  z-index: 1;
+}
+
+.sceneLayerEntering {
+  animation: sceneFadeIn 280ms ease-out both;
+}
+
+.sceneLayerExiting {
+  animation: sceneFadeOut 280ms ease-out both;
+}
+
+@keyframes sceneFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sceneFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 .scoreboardSlot {
   /* Reference HUD places the 1920×300 strip at 1000px wide in the upper left. */
   position: absolute;
@@ -233,6 +268,33 @@
   color: var(--team-two-text);
 }
 
+/* Standing — upper-right of each name plate (nameFill / teamStack bounds). */
+.teamStanding {
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  right: 14px;
+  max-width: 140px;
+  overflow: hidden;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: right;
+  pointer-events: none;
+}
+
+.teamOneStanding {
+  color: var(--team-one-text);
+}
+
+.teamTwoStanding {
+  color: var(--team-two-text);
+}
+
 .pills {
   display: flex;
   flex-direction: row;
@@ -299,6 +361,58 @@
   left: 1440px;
 }
 
+/* Clock — text only in the scoreboard end-cap (primary mask 1562–1837 × 146–241).
+   Slot matches the mask pocket; glyph centering is optical (Orbitron + letter-spacing).
+   Overtime pill sits just above the slot, centered on the same end-cap. */
+.clockSlot {
+  position: absolute;
+  z-index: 6;
+  top: 146px;
+  left: 1562px;
+  width: 275px;
+  height: 95px;
+  pointer-events: none;
+}
+
+.overtimePill {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: 179px;
+  height: 45px;
+  display: block;
+  transform: translateX(-50%);
+  animation: overtimePillEnter 220ms ease-out both;
+}
+
+.clock {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-sizing: border-box;
+  color: var(--score-text);
+  font-weight: 800;
+  font-size: 60px;
+  line-height: 1;
+}
+
+/* Inner span: letter-spacing adds a trailing gap that flex-centers left of ink;
+   pad the start by the same amount. Slight upward nudge for optical centering in the end-cap. */
+.clockValue {
+  display: block;
+  letter-spacing: 0.04em;
+  padding-left: 0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  transform: translateY(-0.03em);
+}
+
 /* Active player card — SEL geometry: 970px-wide strip at bottom-left (top 930).
    Assets are 1920×300; content band is y 110–201. Stat icons/labels sit at y 131–169.
    Slot left shifts so plate chrome (native x 108) lines up with scoreboard chrome (native x 89). */
@@ -309,6 +423,11 @@
   width: 970px;
   height: 151.5625px;
   overflow: hidden;
+  animation: activePlayerEnter 280ms ease-out both;
+}
+
+.activePlayerSlotExiting {
+  animation: activePlayerExit 280ms ease-out both;
 }
 
 .activePlayer {
@@ -534,6 +653,17 @@
   50% { background-position: 52% 50%; }
 }
 
+@keyframes overtimePillEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 @keyframes sponsorFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -544,9 +674,452 @@
   to { opacity: 0; }
 }
 
+/* Activities only — fixed upper-right column; REPLAY badge and scorer card are separate stage elements. */
+.upperRightRail {
+  position: absolute;
+  z-index: 9;
+  top: 16px;
+  right: 16px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  pointer-events: none;
+}
+
+/*
+ * Fixed stage chip — not inside .upperRightRail.
+ * Horizontal: left of activity column (right 16 + width 220 + gap 40 = 276).
+ * Vertical: badge center matches rendered .clockValue optical center
+ *   (scaled clockSlot mid Y + .clockValue translateY(-0.03em) at 60px × scale).
+ * Label uses clock’s on-stage size: 60px × (1000/1920) — clock stays 60px in native
+ * scoreboard space; this chip is unscaled so it must use the scaled equivalent.
+ */
+.replayIndicator {
+  position: absolute;
+  z-index: 9;
+  top: calc(
+    (146 * 1000px / 1920)
+    + (95 * 1000px / 1920) / 2
+    - (0.03 * 60px * 1000 / 1920)
+    - (80px * 1000 / 1920) / 2
+  );
+  right: 276px;
+  box-sizing: border-box;
+  width: calc(360px * 1000 / 1920);
+  height: calc(80px * 1000 / 1920);
+  padding: calc(10px * 1000 / 1920) calc(30px * 1000 / 1920) calc(10px * 1000 / 1920)
+    calc(26px * 1000 / 1920);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #171717;
+  color: #ffffff;
+  overflow: hidden;
+  text-align: center;
+  pointer-events: none;
+  animation:
+    activityEnter 300ms ease-out both,
+    replayBreathe 2.4s ease-in-out 300ms infinite;
+}
+
+.replayIndicatorExiting {
+  animation: activityExit 260ms ease-out both;
+}
+
+.replayIndicator::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--replay-accent, var(--league-secondary, #ffffff));
+}
+
+.replayLabel {
+  display: block;
+  font-size: calc(60px * 1000 / 1920);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding-left: 0.08em;
+  text-transform: uppercase;
+  color: #ffffff;
+  line-height: 1;
+}
+
+/*
+ * Goal Replay scorer plate — center-stage, not activity rail / ActivePlayerCard.
+ * Slot anchors the card’s geometric center at 50% × 75% of the 1920×1080 stage
+ * (midpoint of the lower half). Animation transform lives on the inner card so it
+ * does not fight the slot’s translate(-50%, -50%).
+ * Size 560×156 → bottom edge at 810+78 = 888, clears active player (~top 930).
+ */
+.replayScorerSlot {
+  position: absolute;
+  z-index: 8;
+  top: 75%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 560px;
+  pointer-events: none;
+}
+
+.replayScorerCard {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 156px;
+  background: #171717;
+  color: #ffffff;
+  overflow: hidden;
+  animation: replayScorerEnter 300ms ease-out both;
+}
+
+.replayScorerCardExiting {
+  animation: replayScorerExit 260ms ease-out both;
+}
+
+.replayScorerAccent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--replay-scorer-accent, var(--league-secondary, #ffffff));
+}
+
+.replayScorerInner {
+  position: relative;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 10px 16px 10px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.replayScorerTitleRow {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.replayScorerHeader {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ffffff;
+  opacity: 0.78;
+  line-height: 1.2;
+}
+
+.replayScorerSpeed {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: #ffffff;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.replayScorerSpeed em {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+
+.replayScorerSpeed strong {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.replayScorerSpeed span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.replayScorerMain {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.replayScorerLogoFrame {
+  flex: 0 0 56px;
+  width: 56px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.replayScorerLogoFrame img {
+  max-width: 78%;
+  max-height: 78%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.replayScorerIdentity {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 52px;
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.replayScorerName {
+  display: block;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.05;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replayScorerAssist {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.82;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replayScorerStats {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0;
+  margin-top: 0;
+  border-top: 1px solid rgb(255 255 255 / 14%);
+  padding-top: 7px;
+}
+
+.replayScorerStats span {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.replayScorerStats span + span {
+  border-left: 1px solid rgb(255 255 255 / 12%);
+}
+
+.replayScorerStats em {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+
+.activityStack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.activityToast {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 6px 12px 6px 10px;
+  background: #171717;
+  color: #ffffff;
+  overflow: hidden;
+  text-align: right;
+  animation: activityEnter 300ms ease-out both;
+}
+
+.activityToastExiting {
+  animation: activityExit 260ms ease-out both;
+}
+
+.activityToast::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--activity-accent, #1A75FD);
+}
+
+.activityType {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffffff;
+  opacity: 0.8;
+  line-height: 1.2;
+}
+
+.activityPrimary {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activitySecondary {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes activityEnter {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes activityExit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+@keyframes replayBreathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.78; }
+}
+
+@keyframes replayScorerEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes replayScorerExit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes activePlayerEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes activePlayerExit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sponsorCard::before,
   .sponsorSlide {
     animation: none !important;
+  }
+
+  .activityToast,
+  .activityToastExiting,
+  .replayIndicator,
+  .replayIndicatorExiting,
+  .replayScorerCard,
+  .replayScorerCardExiting,
+  .activePlayerSlot,
+  .activePlayerSlotExiting,
+  .sceneLayerEntering,
+  .sceneLayerExiting {
+    animation: none !important;
+  }
+
+  .replayScorerCard,
+  .replayScorerCardExiting {
+    transform: none !important;
   }
 }

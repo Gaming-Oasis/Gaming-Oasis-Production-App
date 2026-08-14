@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  resolveRocketLeagueLiveTeamColor,
+  resolveRocketLeagueSideTeams,
+} from "../../../lib/rocket-league-live.mjs";
+import {
+  readableText,
+  resolveImagePlate,
+} from "../../../lib/readable-text.mjs";
+import { VsMatchupStage } from "../vs/VsMatchupOverlay";
 import styles from "./rocket-league-overlay.module.css";
 
 type OverlayTeam = {
@@ -47,6 +56,30 @@ type OverlaySponsor = {
   logo: string;
 };
 
+type OverlayActivity = {
+  id: string;
+  type: string;
+  primaryName: string;
+  secondaryName: string;
+  team: number;
+  createdAt: string;
+};
+
+type OverlayReplayCard = {
+  scorerName: string;
+  assisterName: string;
+  team: number;
+  scorerId: string;
+  goals: number;
+  assists: number;
+  saves: number;
+  shots: number;
+  score: number;
+  /** GoalScored.GoalSpeed converted to MPH for on-air display; 0 when unknown. */
+  ballSpeedMph: number;
+  createdAt: string;
+};
+
 type RocketLeagueOverlayState = {
   version: 1;
   updatedAt: string;
@@ -63,57 +96,22 @@ type RocketLeagueOverlayState = {
   leagueSecondary: string;
   teamOne: OverlayTeam;
   teamTwo: OverlayTeam;
+  debugLiveOverride: boolean;
   connection: OverlayConnection;
   game: OverlayGame;
+  activities: OverlayActivity[];
+  replayCard: OverlayReplayCard | null;
 };
 
 const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/rocket-league";
 const TEAM_NAME_MAX_PX = 42;
 const TEAM_NAME_MIN_PX = 18;
-const PREFERRED_WHITE_MIN_CONTRAST = 2.5;
 /** Opaque plate from the active-player card body (active-border-fill). */
 const SCORE_PANEL_NAVY = "#171717";
 
-function colorChannels(value: string) {
-  const hex = value.trim().replace(/^#/, "");
-  if (/^[0-9a-f]{3}$/i.test(hex)) {
-    return hex.split("").map((part) => Number.parseInt(`${part}${part}`, 16));
-  }
-  if (/^[0-9a-f]{6}$/i.test(hex)) {
-    return [0, 2, 4].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-  }
-  const rgb = value.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-  return rgb ? rgb.slice(1).map(Number) : [26, 117, 253];
-}
-
-function relativeLuminance(color: string) {
-  const linearChannels = colorChannels(color).map((value) => {
-    const channel = Math.min(255, Math.max(0, value)) / 255;
-    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * linearChannels[0] + 0.7152 * linearChannels[1] + 0.0722 * linearChannels[2];
-}
-
-function contrastRatio(foreground: string, background: string) {
-  const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
-  const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
-  return (light + 0.05) / (dark + 0.05);
-}
-
-function readableText(color: string) {
-  const background = relativeLuminance(color);
-  const dark = 0.008568125618069307;
-  const whiteContrast = 1.05 / (background + 0.05);
-  const darkContrast = (Math.max(background, dark) + 0.05) / (Math.min(background, dark) + 0.05);
-  const whiteIsReadable = whiteContrast >= PREFERRED_WHITE_MIN_CONTRAST;
-  return whiteIsReadable || whiteContrast >= darkContrast ? "#FFFFFF" : "#171717";
-}
-
-/** Navy pills on the name plate; white when the team color is too close to navy. */
+/** Series pills on the team name plate — same white/navy pick as readableText. */
 function seriesPillColor(teamColor: string) {
-  return contrastRatio(SCORE_PANEL_NAVY, teamColor) < PREFERRED_WHITE_MIN_CONTRAST
-    ? "#FFFFFF"
-    : SCORE_PANEL_NAVY;
+  return readableText(teamColor);
 }
 
 function isOverlayTeam(value: unknown): value is OverlayTeam {
@@ -151,6 +149,37 @@ function isOverlayGame(value: unknown): value is OverlayGame {
     && (game.targetPlayer === null || isOverlayPlayer(game.targetPlayer));
 }
 
+function isOverlayActivity(value: unknown): value is OverlayActivity {
+  if (!value || typeof value !== "object") return false;
+  const activity = value as Record<string, unknown>;
+  return typeof activity.id === "string"
+    && typeof activity.type === "string"
+    && typeof activity.primaryName === "string"
+    && typeof activity.secondaryName === "string"
+    && typeof activity.team === "number"
+    && typeof activity.createdAt === "string";
+}
+
+function isOverlayActivities(value: unknown): value is OverlayActivity[] {
+  return Array.isArray(value) && value.every(isOverlayActivity);
+}
+
+function isOverlayReplayCard(value: unknown): value is OverlayReplayCard {
+  if (!value || typeof value !== "object") return false;
+  const card = value as Record<string, unknown>;
+  return typeof card.scorerName === "string"
+    && typeof card.assisterName === "string"
+    && typeof card.team === "number"
+    && typeof card.scorerId === "string"
+    && typeof card.goals === "number"
+    && typeof card.assists === "number"
+    && typeof card.saves === "number"
+    && typeof card.shots === "number"
+    && typeof card.score === "number"
+    && typeof card.ballSpeedMph === "number"
+    && typeof card.createdAt === "string";
+}
+
 function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
   if (!value || typeof value !== "object") return false;
   const state = value as Record<string, unknown>;
@@ -170,10 +199,22 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && typeof state.leagueSecondary === "string"
     && isOverlayTeam(state.teamOne)
     && isOverlayTeam(state.teamTwo)
+    && typeof state.debugLiveOverride === "boolean"
     && Boolean(connection)
     && typeof connection.connected === "boolean"
     && (connection.lastEventAt === null || typeof connection.lastEventAt === "string")
-    && isOverlayGame(state.game);
+    && isOverlayGame(state.game)
+    && isOverlayActivities(state.activities)
+    && (state.replayCard === null
+      || state.replayCard === undefined
+      || isOverlayReplayCard(state.replayCard));
+}
+
+function formatClock(totalSeconds: number) {
+  const safe = Math.max(0, Math.floor(totalSeconds) || 0);
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function isOverlaySponsors(value: unknown): value is OverlaySponsor[] {
@@ -198,7 +239,15 @@ function localLogoUrl(value: string) {
   return value;
 }
 
-function StableLogo({ src, alt }: { src: string; alt: string }) {
+function StableLogo({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
   const [displayedSource, setDisplayedSource] = useState("");
 
   useEffect(() => {
@@ -216,23 +265,43 @@ function StableLogo({ src, alt }: { src: string; alt: string }) {
   }, [src]);
 
   return displayedSource
-    ? <img key={displayedSource} className={styles.logoImage} src={displayedSource} alt={alt} onError={() => setDisplayedSource("")} />
+    ? (
+      <img
+        key={displayedSource}
+        className={className ?? styles.logoImage}
+        src={displayedSource}
+        alt={alt}
+        onError={() => setDisplayedSource("")}
+      />
+    )
     : null;
 }
 
-function FitTeamName({ name, className }: { name: string; className: string }) {
+function FitTeamName({
+  name,
+  className,
+  maxPx = TEAM_NAME_MAX_PX,
+  minPx = TEAM_NAME_MIN_PX,
+}: {
+  name: string;
+  className: string;
+  maxPx?: number;
+  minPx?: number;
+}) {
   const ref = useRef<HTMLElement>(null);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     let cancelled = false;
+    const maxSize = Math.max(minPx, maxPx);
+    const minSize = Math.min(minPx, maxSize);
 
     function fit() {
       if (cancelled || !el) return;
-      let size = TEAM_NAME_MAX_PX;
+      let size = maxSize;
       el.style.fontSize = `${size}px`;
-      while (size > TEAM_NAME_MIN_PX && el.scrollWidth > el.clientWidth + 0.5) {
+      while (size > minSize && el.scrollWidth > el.clientWidth + 0.5) {
         size -= 1;
         el.style.fontSize = `${size}px`;
       }
@@ -244,7 +313,7 @@ function FitTeamName({ name, className }: { name: string; className: string }) {
     return () => {
       cancelled = true;
     };
-  }, [name]);
+  }, [name, maxPx, minPx]);
 
   return <strong ref={ref} className={className}>{name}</strong>;
 }
@@ -418,17 +487,301 @@ function FitActivePlayerName({
   return <strong ref={ref} className={className} style={style}>{displayName}</strong>;
 }
 
+const ACTIVITY_EXIT_MS = 260;
+const ACTIVE_PLAYER_EXIT_MS = 280;
+const REPLAY_EXIT_MS = 260;
+const REPLAY_SCORER_EXIT_MS = 260;
+/** Quick opacity crossfade between lobby VS and in-game HUD. */
+const SCENE_FADE_MS = 280;
+
+function motionExitMs(fullMs: number) {
+  if (typeof window !== "undefined"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return 0;
+  }
+  return fullMs;
+}
+
+function useScenePresence(show: boolean) {
+  const [stage, setStage] = useState<{ exiting: boolean } | null>(show ? { exiting: false } : null);
+  const exitTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (show) {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setStage({ exiting: false });
+      return undefined;
+    }
+
+    setStage((current) => {
+      if (!current || current.exiting) return current;
+      return { ...current, exiting: true };
+    });
+    return undefined;
+  }, [show]);
+
+  useEffect(() => {
+    if (!stage?.exiting) return undefined;
+    if (exitTimerRef.current != null) window.clearTimeout(exitTimerRef.current);
+    const ms = motionExitMs(SCENE_FADE_MS);
+    if (ms === 0) {
+      setStage(null);
+      return undefined;
+    }
+    exitTimerRef.current = window.setTimeout(() => {
+      exitTimerRef.current = null;
+      setStage(null);
+    }, ms);
+    return () => {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+  }, [stage?.exiting]);
+
+  useEffect(() => () => {
+    if (exitTimerRef.current != null) window.clearTimeout(exitTimerRef.current);
+  }, []);
+
+  return stage;
+}
+
+function ReplayIndicatorHost({
+  show,
+  accent,
+}: {
+  show: boolean;
+  accent: string;
+}) {
+  const [stage, setStage] = useState<{ exiting: boolean } | null>(null);
+  const exitTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (show) {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setStage({ exiting: false });
+      return undefined;
+    }
+
+    setStage((current) => {
+      if (!current || current.exiting) return current;
+      return { ...current, exiting: true };
+    });
+    return undefined;
+  }, [show]);
+
+  useEffect(() => {
+    if (!stage?.exiting) return undefined;
+    if (exitTimerRef.current != null) window.clearTimeout(exitTimerRef.current);
+    exitTimerRef.current = window.setTimeout(() => {
+      exitTimerRef.current = null;
+      setStage(null);
+    }, motionExitMs(REPLAY_EXIT_MS));
+    return () => {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+  }, [stage?.exiting]);
+
+  useEffect(() => () => {
+    if (exitTimerRef.current != null) window.clearTimeout(exitTimerRef.current);
+  }, []);
+
+  if (!stage) return null;
+
+  return (
+    <div
+      className={`${styles.replayIndicator}${stage.exiting ? ` ${styles.replayIndicatorExiting}` : ""}`}
+      style={{ "--replay-accent": accent } as React.CSSProperties}
+      aria-label="Replay"
+      aria-hidden={stage.exiting || undefined}
+    >
+      <strong className={styles.replayLabel}>REPLAY</strong>
+    </div>
+  );
+}
+
+function resolveReplayScorerTeam(
+  teamNum: number,
+  flipSides: boolean,
+  teamOne: OverlayTeam,
+  teamTwo: OverlayTeam,
+) {
+  const { left, right } = resolveRocketLeagueSideTeams(flipSides, teamOne, teamTwo);
+  return (teamNum === 1 ? right : left) as OverlayTeam;
+}
+
+function ReplayScorerCard({
+  card,
+  accent,
+  logoSrc,
+  logoAlt,
+  logoBackground,
+  exiting = false,
+}: {
+  card: OverlayReplayCard;
+  accent: string;
+  logoSrc: string;
+  logoAlt: string;
+  logoBackground: string;
+  exiting?: boolean;
+}) {
+  const nameTextColor = readableText(accent);
+  const showBallSpeed = Number.isFinite(card.ballSpeedMph) && card.ballSpeedMph > 0;
+  return (
+    <div className={styles.replayScorerSlot}>
+      <article
+        className={`${styles.replayScorerCard}${exiting ? ` ${styles.replayScorerCardExiting}` : ""}`}
+        style={{ "--replay-scorer-accent": accent } as React.CSSProperties}
+        aria-label="Goal replay scorer"
+        aria-hidden={exiting || undefined}
+      >
+        <div className={styles.replayScorerAccent} aria-hidden="true" />
+        <div className={styles.replayScorerInner}>
+          <div className={styles.replayScorerTitleRow}>
+            <strong className={styles.replayScorerHeader}>Goal Replay</strong>
+            {showBallSpeed ? (
+              <span className={styles.replayScorerSpeed}>
+                <em>Speed</em>
+                <strong>{Math.round(card.ballSpeedMph)}</strong>
+                <span>MPH</span>
+              </span>
+            ) : null}
+          </div>
+          <div className={styles.replayScorerMain}>
+            <div
+              className={styles.replayScorerLogoFrame}
+              style={{ background: resolveImagePlate(logoBackground) }}
+            >
+              <StableLogo src={logoSrc} alt={logoAlt} />
+            </div>
+            <div className={styles.replayScorerIdentity} style={{ background: accent }}>
+              <span className={styles.replayScorerName} style={{ color: nameTextColor }}>
+                {card.scorerName}
+              </span>
+              {card.assisterName ? (
+                <span
+                  className={styles.replayScorerAssist}
+                  style={{ color: nameTextColor }}
+                >
+                  Assist {card.assisterName}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className={styles.replayScorerStats}>
+            <span><em>G</em>{card.goals}</span>
+            <span><em>A</em>{card.assists}</span>
+            <span><em>SV</em>{card.saves}</span>
+            <span><em>SH</em>{card.shots}</span>
+            <span><em>SCR</em>{card.score}</span>
+          </div>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function ReplayScorerCardHost({
+  show,
+  card,
+  accent,
+  logoSrc,
+  logoAlt,
+  logoBackground,
+}: {
+  show: boolean;
+  card: OverlayReplayCard | null;
+  accent: string;
+  logoSrc: string;
+  logoAlt: string;
+  logoBackground: string;
+}) {
+  const [stage, setStage] = useState<{
+    card: OverlayReplayCard;
+    accent: string;
+    logoSrc: string;
+    logoAlt: string;
+    logoBackground: string;
+    exiting: boolean;
+  } | null>(null);
+  const exitTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (show && card?.scorerName) {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setStage({ card, accent, logoSrc, logoAlt, logoBackground, exiting: false });
+      return undefined;
+    }
+
+    setStage((current) => {
+      if (!current || current.exiting) return current;
+      return { ...current, exiting: true };
+    });
+    return undefined;
+  }, [show, card, accent, logoSrc, logoAlt, logoBackground]);
+
+  useEffect(() => {
+    if (!stage?.exiting) return undefined;
+    if (exitTimerRef.current != null) window.clearTimeout(exitTimerRef.current);
+    exitTimerRef.current = window.setTimeout(() => {
+      exitTimerRef.current = null;
+      setStage(null);
+    }, motionExitMs(REPLAY_SCORER_EXIT_MS));
+    return () => {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+  }, [stage?.exiting]);
+
+  useEffect(() => () => {
+    if (exitTimerRef.current != null) window.clearTimeout(exitTimerRef.current);
+  }, []);
+
+  if (!stage) return null;
+  return (
+    <ReplayScorerCard
+      card={stage.card}
+      accent={stage.accent}
+      logoSrc={stage.logoSrc}
+      logoAlt={stage.logoAlt}
+      logoBackground={stage.logoBackground}
+      exiting={stage.exiting}
+    />
+  );
+}
+
 function ActivePlayerCard({
   player,
   plateColor,
+  exiting = false,
 }: {
   player: OverlayPlayer;
   plateColor: string;
+  exiting?: boolean;
 }) {
   const boost = player.isDead ? 0 : Math.min(100, Math.max(0, player.boost));
   const nameTextColor = readableText(plateColor);
   return (
-    <div className={styles.activePlayerSlot} aria-label="Active player">
+    <div
+      className={`${styles.activePlayerSlot}${exiting ? ` ${styles.activePlayerSlotExiting}` : ""}`}
+      aria-label="Active player"
+      aria-hidden={exiting || undefined}
+    >
       <section className={styles.activePlayer}>
         <img
           className={`${styles.activeLayer} ${styles.activeBackground}`}
@@ -458,6 +811,175 @@ function ActivePlayerCard({
         <div className={`${styles.activeStat} ${styles.activeStatAssists}`}>{player.assists}</div>
         <progress className={styles.activeBoost} max={100} value={boost} aria-label="Boost" />
       </section>
+    </div>
+  );
+}
+
+function ActivePlayerCardHost({
+  show,
+  player,
+  plateColor,
+}: {
+  show: boolean;
+  player: OverlayPlayer | null;
+  plateColor: string;
+}) {
+  const [stage, setStage] = useState<{
+    player: OverlayPlayer;
+    plateColor: string;
+    exiting: boolean;
+  } | null>(null);
+  const exitTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (show && player) {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setStage({ player, plateColor, exiting: false });
+      return undefined;
+    }
+
+    setStage((current) => {
+      if (!current || current.exiting) return current;
+      return { ...current, exiting: true };
+    });
+    return undefined;
+  }, [show, player, plateColor]);
+
+  useEffect(() => {
+    if (!stage?.exiting) return undefined;
+    const delay = motionExitMs(ACTIVE_PLAYER_EXIT_MS);
+    exitTimerRef.current = window.setTimeout(() => {
+      exitTimerRef.current = null;
+      setStage(null);
+    }, delay);
+    return () => {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+  }, [stage?.exiting]);
+
+  if (!stage) return null;
+  return (
+    <ActivePlayerCard
+      player={stage.player}
+      plateColor={stage.plateColor}
+      exiting={stage.exiting}
+    />
+  );
+}
+
+type StagedActivity = OverlayActivity & { exiting: boolean; enterNonce: number };
+
+function ActivityFeed({
+  activities,
+  flipSides,
+  teamOne,
+  teamTwo,
+}: {
+  activities: OverlayActivity[];
+  flipSides: boolean;
+  teamOne: OverlayTeam;
+  teamTwo: OverlayTeam;
+}) {
+  const visible = useMemo(
+    () => activities.filter((activity) => activity.primaryName.trim()),
+    [activities],
+  );
+  const [staged, setStaged] = useState<StagedActivity[]>([]);
+  const exitTimersRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    const visibleIds = new Set(visible.map((activity) => activity.id));
+    const reduced = motionExitMs(ACTIVITY_EXIT_MS) === 0;
+
+    if (reduced) {
+      for (const timer of exitTimersRef.current.values()) window.clearTimeout(timer);
+      exitTimersRef.current.clear();
+      setStaged(visible.map((activity) => ({ ...activity, exiting: false, enterNonce: 1 })));
+    } else {
+      setStaged((prev) => {
+        const prevById = new Map(prev.map((entry) => [entry.id, entry]));
+        // Stable enterNonce while visible so poll updates do not remount and re-run enter motion.
+        const live = visible.map((activity) => {
+          const prior = prevById.get(activity.id);
+          if (prior && !prior.exiting) {
+            return { ...activity, exiting: false, enterNonce: prior.enterNonce };
+          }
+          return {
+            ...activity,
+            exiting: false,
+            enterNonce: (prior?.enterNonce ?? 0) + 1,
+          };
+        });
+        const leaving = prev
+          .filter((entry) => !visibleIds.has(entry.id))
+          .map((entry) => ({ ...entry, exiting: true }));
+        return [...live, ...leaving];
+      });
+    }
+
+    for (const id of visibleIds) {
+      const timer = exitTimersRef.current.get(id);
+      if (timer != null) {
+        window.clearTimeout(timer);
+        exitTimersRef.current.delete(id);
+      }
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    for (const entry of staged) {
+      if (!entry.exiting || exitTimersRef.current.has(entry.id)) continue;
+      const timer = window.setTimeout(() => {
+        exitTimersRef.current.delete(entry.id);
+        setStaged((prev) => prev.filter((item) => item.id !== entry.id));
+      }, motionExitMs(ACTIVITY_EXIT_MS));
+      exitTimersRef.current.set(entry.id, timer);
+    }
+
+    for (const [id, timer] of [...exitTimersRef.current.entries()]) {
+      if (!staged.some((entry) => entry.id === id && entry.exiting)) {
+        window.clearTimeout(timer);
+        exitTimersRef.current.delete(id);
+      }
+    }
+  }, [staged]);
+
+  useEffect(() => () => {
+    for (const timer of exitTimersRef.current.values()) window.clearTimeout(timer);
+    exitTimersRef.current.clear();
+  }, []);
+
+  if (!staged.length) return null;
+  return (
+    <div className={styles.activityStack}>
+      {staged.map((activity) => {
+        const accent = resolveRocketLeagueLiveTeamColor(
+          activity.team,
+          flipSides,
+          teamOne,
+          teamTwo,
+        );
+        return (
+          <div
+            key={`${activity.id}-${activity.enterNonce}`}
+            className={`${styles.activityToast}${activity.exiting ? ` ${styles.activityToastExiting}` : ""}`}
+            style={{ "--activity-accent": accent } as React.CSSProperties}
+            aria-hidden={activity.exiting || undefined}
+          >
+            <strong className={styles.activityType}>{activity.type}</strong>
+            <span className={styles.activityPrimary}>{activity.primaryName}</span>
+            {activity.secondaryName ? (
+              <span className={styles.activitySecondary}>{activity.secondaryName}</span>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -501,12 +1023,20 @@ export default function RocketLeagueOverlay() {
   }, []);
 
   const game = overlay?.game;
-  const showScoreboard = Boolean(overlay);
   const live = Boolean(game?.hasGame);
-  const leftTeam = overlay?.flipSides ? overlay.teamTwo : overlay?.teamOne;
-  const rightTeam = overlay?.flipSides ? overlay.teamOne : overlay?.teamTwo;
-  const scoreOne = overlay?.flipSides ? (game?.scoreTwo ?? 0) : (game?.scoreOne ?? 0);
-  const scoreTwo = overlay?.flipSides ? (game?.scoreOne ?? 0) : (game?.scoreTwo ?? 0);
+  const showLobbyVs = Boolean(overlay && !live);
+  const showInGame = Boolean(overlay && live);
+  const vsScene = useScenePresence(showLobbyVs);
+  const gameScene = useScenePresence(showInGame);
+  const sides = overlay
+    ? resolveRocketLeagueSideTeams(overlay.flipSides, overlay.teamOne, overlay.teamTwo)
+    : null;
+  const leftTeam = sides?.left;
+  const rightTeam = sides?.right;
+  // Left is always live Blue (scoreOne / TeamNum 0); Right is always Orange (scoreTwo / TeamNum 1).
+  // Swap assignment only mirrors Match identity onto those fixed game sides.
+  const scoreOne = game?.scoreOne ?? 0;
+  const scoreTwo = game?.scoreTwo ?? 0;
 
   const cssVars = useMemo(() => {
     if (!overlay || !leftTeam || !rightTeam) return undefined;
@@ -519,8 +1049,8 @@ export default function RocketLeagueOverlay() {
       "--team-two": rightTeam.color,
       "--team-one-text": teamOneText,
       "--team-two-text": teamTwoText,
-      "--logo-one-bg": leftTeam.logoBackground,
-      "--logo-two-bg": rightTeam.logoBackground,
+      "--logo-one-bg": resolveImagePlate(leftTeam.logoBackground),
+      "--logo-two-bg": resolveImagePlate(rightTeam.logoBackground),
       "--score-text": readableText(SCORE_PANEL_NAVY),
       "--header-text": readableText(overlay.leaguePrimary),
     } as React.CSSProperties;
@@ -532,9 +1062,40 @@ export default function RocketLeagueOverlay() {
   const winsTwo = Number.parseInt(rightTeam?.seriesScore || "0", 10) || 0;
   const targetPlayer = game?.targetPlayer ?? null;
   const showActivePlayer = Boolean(overlay?.playerCardEnabled && targetPlayer);
-  const activePlateColor = targetPlayer?.team === 1
-    ? (overlay?.teamTwo.color ?? "#F8871E")
-    : (overlay?.teamOne.color ?? "#1A75FD");
+  const activePlateColor = targetPlayer && overlay
+    ? resolveRocketLeagueLiveTeamColor(
+      targetPlayer.team,
+      overlay.flipSides,
+      overlay.teamOne,
+      overlay.teamTwo,
+    )
+    : "#1A75FD";
+  const clockText = live ? formatClock(game?.timeSeconds ?? 0) : "";
+  const showOvertime = Boolean(live && game?.isOT);
+  const activities = overlay?.activities ?? [];
+  const replayCard = overlay?.replayCard && isOverlayReplayCard(overlay.replayCard)
+    ? overlay.replayCard
+    : null;
+  const showReplayScorer = Boolean(game?.isReplay && replayCard?.scorerName);
+  const replayScorerTeam = replayCard && overlay
+    ? resolveReplayScorerTeam(
+      replayCard.team,
+      overlay.flipSides,
+      overlay.teamOne,
+      overlay.teamTwo,
+    )
+    : null;
+  const replayScorerAccent = replayCard && overlay
+    ? resolveRocketLeagueLiveTeamColor(
+      replayCard.team,
+      overlay.flipSides,
+      overlay.teamOne,
+      overlay.teamTwo,
+    )
+    : overlay?.leagueSecondary ?? "#FCC500";
+  const replayScorerLogo = String(replayScorerTeam?.logo ?? "").trim();
+  const replayScorerLogoAlt = `${String(replayScorerTeam?.name ?? "Team").trim() || "Team"} logo`;
+  const replayScorerLogoBackground = resolveImagePlate(replayScorerTeam?.logoBackground);
 
   return (
     <main className={styles.viewport}>
@@ -543,44 +1104,107 @@ export default function RocketLeagueOverlay() {
         className={styles.frame}
         style={{ transform: `translate3d(${frame.left}px, 0, 0) scale(${frame.scale})` }}
       >
-        {overlay && showScoreboard && leftTeam && rightTeam ? (
-          <div className={styles.stage} style={cssVars} aria-label="Rocket League game scoreboard">
-            <div className={styles.scoreboardSlot}>
-              <section className={styles.scoreboard}>
-                <div className={`${styles.layer} ${styles.secondaryFill}`} />
-                <div className={`${styles.layer} ${styles.logoFill} ${styles.logoFillOne}`} />
-                <div className={`${styles.layer} ${styles.logoFill} ${styles.logoFillTwo}`} />
-                <div className={`${styles.nameFill} ${styles.nameFillOne}`} />
-                <div className={`${styles.nameFill} ${styles.nameFillTwo}`} />
-                <div className={`${styles.layer} ${styles.primaryFill}`} />
-                <div className={`${styles.logoFrame} ${styles.logoOne}`}>
-                  <StableLogo src={leftTeam.logo} alt={`${leftTeam.name} logo`} />
-                </div>
-                <div className={`${styles.logoFrame} ${styles.logoTwo}`}>
-                  <StableLogo src={rightTeam.logo} alt={`${rightTeam.name} logo`} />
-                </div>
-                {headerText ? <div className={styles.header}>{headerText}</div> : null}
-                <div className={`${styles.teamStack} ${styles.teamOneStack}`}>
-                  <FitTeamName name={leftTeam.name} className={`${styles.teamName} ${styles.teamOneName}`} />
-                  <SeriesPills wins={winsOne} needed={winsNeeded} color={seriesPillColor(leftTeam.color)} />
-                </div>
-                <div className={`${styles.teamStack} ${styles.teamTwoStack}`}>
-                  <FitTeamName name={rightTeam.name} className={`${styles.teamName} ${styles.teamTwoName}`} />
-                  <SeriesPills wins={winsTwo} needed={winsNeeded} color={seriesPillColor(rightTeam.color)} />
-                </div>
-                <div className={`${styles.scoreLabel} ${styles.scoreLabelOne}`}>Score</div>
-                <div className={`${styles.scoreLabel} ${styles.scoreLabelTwo}`}>Score</div>
-                <div className={`${styles.score} ${styles.scoreOne}`}><span key={`one-${scoreOne}`}>{live ? scoreOne : 0}</span></div>
-                <div className={`${styles.score} ${styles.scoreTwo}`}><span key={`two-${scoreTwo}`}>{live ? scoreTwo : 0}</span></div>
-              </section>
-            </div>
-            {showActivePlayer && targetPlayer ? (
-              <ActivePlayerCard
+        {overlay && leftTeam && rightTeam && vsScene ? (
+          <div
+            className={`${styles.sceneLayer} ${styles.sceneLayerVs}${vsScene.exiting ? ` ${styles.sceneLayerExiting}` : ` ${styles.sceneLayerEntering}`}`}
+            aria-hidden={vsScene.exiting || undefined}
+          >
+            <VsMatchupStage
+              leftTeam={leftTeam}
+              rightTeam={rightTeam}
+              winsNeeded={winsNeeded}
+              leaguePrimary={overlay.leaguePrimary}
+              leagueSecondary={overlay.leagueSecondary}
+              sponsors={overlay.sponsors}
+              sponsorWidgetEnabled={overlay.sponsorWidgetEnabled}
+              ariaLabel="Rocket League lobby versus screen"
+              skipEnterAnimation
+            />
+          </div>
+        ) : null}
+        {overlay && leftTeam && rightTeam && gameScene ? (
+          <div
+            className={`${styles.sceneLayer} ${styles.sceneLayerGame}${gameScene.exiting ? ` ${styles.sceneLayerExiting}` : ` ${styles.sceneLayerEntering}`}`}
+            aria-hidden={gameScene.exiting || undefined}
+          >
+            <div className={styles.stage} style={cssVars} aria-label="Rocket League game scoreboard">
+              <div className={styles.scoreboardSlot}>
+                <section className={styles.scoreboard}>
+                  <div className={`${styles.layer} ${styles.secondaryFill}`} />
+                  <div className={`${styles.layer} ${styles.logoFill} ${styles.logoFillOne}`} />
+                  <div className={`${styles.layer} ${styles.logoFill} ${styles.logoFillTwo}`} />
+                  <div className={`${styles.nameFill} ${styles.nameFillOne}`} />
+                  <div className={`${styles.nameFill} ${styles.nameFillTwo}`} />
+                  <div className={`${styles.layer} ${styles.primaryFill}`} />
+                  <div className={`${styles.logoFrame} ${styles.logoOne}`}>
+                    <StableLogo src={leftTeam.logo} alt={`${leftTeam.name} logo`} />
+                  </div>
+                  <div className={`${styles.logoFrame} ${styles.logoTwo}`}>
+                    <StableLogo src={rightTeam.logo} alt={`${rightTeam.name} logo`} />
+                  </div>
+                  {headerText ? <div className={styles.header}>{headerText}</div> : null}
+                  <div className={`${styles.teamStack} ${styles.teamOneStack}`}>
+                    {leftTeam.standing.trim() ? (
+                      <span className={`${styles.teamStanding} ${styles.teamOneStanding}`}>{leftTeam.standing.trim()}</span>
+                    ) : null}
+                    <FitTeamName name={leftTeam.name} className={`${styles.teamName} ${styles.teamOneName}`} />
+                    <SeriesPills wins={winsOne} needed={winsNeeded} color={seriesPillColor(leftTeam.color)} />
+                  </div>
+                  <div className={`${styles.teamStack} ${styles.teamTwoStack}`}>
+                    {rightTeam.standing.trim() ? (
+                      <span className={`${styles.teamStanding} ${styles.teamTwoStanding}`}>{rightTeam.standing.trim()}</span>
+                    ) : null}
+                    <FitTeamName name={rightTeam.name} className={`${styles.teamName} ${styles.teamTwoName}`} />
+                    <SeriesPills wins={winsTwo} needed={winsNeeded} color={seriesPillColor(rightTeam.color)} />
+                  </div>
+                  <div className={`${styles.scoreLabel} ${styles.scoreLabelOne}`}>Score</div>
+                  <div className={`${styles.scoreLabel} ${styles.scoreLabelTwo}`}>Score</div>
+                  <div className={`${styles.score} ${styles.scoreOne}`}><span key={`one-${scoreOne}`}>{scoreOne}</span></div>
+                  <div className={`${styles.score} ${styles.scoreTwo}`}><span key={`two-${scoreTwo}`}>{scoreTwo}</span></div>
+                  <div
+                    className={styles.clockSlot}
+                    aria-label={showOvertime ? "Overtime game clock" : "Game clock"}
+                  >
+                    {showOvertime ? (
+                      <img
+                        className={styles.overtimePill}
+                        src="/rocket-league-overlay/nel/overtime-pill.png"
+                        alt="Overtime"
+                      />
+                    ) : null}
+                    <div className={styles.clock}>
+                      <span className={styles.clockValue}>{clockText}</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <ActivePlayerCardHost
+                show={showActivePlayer}
                 player={targetPlayer}
                 plateColor={activePlateColor}
               />
-            ) : null}
-            {overlay.sponsorWidgetEnabled ? <SponsorCarousel sponsors={overlay.sponsors} /> : null}
+              <ReplayIndicatorHost
+                show={Boolean(game?.isReplay)}
+                accent={overlay.leagueSecondary}
+              />
+              <ReplayScorerCardHost
+                show={showReplayScorer}
+                card={replayCard}
+                accent={replayScorerAccent}
+                logoSrc={replayScorerLogo}
+                logoAlt={replayScorerLogoAlt}
+                logoBackground={replayScorerLogoBackground}
+              />
+              <aside className={styles.upperRightRail} aria-label="Match activities">
+                <ActivityFeed
+                  activities={activities}
+                  flipSides={overlay.flipSides}
+                  teamOne={overlay.teamOne}
+                  teamTwo={overlay.teamTwo}
+                />
+              </aside>
+              {overlay.sponsorWidgetEnabled ? <SponsorCarousel sponsors={overlay.sponsors} /> : null}
+            </div>
           </div>
         ) : null}
       </div>

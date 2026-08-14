@@ -19,10 +19,13 @@ Colors: see **Browser overlays color scheme** in [`GAMING-OASIS-TOOL-BRAND-GUIDE
 | Primary fill | `primary-mask.png` | Frame / top bar / end cap (above fills) |
 | Header text | `overlay.header` (`--header-text`) | 110, 54, 1090, 99 |
 | Team stacks | name + series pills | 238 / 971 × 99–234 |
-| Series pills | Plate `#171717` (white when team color is too close) | Under each team name; count = `winsNeeded` |
+| Team standings | text (`standing`, `--team-*-text`) | Upper-right of each name plate; `top 8` / `right 14` within stack |
+| Series pills | `readableText(teamColor)` → `#FFFFFF` / `#171717` | Under each team name; count = `winsNeeded` |
 | Score labels/values | text (`--score-text`) | 707 / 1440 × 99–234 |
+| Clock | text in end-cap | `.clockSlot` 1562 × 146, 275 × 95 |
+| Overtime pill | `overtime-pill.png` (179 × 45) | Centered above clock slot; 8px gap; only when `game.isOT` |
 
-Layer order: secondary / logo bg / name fills → primary border → logos → text & pills (highest).
+Layer order: secondary / logo bg / name fills → primary border → logos → text, standings & pills (highest).
 
 On the fixed 1920 × 1080 canvas, the strip is scaled to **1000 × 156.25** and pinned to the **upper left** `(0, 0)` — matching the SEL/NEL HUD (`width: 1000px` on the 1920 × 300 asset). Internal layer coordinates stay in native 1920 × 300 space.
 
@@ -39,8 +42,8 @@ On the 1920 × 1080 canvas the strip is scaled to **970 × 151.5625** and pinned
 
 Layout notes:
 
-- Name plate tint from `targetPlayer.team` → Match 1 `teamOne` / `teamTwo` color at native `117, 119, 350 × 75` (CSS layer above `active-border-fill.png` so the team color stays visible); name text uses `readableText` (`#FFFFFF` or `#171717`) against that fill
-- Boost bar across the full plate interior (`1661 × 12` at `117, 182`), fill `#fefe13`
+- Name plate tint from `targetPlayer.team` (live TeamNum 0=Blue / 1=Orange) via `resolveRocketLeagueLiveTeamColor` → Left/Right Match color after `flipSides` (Left is always Blue, Right always Orange; default Blue→teamOne/home, Orange→teamTwo/away; swapped Blue→teamTwo/away, Orange→teamOne/home) at native `117, 119, 350 × 75` (CSS layer above `active-border-fill.png` so the team color stays visible); name text uses `readableText` (`#FFFFFF` or `#171717`) against that fill
+- Boost bar across the full plate interior (`1661 × 12` at `117, 182`), fill `#fefe13` (not team-tinted)
 - Stat values right-aligned in the gaps immediately left of each icon group in `active-stat-labels.png` (icon left edges ≈ `556 / 885 / 1202 / 1550`), vertically aligned to the label band `y 131–169`
 
 Preview data comes from the Rocket League **Debug** tab:
@@ -48,7 +51,76 @@ Preview data comes from the Rocket League **Debug** tab:
 1. Enable debug (`debugActivePlayerEnabled`)
 2. Select a scenario (`debugActivePlayerScenario`)
 
-Scenario ids: `skyljn3`, `long-name`, `team-two`, `high-stats`, `empty-boost`, `full-boost`. When debug is off, `targetPlayer` stays `null`. Live SOS feed is not wired yet.
+Scenario ids: `skyljn3`, `long-name`, `team-two`, `high-stats`, `empty-boost`, `full-boost`. When debug is off, live fields come from the **Rocket League Game Data API** (Stats API) via the local JSON writer.
+
+## Live Game Data API
+
+Official August 2026 Game Data API (`MatchStatsExporter_TA`). Docs: https://www.rocketleague.com/developer/stats-api
+
+Enable before launching Rocket League by editing `TAGame\Config\TAStatsAPI.ini` or `DefaultStatsAPI.ini`:
+
+```ini
+[TAGame.MatchStatsExporter_TA]
+PacketSendRate=30
+Port=49123
+WebPort=49124
+```
+
+The writer connects to TCP `127.0.0.1:49123` first (brace-delimited JSON; `Data` is often a stringified JSON blob), then falls back to WebSocket `ws://127.0.0.1:49124`. Override with `ROCKET_LEAGUE_STATS_WS_URL`, `ROCKET_LEAGUE_STATS_TCP_HOST`, and `ROCKET_LEAGUE_STATS_TCP_PORT` if needed.
+
+### Broadcast setup commands (outbound)
+
+When **Auto broadcast camera** is enabled (default), the writer sends Stats API commands on the same socket:
+
+| When | Commands |
+| --- | --- |
+| Lobby (`MatchCreated`) | `ChangePOV` `{ Perspective: "Camera_Director" }` only (native UI still visible) |
+| Countdown start (`MatchInitialized` / `CountdownBegin`, or `hasGame` rising edge; `RoundStarted` fallback) | `SetHUDVisibility` `{ bVisible: false }` + Director cam (retried once after ~1.5s). Full hide — Stats API has no partial H-key mode |
+| Match end (`MatchEnded` / `MatchDestroyed`) | `SetHUDVisibility` `{ bVisible: true }` |
+| Operator **Admin control** → **Pause match** / **Resume match** | `SetMatchPaused` `{ bPaused: true/false }` via `POST /api/rocket-league/match-paused`. Waits briefly for `MatchPaused` / `MatchUnpaused`. Usually requires this RL client to be **match admin/host**, not spectator-only. |
+
+Requires the RL client to be **spectating**. Manual fallback remains: press **9**, then **H** twice.
+
+Live fields merged into the overlay package when Debug is off (identity graphics stay on Match 1 / Team Info / league colors — never from the Game Data API):
+
+- Scoreboard clock (`TimeSeconds`), overtime pill above the clock when `bOvertime` / `game.isOT`, in-game scores
+- Active player card from spectated target (`Boost` is spectator-scoped)
+- Corner activities from `StatfeedEvent` / `GoalScored` (suppressed while `bReplay` / `game.isReplay` — rail clears when replay starts)
+- Replay indicator from `bReplay` → `game.isReplay` (fixed stage chip left of activities, vertically aligned with the scoreboard clock; Debug **Replay** toggle previews it)
+- Replay scorer info card (`replayCard`): center-stage Goal Replay plate (not in the activity rail). Scorer + optional assister + match totals (`Goals` / `Assists` / `Saves` / `Shots` / `Score`) + ball speed MPH from `GoalScored.GoalSpeed` (UU/s → MPH when raw ≥ 250). Shown while `isReplay` is true and cleared shortly after replay ends. Team color + logo via `resolveRocketLeagueLiveTeamColor` / side teams + `StableLogo`.
+- Goal/Assist rail toasts fire once from the first `GoalScored`; they are cleared when replay starts, and a duplicate `GoalScored` during/after replay (or through the next `RoundStarted`) does not re-toast the same goal.
+
+Team names, logos, logo backgrounds, team colors, league chrome, series pills, header, and sponsors are operator-tool only.
+
+## VS matchup overlay (`/overlays/rocket-league/vs`)
+
+Dedicated OBS browser source for the full-frame **VS** matchup. It polls Match 1 Rocket League overlay state (`/api/overlays/rocket-league`) — not gated by live `hasGame`.
+
+The live scoreboard route (`/overlays/rocket-league`) still shows this same scene automatically when the feed reports no active match (`hasGame` false): before the first live state, after a winner (`bHasWinner` / podium / `MatchEnded` / `MatchDestroyed`), and on the next-match / empty-lobby screen (`MatchCreated` or `UpdateState` with no players) until the **3-2-1 countdown** (`MatchInitialized` / `CountdownBegin`). `RoundStarted` (kickoff) is only a fallback if those countdown events are missed. Clear in-game evidence (running clock under 5:00, a score, ball movement, or replay) also dismisses VS. Once countdown has started, a blank `Players[]` UpdateState must not bring VS back. VS ↔ gameplay uses a **280ms opacity crossfade** (`.sceneLayerEntering` / `.sceneLayerExiting`) so the cut is a clean fade, not a hard swap.
+
+| Element | Notes |
+| --- | --- |
+| Diagonal wedges | Clip-path corner-to-corner **top-left → bottom-right**. Each wedge holds a full-stage logo bleed + 50% team-color wash. |
+| Logo bleed | Plate under wash; logos sit **above** the wash (`z-index: 2`). Same ~75% stage hitbox; anchors share VS midline (`top: 50%`): left **25%**, right **75%**. |
+| Color wash | Team-color **gradient** via `--lobby-vs-wash` (soft near VS → stronger at outer corner). Left fades to bottom-left; right to top-right. |
+| Seam | `#171717` strip (~10px) rotated with `atan(-1920 / 1080)` on that same diagonal |
+| Corner clusters | Name + standing + series pills — left bottom-left, right top-right (`readableText` / `seriesPillColor`) |
+| Center mark | Compact `#171717` plate, white **VS**, Orbitron 800 |
+| Sponsor box | Same `380×164` plate and bottom height as in-game; **horizontally centered** (`.sponsorCard`) |
+
+Shared markup/styles live under `app/overlays/vs/` (`VsMatchupStage`). VALORANT uses the same graphic at `/overlays/valorant/vs` (always-on dedicated feed only).
+
+Operator: Browser overlay tab → **VS matchup URL** (Copy / Open). Debug: turn **Has game** off to preview lobby VS on the live scoreboard overlay.
+
+## Upper-right (activities + replay badge)
+
+| Element | Notes |
+| --- | --- |
+| Activity rail (`.upperRightRail`) | `top/right: 16px`, width `220px` — activity toasts only |
+| Replay badge (`.replayIndicator`) | Separate absolute stage chip — **not** inside `.upperRightRail`. `right: 276px` (16 + 220 + **40px gap**). Plate sized to match clock’s **on-stage** type: `width/height/padding` = native `360×80` / `10 30 10 26` × `(1000/1920)` → ≈ **187.5×41.67px**, padding ≈ **5.21 / 15.63 / 5.21 / 13.54**. Vertical: badge center matches rendered `.clockValue` optical center (scaled clockSlot mid Y + `translateY(-0.03em)` at 60px × scale) — `top: calc(... - (80px * 1000 / 1920) / 2)` ≈ **79.01px**. Plate `#171717`, Orbitron `calc(60px * 1000 / 1920)` ≈ **31.25px** (clock stays **60px** in native scoreboard space), `4px` right accent (league secondary); enter 300ms / exit 260ms with restrained opacity breathe. |
+| Goal Replay card (`.replayScorerSlot` + `.replayScorerCard`) | Center stage, **outside** `.upperRightRail`. Slot: `top: 75%; left: 50%; transform: translate(-50%, -50%)` (card geometric center at lower-half midpoint / y≈810). Card `560×156` plate `#171717`, left team-accent bar, logo tile + team-color name band, header `Goal Replay`, optional `SPEED ## MPH` from `ballSpeedMph`, G/A/SV/SH/SCR row. Enter/exit on the inner card only (`translateY`) so slot centering stays intact. Clears active player (~top 930): bottom edge ≈ 888. |
+
+Debug override still drives the same fields for graphics preview without the game (Debug **Replay** synthesizes a sample scorer card from the target player when none is set, including sample ball speed). Match / player stats are not persisted yet (future stats page).
 
 Regenerate scoreboard masks with:
 

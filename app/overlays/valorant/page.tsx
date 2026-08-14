@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  colorChannels,
+  readableText,
+  resolveImagePlate,
+} from "../../../lib/readable-text.mjs";
 import styles from "./valorant-overlay.module.css";
 
 type OverlayTeam = {
@@ -47,7 +52,6 @@ type ValorantOverlayState = {
 };
 
 const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/valorant";
-const PREFERRED_WHITE_MIN_CONTRAST = 2.5;
 
 function isOverlayTeam(value: unknown): value is OverlayTeam {
   if (!value || typeof value !== "object") return false;
@@ -98,34 +102,9 @@ function isMapWidget(value: unknown): value is MapWidget {
   });
 }
 
-function colorChannels(value: string) {
-  const hex = value.trim().replace(/^#/, "");
-  if (/^[0-9a-f]{3}$/i.test(hex)) {
-    return hex.split("").map((part) => Number.parseInt(`${part}${part}`, 16));
-  }
-  if (/^[0-9a-f]{6}$/i.test(hex)) {
-    return [0, 2, 4].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-  }
-  const rgb = value.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-  return rgb ? rgb.slice(1).map(Number) : [100, 78, 181];
-}
-
-function readableText(color: string) {
-  const linearChannels = colorChannels(color).map((value) => {
-    const channel = Math.min(255, Math.max(0, value)) / 255;
-    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-  });
-  const background = 0.2126 * linearChannels[0] + 0.7152 * linearChannels[1] + 0.0722 * linearChannels[2];
-  const dark = 0.008568125618069307;
-  const whiteContrast = 1.05 / (background + 0.05);
-  const darkContrast = (Math.max(background, dark) + 0.05) / (Math.min(background, dark) + 0.05);
-  const whiteIsReadable = whiteContrast >= PREFERRED_WHITE_MIN_CONTRAST;
-  return whiteIsReadable || whiteContrast >= darkContrast ? "#FFFFFF" : "#171717";
-}
-
 function mixColors(first: string, second: string, firstWeight = 0.52) {
-  const firstChannels = colorChannels(first);
-  const secondChannels = colorChannels(second);
+  const firstChannels = colorChannels(first, [100, 78, 181]);
+  const secondChannels = colorChannels(second, [100, 78, 181]);
   const channels = firstChannels.map((value, index) => Math.round(
     value * firstWeight + secondChannels[index] * (1 - firstWeight),
   ));
@@ -412,8 +391,8 @@ export default function ValorantOverlay() {
       "--team-two-shadow": teamTwoText === "#171717" ? "rgb(255 255 255 / 28%)" : "rgb(0 0 0 / 36%)",
       "--header-text": headerText,
       "--header-shadow": headerText === "#171717" ? "rgb(255 255 255 / 28%)" : "rgb(0 0 0 / 42%)",
-      "--logo-one-bg": overlay.teamOne.logoBackground,
-      "--logo-two-bg": overlay.teamTwo.logoBackground,
+      "--logo-one-bg": resolveImagePlate(overlay.teamOne.logoBackground),
+      "--logo-two-bg": resolveImagePlate(overlay.teamTwo.logoBackground),
     } as React.CSSProperties;
   }, [overlay]);
 

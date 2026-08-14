@@ -1,0 +1,334 @@
+@font-face {
+  font-family: "Orbitron";
+  src: url("/rocket-league-overlay/fonts/Orbitron-VariableFont_wght.ttf") format("truetype");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: block;
+}
+
+.viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: 0 0;
+}
+
+.stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: transparent;
+  font-family: "Orbitron", "Arial Narrow", system-ui, sans-serif;
+  text-rendering: geometricPrecision;
+}
+
+.pills {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  height: 16px;
+}
+
+.pill {
+  box-sizing: border-box;
+  width: 44px;
+  height: 14px;
+  border-radius: 7px;
+  border: 3px solid var(--pill-color);
+  flex: 0 0 auto;
+}
+
+.pillEmpty {
+  background: transparent;
+  opacity: 0.45;
+}
+
+.pillFilled {
+  background: var(--pill-color);
+  opacity: 1;
+}
+
+.sponsorCard {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: calc(1080px - 930px - (201 * 970px / 1920));
+  width: 380px;
+  height: 164px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 10px 16px 8px;
+  pointer-events: none;
+  background: #171717;
+  color: #fff;
+  transform: translateX(-50%);
+}
+
+.sponsorCard::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  pointer-events: none;
+  background: linear-gradient(90deg, var(--league-primary), var(--league-secondary));
+  background-position: 50% 50%;
+  background-size: 115% 100%;
+  animation: mapAccentGradientDrift 20s ease-in-out infinite;
+  will-change: background-position;
+}
+
+.sponsorSlide {
+  position: absolute;
+  inset: 3px 16px 0;
+  display: grid;
+  place-items: center;
+}
+
+.sponsorSlideEntering {
+  animation: sponsorFadeIn 400ms ease-out both;
+}
+
+.sponsorSlideLeaving {
+  animation: sponsorFadeOut 400ms ease-out both;
+}
+
+.sponsorSlide img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 348px;
+  max-height: 128px;
+  object-fit: contain;
+  object-position: center;
+}
+
+.sponsorSlide span {
+  max-width: 348px;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .035em;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@keyframes mapAccentGradientDrift {
+  0%, 100% { background-position: 48% 50%; }
+  50% { background-position: 52% 50%; }
+}
+
+@keyframes sponsorFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sponsorFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.lobbyVs {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  animation: lobbyVsEnter 280ms ease-out both;
+  pointer-events: none;
+}
+
+.lobbyVsNoEnter {
+  animation: none;
+}
+
+.lobbyVsWedge {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.lobbyVsWedgeLeft {
+  clip-path: polygon(0 0, 0 100%, 100% 100%);
+}
+
+.lobbyVsWedgeRight {
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.lobbyVsBleed {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #FFFFFF;
+}
+
+.lobbyVsBleedLogo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  display: block;
+  width: 75%;
+  height: 75%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  object-position: center;
+  transform: translate(-50%, -50%);
+}
+
+.lobbyVsWedgeLeft .lobbyVsBleedLogo {
+  left: 25%;
+  top: 50%;
+}
+
+.lobbyVsWedgeRight .lobbyVsBleedLogo {
+  left: 75%;
+  top: 50%;
+}
+
+.lobbyVsWash {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  --lobby-vs-wash: #171717;
+  background-image: linear-gradient(
+    to bottom left,
+    color-mix(in srgb, var(--lobby-vs-wash) 12%, transparent),
+    color-mix(in srgb, var(--lobby-vs-wash) 42%, transparent) 48%,
+    color-mix(in srgb, var(--lobby-vs-wash) 72%, transparent)
+  );
+}
+
+.lobbyVsWedgeRight .lobbyVsWash {
+  background-image: linear-gradient(
+    to top right,
+    color-mix(in srgb, var(--lobby-vs-wash) 12%, transparent),
+    color-mix(in srgb, var(--lobby-vs-wash) 42%, transparent) 48%,
+    color-mix(in srgb, var(--lobby-vs-wash) 72%, transparent)
+  );
+}
+
+.lobbyVsSeam {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  width: 10px;
+  height: 240%;
+  background: #171717;
+  transform: translate(-50%, -50%) rotate(atan(-1920 / 1080));
+}
+
+.lobbyVsCorner {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 520px;
+  max-width: 42%;
+}
+
+.lobbyVsCornerLeft {
+  left: 64px;
+  bottom: 56px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.lobbyVsCornerRight {
+  right: 64px;
+  top: 56px;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.lobbyVsStanding {
+  display: block;
+  max-width: 100%;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.1;
+  opacity: 0.9;
+}
+
+.lobbyVsName {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  font-weight: 800;
+  font-size: 72px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.lobbyVsCornerLeft .pills {
+  justify-content: flex-start;
+}
+
+.lobbyVsCornerRight .pills {
+  justify-content: flex-end;
+}
+
+.lobbyVsMark {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  box-sizing: border-box;
+  min-width: 132px;
+  padding: 18px 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #171717;
+  color: #FFFFFF;
+  transform: translate(-50%, -50%);
+}
+
+.lobbyVsMark span {
+  font-weight: 800;
+  font-size: 64px;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+@keyframes lobbyVsEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lobbyVs,
+  .lobbyVsNoEnter,
+  .sponsorCard::before,
+  .sponsorSlideEntering,
+  .sponsorSlideLeaving {
+    animation: none !important;
+  }
+}

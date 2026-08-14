@@ -53,8 +53,8 @@ Attach this guide, `AGENTS.md`, and `docs/GAMING-OASIS-TOOL-BRAND-GUIDE.md` when
 - [ ] Each team can select either Hub placement (for example, `3rd`) or standing record (for example, `0-1`) for the legacy standing output.
 - [ ] Match 2 can be copied completely into Match 1 without dropping synced values, selected colors, logo backgrounds, or manual overrides.
 - [ ] Team name, standing, logo, color, and logo-background overrides resolve into a visible final output.
-- [ ] Synced logo previews automatically choose a white or black contrast background and allow either option to be forced manually.
-- [ ] Synced logo images retain transparency; only the preview container receives the selected white or black background.
+- [ ] Synced logo previews automatically choose a white or navy (`#171717`) contrast background and allow either option to be forced manually.
+- [ ] Synced logo images retain transparency; only the preview container receives the selected white or navy background.
 - [ ] A team name longer than the legacy 13-character limit visibly marks its override field as required until the final value is valid.
 - [ ] League Hub team names retain their full source label while production output uses the short school-and-squad form (for example, `KU A`).
 - [ ] Home, away, and backup color selection plus color similarity comparison remain available.

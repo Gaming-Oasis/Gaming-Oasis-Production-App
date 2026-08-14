@@ -54,7 +54,7 @@ No production credentials or configurable API settings are required. The respons
 
 The local writer proxies the match response and Hub-hosted logo previews because the production interface runs on localhost while the public League Hub endpoints are hosted at `hub.gamingoasis.gg`. Exported JSON keeps the original public logo URL.
 
-Logo previews retain the source image's transparency, inspect its visible colors, and automatically place it over a white or black background for contrast. Operators can force either background from the team override controls.
+Logo previews retain the source image's transparency, inspect its visible colors, and automatically place it over a white or navy (`#171717`) background for contrast. Operators can force either background from the team override controls.
 
 Synced team names are converted to their short production form before output. For example, `#1 KU Rocket League A - Keiser University` becomes `KU A`; the full Hub name remains visible as source information. Final names are limited to the legacy 13-character graphics field, and an over-limit override field is highlighted red until corrected.
 

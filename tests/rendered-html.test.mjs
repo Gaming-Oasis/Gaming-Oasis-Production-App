@@ -4,11 +4,50 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
-import { calculateRocketLeagueSeries, formatRocketLeagueScore } from "../lib/rocket-league.mjs";
-import { buildRocketLeagueOverlayState } from "../lib/rocket-league-live.mjs";
+import { calculateRocketLeagueSeries, formatRocketLeagueScore, proposeRocketLeagueLiveResult } from "../lib/rocket-league.mjs";
+import { buildRocketLeagueOverlayState, resolveRocketLeagueLiveTeamColor, resolveRocketLeagueSideTeams } from "../lib/rocket-league-live.mjs";
+import {
+  applyStatsApiMessage,
+  buildDirectorCamCommand,
+  buildHideHudCommand,
+  buildSetMatchPausedCommand,
+  buildShowHudCommand,
+  createEmptyLiveFeed,
+  goalSpeedToMph,
+  mergeRocketLeagueOverlayLive,
+  resolveBroadcastSetupAction,
+} from "../lib/rocket-league-stats-api.mjs";
 import { resolveScoreboardHeader } from "../lib/scoreboard-header.mjs";
+import {
+  IMAGE_PLATE_DARK,
+  IMAGE_PLATE_LIGHT,
+  OVERLAY_TEXT_DARK,
+  OVERLAY_TEXT_LIGHT,
+  PREFERRED_WHITE_MIN_CONTRAST,
+  preferredImagePlate,
+  resolveImagePlate,
+  readableText,
+} from "../lib/readable-text.mjs";
 import { buildValorantFields, buildValorantOverlayState, calculateValorantSeries, formatValorantScore, getValorantCurrentMap, getValorantCurrentSides, VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
 import { JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
+
+test("readableText and image plates favor white unless necessary", () => {
+  assert.ok(PREFERRED_WHITE_MIN_CONTRAST < 2.5);
+  assert.equal(IMAGE_PLATE_DARK, "#171717");
+  assert.equal(readableText("#171717"), OVERLAY_TEXT_LIGHT);
+  assert.equal(readableText("#1A75FD"), OVERLAY_TEXT_LIGHT);
+  assert.equal(readableText("#F47C20"), OVERLAY_TEXT_LIGHT);
+  assert.equal(readableText("#C4A35A"), OVERLAY_TEXT_LIGHT);
+  assert.equal(readableText("#F5F5F5"), OVERLAY_TEXT_DARK);
+  assert.equal(preferredImagePlate(0.2), IMAGE_PLATE_LIGHT);
+  assert.equal(preferredImagePlate(0.4), IMAGE_PLATE_LIGHT);
+  assert.equal(preferredImagePlate(0.6), IMAGE_PLATE_DARK);
+  assert.equal(resolveImagePlate(""), IMAGE_PLATE_LIGHT);
+  assert.equal(resolveImagePlate("#F47C20"), IMAGE_PLATE_LIGHT);
+  assert.equal(resolveImagePlate("#000000"), IMAGE_PLATE_DARK);
+  assert.equal(resolveImagePlate("#171717"), IMAGE_PLATE_DARK);
+  assert.equal(resolveImagePlate("white"), IMAGE_PLATE_LIGHT);
+});
 
 test("resolves scoreboard headers from event name with game-level override", () => {
   assert.equal(resolveScoreboardHeader("", "Spring Invitational"), "Spring Invitational");
@@ -134,10 +173,9 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(css, /@keyframes scoreChange/);
   assert.match(css, /@keyframes logoChange/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(page, /whiteContrast/);
-  assert.match(page, /darkContrast/);
-  assert.match(page, /PREFERRED_WHITE_MIN_CONTRAST = 2\.5/);
-  assert.match(page, /whiteIsReadable \|\| whiteContrast >= darkContrast/);
+  assert.match(page, /from \"\.\.\/\.\.\/\.\.\/lib\/readable-text\.mjs\"/);
+  assert.match(page, /readableText/);
+  assert.doesNotMatch(page, /PREFERRED_WHITE_MIN_CONTRAST = 2\.5/);
   assert.match(page, /--team-one-shadow/);
   assert.match(page, /--team-two-shadow/);
   assert.match(page, /mixColors\(overlay\.leaguePrimary, overlay\.leagueSecondary\)/);
@@ -176,10 +214,14 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /nameFill/);
   assert.match(page, /--team-one/);
   assert.match(page, /--team-two/);
+  assert.match(page, /from \"\.\.\/\.\.\/\.\.\/lib\/readable-text\.mjs\"/);
+  assert.match(page, /resolveImagePlate\(leftTeam\.logoBackground\)/);
+  assert.match(page, /resolveImagePlate\(logoBackground\)/);
   assert.match(page, /readableText\(SCORE_PANEL_NAVY\)/);
   assert.match(page, /--score-text/);
   assert.match(page, /scoreLabel/);
   assert.match(page, /SeriesPills/);
+  assert.match(page, /function seriesPillColor\(teamColor: string\) \{\s*return readableText\(teamColor\);\s*\}/);
   assert.match(page, /headerText \? <div className=\{styles\.header\}/);
   assert.match(page, /--header-text/);
   assert.doesNotMatch(page, /scoreboard-chrome\.png/);
@@ -190,23 +232,61 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /nameFillOne/);
   assert.match(css, /\.primaryFill \{[\s\S]*z-index: 3/);
   assert.match(css, /\.teamStack \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
+  assert.match(page, /leftTeam\.standing\.trim\(\)/);
+  assert.match(page, /rightTeam\.standing\.trim\(\)/);
+  assert.match(page, /teamStanding/);
+  assert.match(css, /\.teamStanding \{[\s\S]*top: 8px;[\s\S]*right: 14px/);
+  assert.match(css, /\.teamOneStanding \{[\s\S]*--team-one-text/);
+  assert.match(css, /\.teamTwoStanding \{[\s\S]*--team-two-text/);
   assert.match(css, /\.score \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
   assert.match(css, /\.pillFilled \{[\s\S]*background: var\(--pill-color\)/);
   assert.match(css, /\.scoreboardSlot \{[\s\S]*width: 1000px;[\s\S]*height: 156\.25px/);
+  assert.match(page, /showLobbyVs = Boolean\(overlay && !live\)/);
+  assert.match(page, /showInGame = Boolean\(overlay && live\)/);
+  assert.match(page, /useScenePresence\(showLobbyVs\)/);
+  assert.match(page, /useScenePresence\(showInGame\)/);
+  assert.match(page, /sceneLayer/);
+  assert.match(page, /SCENE_FADE_MS/);
+  assert.match(css, /\.sceneLayerEntering \{[\s\S]*sceneFadeIn 280ms/);
+  assert.match(css, /\.sceneLayerExiting \{[\s\S]*sceneFadeOut 280ms/);
+  assert.match(page, /VsMatchupStage/);
+  assert.match(page, /skipEnterAnimation/);
+  assert.match(page, /from \"\.\.\/vs\/VsMatchupOverlay\"/);
+  assert.match(page, /ariaLabel="Rocket League lobby versus screen"/);
+  assert.doesNotMatch(page, /function LobbyVsScreen/);
+  assert.doesNotMatch(css, /lobbyVs/);
   assert.match(css, /\.scoreboard \{[\s\S]*transform: scale\(0\.5208333333\);[\s\S]*transform-origin: 0 0/);
   assert.match(css, /Orbitron/);
   assert.match(page, /ActivePlayerCard/);
+  assert.match(page, /ActivityFeed/);
+  assert.match(page, /ReplayIndicatorHost/);
+  assert.match(page, /ReplayScorerCardHost/);
+  assert.match(page, /game\?\.isReplay/);
+  assert.match(page, /showReplayScorer/);
+  assert.match(page, /replayCard/);
+  assert.match(css, /\.replayScorerCard \{[\s\S]*background: #171717/);
+  assert.match(css, /\.replayScorerSlot \{[\s\S]*top: 75%;[\s\S]*left: 50%;[\s\S]*transform: translate\(-50%, -50%\)/);
+  assert.match(css, /\.replayScorerCard \{[\s\S]*width: 100%;[\s\S]*height: 156px/);
+  assert.match(css, /\.replayScorerStats/);
+  assert.match(css, /\.replayScorerLogoFrame/);
+  assert.match(page, /Goal Replay/);
+  assert.match(page, /ballSpeedMph/);
+  assert.match(page, /replayScorerLogo/);
+  assert.doesNotMatch(page, /Replay \/ Goal/);
+  assert.match(page, /formatClock/);
   assert.match(page, /active-background\.png/);
   assert.match(page, /active-border-fill\.png/);
   assert.match(page, /active-stat-labels\.png/);
   assert.match(page, /playerCardEnabled && targetPlayer/);
   assert.match(css, /\.secondaryFill \{[\s\S]*background: #171717/);
-  assert.doesNotMatch(css, /\.secondaryFill \{[\s\S]*background-image/);
+  assert.doesNotMatch(css, /\.secondaryFill \{[^}]*background-image/);
   assert.match(css, /\.activeBorder \{[\s\S]*--league-primary[\s\S]*active-border-mask\.png/);
   assert.match(page, /activeNamePlate[\s\S]*background: plateColor/);
   assert.match(page, /readableText\(plateColor\)/);
   assert.match(page, /color: nameTextColor/);
   assert.match(page, /activePlateColor/);
+  assert.match(page, /resolveRocketLeagueLiveTeamColor/);
+  assert.match(page, /resolveRocketLeagueSideTeams/);
   assert.match(css, /\.activeNamePlate \{[\s\S]*z-index: 5/);
   assert.match(css, /\.activePlayerSlot \{[\s\S]*top: 930px;[\s\S]*left: calc\(\(89 \* 1000px \/ 1920\) - \(108 \* 970px \/ 1920\)\);[\s\S]*width: 970px/);
   assert.match(css, /\.activePlayer \{[\s\S]*transform: scale\(0\.5052083333\)/);
@@ -220,6 +300,71 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /sponsorWidgetEnabled/);
   assert.match(css, /\.sponsorCard \{[\s\S]*right: 16px;[\s\S]*bottom: calc\(1080px - 930px - \(201 \* 970px \/ 1920\)\)/);
   assert.match(css, /\.sponsorCard \{[\s\S]*background: #171717/);
+  assert.match(css, /\.clockSlot \{[\s\S]*top: 146px;[\s\S]*left: 1562px;[\s\S]*width: 275px;[\s\S]*height: 95px/);
+  assert.match(css, /\.clock \{[\s\S]*font-size: 60px/);
+  assert.match(css, /\.clockValue \{[\s\S]*letter-spacing: 0\.04em;[\s\S]*padding-left: 0\.04em;[\s\S]*tabular-nums;[\s\S]*translateY\(-0\.03em\)/);
+  assert.match(page, /clockValue/);
+  assert.match(page, /showOvertime/);
+  assert.match(page, /overtime-pill\.png/);
+  assert.match(css, /\.overtimePill \{[\s\S]*bottom: calc\(100% \+ 8px\);[\s\S]*width: 179px;[\s\S]*height: 45px/);
+  assert.doesNotMatch(css, /\.clockPlate/);
+  assert.match(css, /@keyframes overtimePillEnter/);
+  assert.match(css, /\.upperRightRail \{[\s\S]*top: 16px;[\s\S]*right: 16px;[\s\S]*width: 220px/);
+  // Clock stays 60px in native scoreboard space; REPLAY is on the unscaled stage so it
+  // uses 60px × (1000/1920) ≈ 31.25px — matching the clock’s on-screen size after scale.
+  assert.match(css, /\.replayIndicator \{[\s\S]*position: absolute;[\s\S]*top: calc\(\s*\(146 \* 1000px \/ 1920\)\s*\+\s*\(95 \* 1000px \/ 1920\) \/ 2\s*-\s*\(0\.03 \* 60px \* 1000 \/ 1920\)\s*-\s*\(80px \* 1000 \/ 1920\) \/ 2\s*\);[\s\S]*right: 276px;[\s\S]*width: calc\(360px \* 1000 \/ 1920\);[\s\S]*height: calc\(80px \* 1000 \/ 1920\);[\s\S]*background: #171717/);
+  assert.match(css, /\.replayLabel \{[\s\S]*font-size: calc\(60px \* 1000 \/ 1920\)/);
+  assert.match(css, /\.activityToast \{[\s\S]*background: #171717/);
+  assert.match(page, /ReplayIndicatorHost[\s\S]*ReplayScorerCardHost[\s\S]*upperRightRail[\s\S]*ActivityFeed/);
+  assert.match(page, /primaryName\.trim\(\)/);
+});
+
+test("server-renders dedicated Rocket League and VALORANT VS overlay routes", async () => {
+  const rlResponse = await render("/overlays/rocket-league/vs");
+  const valResponse = await render("/overlays/valorant/vs");
+  assert.equal(rlResponse.status, 200);
+  assert.equal(valResponse.status, 200);
+  assert.match(rlResponse.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.match(valResponse.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+  const rlPage = await readFile(new URL("../app/overlays/rocket-league/vs/page.tsx", import.meta.url), "utf8");
+  const valPage = await readFile(new URL("../app/overlays/valorant/vs/page.tsx", import.meta.url), "utf8");
+  const shared = await readFile(new URL("../app/overlays/vs/VsMatchupOverlay.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/overlays/vs/vs-overlay.module.css", import.meta.url), "utf8");
+
+  assert.match(rlPage, /api\/overlays\/rocket-league/);
+  assert.match(rlPage, /resolveRocketLeagueSideTeams/);
+  assert.match(rlPage, /VsMatchupOverlay/);
+  assert.match(rlPage, /winsNeeded/);
+  assert.match(valPage, /api\/overlays\/valorant/);
+  assert.match(valPage, /winsNeededFromBestOf/);
+  assert.match(valPage, /VsMatchupOverlay/);
+  assert.match(shared, /function LobbyVsScreen/);
+  assert.match(shared, /export function VsMatchupStage/);
+  assert.match(shared, /aria-label="Matchup versus screen"/);
+  assert.match(shared, /resolveImagePlate\(leftTeam\.logoBackground\)/);
+  assert.match(shared, /--lobby-vs-wash/);
+  assert.match(shared, /VS_NAME_MAX_PX/);
+  assert.match(shared, /seriesPillColor/);
+  assert.match(css, /\.lobbyVsWedgeLeft \{[\s\S]*clip-path: polygon\(0 0, 0 100%, 100% 100%\)/);
+  assert.match(css, /\.lobbyVsWedgeRight \{[\s\S]*clip-path: polygon\(0 0, 100% 0, 100% 100%\)/);
+  assert.match(css, /\.lobbyVsBleedLogo \{[\s\S]*z-index: 2;[\s\S]*width: 75%/);
+  assert.match(css, /\.lobbyVsWash \{[\s\S]*z-index: 1;/);
+  assert.match(css, /\.lobbyVsWedgeLeft \.lobbyVsBleedLogo \{[\s\S]*left: 25%;[\s\S]*top: 50%/);
+  assert.match(css, /\.lobbyVsWedgeRight \.lobbyVsBleedLogo \{[\s\S]*left: 75%;[\s\S]*top: 50%/);
+  assert.match(css, /\.lobbyVsWash \{[\s\S]*linear-gradient\([\s\S]*--lobby-vs-wash/);
+  assert.match(css, /\.lobbyVsWedgeRight \.lobbyVsWash \{[\s\S]*to top right/);
+  assert.doesNotMatch(css, /\.lobbyVsWash \{[\s\S]*feTurbulence/);
+  assert.match(css, /\.lobbyVsCornerLeft \{[\s\S]*bottom: 56px/);
+  assert.match(css, /\.lobbyVsCornerRight \{[\s\S]*top: 56px/);
+  assert.match(css, /\.lobbyVsSeam \{[\s\S]*background: #171717[\s\S]*rotate\(atan\(-1920 \/ 1080\)\)/);
+  assert.match(css, /\.lobbyVsMark \{[\s\S]*background: #171717/);
+  assert.match(css, /\.lobbyVsMark span \{[\s\S]*font-size: 64px/);
+  assert.match(css, /@keyframes lobbyVsEnter/);
+  assert.match(css, /\.sponsorCard \{[\s\S]*left: 50%;[\s\S]*transform: translateX\(-50%\)/);
+  assert.match(css, /\.sponsorCard \{[\s\S]*background: #171717/);
+  assert.doesNotMatch(css, /\.lobbyVsLogoFrame/);
+  assert.doesNotMatch(shared, /lobbyVsLogoFrame/);
 });
 
 test("builds Rocket League overlay state from Match 1 teams and league colors", () => {
@@ -248,7 +393,7 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
   assert.equal(state.leagueSecondary, "#FCC500");
   assert.equal(state.teamOne.name, "Alpha");
   assert.equal(state.teamOne.logoBackground, "#FFFFFF");
-  assert.equal(state.teamTwo.logoBackground, "#000000");
+  assert.equal(state.teamTwo.logoBackground, IMAGE_PLATE_DARK);
   assert.equal(state.teamOne.seriesScore, "1");
   assert.equal(state.teamTwo.seriesScore, "0");
   assert.equal(state.winsNeeded, 3);
@@ -256,7 +401,10 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
   assert.equal(state.game.scoreOne, 0);
   assert.equal(state.game.targetPlayer, null);
   assert.equal(state.connection.connected, false);
+  assert.equal(state.debugLiveOverride, false);
+  assert.deepEqual(state.activities, []);
   assert.equal(state.sponsorWidgetEnabled, true);
+  assert.equal(state.broadcastSetupEnabled, true);
   assert.deepEqual(state.sponsors, [{ id: "oasis", name: "Gaming Oasis", logo: "oasis.png" }]);
 
   const fromEvent = buildRocketLeagueOverlayState(
@@ -279,6 +427,24 @@ test("builds Rocket League overlay state from Match 1 teams and league colors", 
   assert.equal(fromEvent.header, "Spring Invitational");
   assert.equal(fromEvent.sponsorWidgetEnabled, false);
   assert.deepEqual(fromEvent.sponsors, []);
+});
+
+test("maps Rocket League live TeamNum colors through flipSides like scoreboard sides", () => {
+  const teamOne = { name: "Home", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF", seriesScore: "0" };
+  const teamTwo = { name: "Away", standing: "", logo: "", color: "#ABCDEF", logoBackground: "#000000", seriesScore: "0" };
+
+  const defaultSides = resolveRocketLeagueSideTeams(false, teamOne, teamTwo);
+  assert.equal(defaultSides.left, teamOne);
+  assert.equal(defaultSides.right, teamTwo);
+  assert.equal(resolveRocketLeagueLiveTeamColor(0, false, teamOne, teamTwo), "#111111");
+  assert.equal(resolveRocketLeagueLiveTeamColor(1, false, teamOne, teamTwo), "#ABCDEF");
+
+  const flippedSides = resolveRocketLeagueSideTeams(true, teamOne, teamTwo);
+  assert.equal(flippedSides.left, teamTwo);
+  assert.equal(flippedSides.right, teamOne);
+  // Blue (0) → Left after swap = Match 1 away / teamTwo; Orange (1) → Right = teamOne.
+  assert.equal(resolveRocketLeagueLiveTeamColor(0, true, teamOne, teamTwo), "#ABCDEF");
+  assert.equal(resolveRocketLeagueLiveTeamColor(1, true, teamOne, teamTwo), "#111111");
 });
 
 test("fills Rocket League active player debug scenarios into overlay targetPlayer", () => {
@@ -318,6 +484,8 @@ test("fills Rocket League active player debug scenarios into overlay targetPlaye
     teams[1],
   );
   assert.equal(on.game.hasGame, true);
+  assert.equal(on.debugLiveOverride, true);
+  assert.deepEqual(on.activities, []);
   assert.equal(on.game.targetPlayer?.name, "SKYLIN3");
   assert.equal(on.game.targetPlayer?.team, 0);
   assert.equal(on.game.targetPlayer?.goals, 0);
@@ -387,6 +555,16 @@ test("fills Rocket League active player debug scenarios into overlay targetPlaye
           boost: 88,
           isDead: false,
         },
+        activities: [
+          {
+            id: "act-1",
+            type: "Goal",
+            primaryName: "CUSTOM",
+            secondaryName: "",
+            team: 1,
+            createdAt: "2026-08-13T12:00:00.000Z",
+          },
+        ],
       },
       games: emptyGames,
       savedGames: emptyGames,
@@ -402,6 +580,992 @@ test("fills Rocket League active player debug scenarios into overlay targetPlaye
   assert.equal(custom.game.targetPlayer?.name, "CUSTOM");
   assert.equal(custom.game.targetPlayer?.team, 1);
   assert.equal(custom.game.targetPlayer?.boost, 88);
+  assert.equal(custom.activities.length, 1);
+  assert.equal(custom.activities[0].type, "Goal");
+});
+
+test("tracks MatchPaused and MatchUnpaused on the live feed", () => {
+  const now = Date.parse("2026-08-13T18:00:00.000Z");
+  const live = applyStatsApiMessage(createEmptyLiveFeed(), {
+    Event: "UpdateState",
+    Data: {
+      Players: [{ Name: "A", PrimaryId: "Epic|1|0", Shortcut: 1, TeamNum: 0, Goals: 0, Shots: 0, Assists: 0, Saves: 0, Boost: 10 }],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 1 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 200,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now);
+  assert.equal(live.matchPaused, false);
+
+  const paused = applyStatsApiMessage(live, { Event: "MatchPaused", Data: {} }, now + 10);
+  assert.equal(paused.matchPaused, true);
+
+  const unpaused = applyStatsApiMessage(paused, { Event: "MatchUnpaused", Data: {} }, now + 20);
+  assert.equal(unpaused.matchPaused, false);
+});
+
+test("builds Rocket League Stats API broadcast setup commands and rising-edge actions", () => {
+  assert.deepEqual(buildHideHudCommand(), {
+    Command: "SetHUDVisibility",
+    Data: { bVisible: false },
+  });
+  assert.deepEqual(buildShowHudCommand(), {
+    Command: "SetHUDVisibility",
+    Data: { bVisible: true },
+  });
+  assert.deepEqual(buildDirectorCamCommand(), {
+    Command: "ChangePOV",
+    Data: { Perspective: "Camera_Director" },
+  });
+  assert.deepEqual(buildSetMatchPausedCommand(true), {
+    Command: "SetMatchPaused",
+    Data: { bPaused: true },
+  });
+  assert.deepEqual(buildSetMatchPausedCommand(false), {
+    Command: "SetMatchPaused",
+    Data: { bPaused: false },
+  });
+
+  // Lobby create → Director only (native UI stays until countdown).
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "MatchCreated",
+    previousHasGame: false,
+    nextHasGame: false,
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+  }), {
+    action: "camera",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: false,
+    setupAppliedForMatch: false,
+  });
+
+  // Countdown start → full HUD hide + Director.
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "CountdownBegin",
+    previousHasGame: false,
+    nextHasGame: true,
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: false,
+  }), {
+    action: "setup",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "MatchInitialized",
+    previousHasGame: false,
+    nextHasGame: true,
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+  }), {
+    action: "setup",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "UpdateState",
+    previousHasGame: false,
+    nextHasGame: true,
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+  }), {
+    action: "setup",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  // Already hidden — later countdown / kickoff is a no-op.
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "CountdownBegin",
+    previousHasGame: true,
+    nextHasGame: true,
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+  }), {
+    action: "none",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "RoundStarted",
+    previousHasGame: true,
+    nextHasGame: true,
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+  }), {
+    action: "none",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  // Missed countdown → RoundStarted still hides.
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "RoundStarted",
+    previousHasGame: true,
+    nextHasGame: true,
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+  }), {
+    action: "setup",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "UpdateState",
+    previousHasGame: true,
+    nextHasGame: true,
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+  }), {
+    action: "none",
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+    setupAppliedForMatch: true,
+  });
+
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: true,
+    eventName: "MatchEnded",
+    previousHasGame: true,
+    nextHasGame: false,
+    cameraAppliedForMatch: true,
+    hudHiddenForMatch: true,
+  }), {
+    action: "restore",
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+    setupAppliedForMatch: false,
+  });
+
+  assert.deepEqual(resolveBroadcastSetupAction({
+    enabled: false,
+    eventName: "MatchCreated",
+    previousHasGame: false,
+    nextHasGame: false,
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+  }), {
+    action: "none",
+    cameraAppliedForMatch: false,
+    hudHiddenForMatch: false,
+    setupAppliedForMatch: false,
+  });
+});
+
+test("maps Rocket League Game Data API UpdateState and StatfeedEvent into overlay live fields", () => {
+  const now = Date.parse("2026-08-13T15:00:00.000Z");
+  const updated = applyStatsApiMessage(createEmptyLiveFeed(), {
+    Event: "UpdateState",
+    // Live exporter stringifies Data — match production payloads.
+    Data: JSON.stringify({
+      Players: [
+        {
+          Name: "PlayerA",
+          PrimaryId: "Epic|1|0",
+          Shortcut: 1,
+          TeamNum: 0,
+          Goals: 1,
+          Shots: 2,
+          Assists: 0,
+          Saves: 1,
+          Boost: 45,
+          bDemolished: false,
+        },
+      ],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 2 },
+          { Name: "Orange", TeamNum: 1, Score: 1 },
+        ],
+        TimeSeconds: 187,
+        bOvertime: true,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: true,
+        Target: { Name: "PlayerA", Shortcut: 1, TeamNum: 0 },
+      },
+    }),
+  }, now);
+
+  assert.equal(updated.connection.connected, true);
+  assert.equal(updated.game.hasGame, true);
+  assert.equal(updated.game.isOT, true);
+  assert.equal(updated.game.timeSeconds, 187);
+  assert.equal(updated.game.scoreOne, 2);
+  assert.equal(updated.game.scoreTwo, 1);
+  assert.equal(updated.game.targetPlayer?.name, "PlayerA");
+  assert.equal(updated.game.targetPlayer?.boost, 45);
+
+  const withActivity = applyStatsApiMessage(updated, {
+    Event: "StatfeedEvent",
+    Data: JSON.stringify({
+      EventName: "Demolish",
+      Type: "Demolition",
+      MainTarget: { Name: "PlayerA", Shortcut: 1, TeamNum: 0 },
+      SecondaryTarget: { Name: "PlayerB", Shortcut: 2, TeamNum: 1 },
+    }),
+  }, now + 10);
+  assert.equal(withActivity.activities[0].type, "Demolition");
+  assert.equal(withActivity.activities[0].primaryName, "PlayerA");
+  assert.equal(withActivity.activities[0].secondaryName, "PlayerB");
+
+  const withWin = applyStatsApiMessage(updated, {
+    Event: "StatfeedEvent",
+    Data: JSON.stringify({
+      EventName: "Win",
+      Type: "Win",
+      MainTarget: { Name: "PlayerA", Shortcut: 1, TeamNum: 0 },
+    }),
+  }, now + 20);
+  assert.equal(withWin.activities.length, 0);
+
+  const base = {
+    version: 1,
+    updatedAt: "2026-08-13T15:00:00.000Z",
+    skin: "nel",
+    header: "Test",
+    bestOf: "Bo5",
+    flipSides: false,
+    playerCardEnabled: true,
+    sponsorWidgetEnabled: false,
+    sponsors: [],
+    roundNumber: 1,
+    winsNeeded: 3,
+    leaguePrimary: "#1A75FD",
+    leagueSecondary: "#FCC500",
+    teamOne: { name: "A", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF", seriesScore: "0" },
+    teamTwo: { name: "B", standing: "", logo: "", color: "#222222", logoBackground: "#000000", seriesScore: "0" },
+    debugLiveOverride: false,
+    connection: { connected: false, lastEventAt: null },
+    game: {
+      hasGame: false,
+      hasWinner: false,
+      isOT: false,
+      isReplay: false,
+      timeSeconds: 0,
+      target: "",
+      scoreOne: 0,
+      scoreTwo: 0,
+      targetPlayer: null,
+    },
+    activities: [],
+  };
+  const merged = mergeRocketLeagueOverlayLive(base, withActivity, now + 10);
+  assert.equal(merged.game.scoreOne, 2);
+  assert.equal(merged.activities[0].type, "Demolition");
+  assert.equal(merged.teamOne.color, "#111111");
+  assert.equal(merged.teamTwo.name, "B");
+
+  const debugBase = { ...base, debugLiveOverride: true, game: { ...base.game, hasGame: true, scoreOne: 9 }, activities: [], replayCard: null };
+  const debugMerged = mergeRocketLeagueOverlayLive(debugBase, withActivity, now + 10);
+  assert.equal(debugMerged.game.scoreOne, 9);
+  assert.deepEqual(debugMerged.activities, []);
+  assert.equal(debugMerged.leaguePrimary, "#1A75FD");
+  assert.equal(debugMerged.replayCard, null);
+});
+
+test("converts GoalScored GoalSpeed UU/s to MPH for on-air display", () => {
+  assert.equal(goalSpeedToMph(3890), 87);
+  assert.equal(goalSpeedToMph(87.3), 87);
+  assert.equal(goalSpeedToMph(0), 0);
+  assert.equal(goalSpeedToMph(null), 0);
+});
+
+test("GoalScored locks the real scorer even when Statfeed or BallLastTouch differ", () => {
+  const now = Date.parse("2026-08-13T18:00:00.000Z");
+  const withPlayers = applyStatsApiMessage(createEmptyLiveFeed(), {
+    Event: "UpdateState",
+    Data: {
+      Players: [
+        {
+          Name: "SCORER",
+          PrimaryId: "Epic|scorer|0",
+          Shortcut: 1,
+          TeamNum: 0,
+          Goals: 3,
+          Shots: 4,
+          Assists: 0,
+          Saves: 1,
+          Score: 600,
+          Boost: 40,
+          bDemolished: false,
+        },
+        {
+          Name: "SPECTATED",
+          PrimaryId: "Epic|spec|0",
+          Shortcut: 2,
+          TeamNum: 1,
+          Goals: 1,
+          Shots: 2,
+          Assists: 0,
+          Saves: 0,
+          Score: 200,
+          Boost: 80,
+          bDemolished: false,
+        },
+        {
+          Name: "TOUCHER",
+          PrimaryId: "Epic|touch|0",
+          Shortcut: 3,
+          TeamNum: 0,
+          Goals: 0,
+          Shots: 1,
+          Assists: 1,
+          Saves: 0,
+          Score: 100,
+          Boost: 10,
+          bDemolished: false,
+        },
+      ],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 2 },
+          { Name: "Orange", TeamNum: 1, Score: 1 },
+        ],
+        TimeSeconds: 90,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: true,
+        Target: { Name: "SPECTATED", Shortcut: 2, TeamNum: 1 },
+      },
+    },
+  }, now);
+
+  // Wrong prior Statfeed goal must not stick once GoalScored arrives.
+  const wrongFeed = applyStatsApiMessage(withPlayers, {
+    Event: "StatfeedEvent",
+    Data: {
+      EventName: "Goal",
+      Type: "Goal",
+      MainTarget: { Name: "SPECTATED", Shortcut: 2, TeamNum: 1 },
+    },
+  }, now + 10);
+  assert.equal(wrongFeed.replayCard?.scorerName, "SPECTATED");
+  // Goal Statfeed must not create an activity toast (GoalScored owns Goal/Assist toasts).
+  assert.equal(wrongFeed.activities.length, 0);
+
+  const scored = applyStatsApiMessage(wrongFeed, {
+    Event: "GoalScored",
+    Data: {
+      GoalSpeed: 3890,
+      Scorer: { Name: "SCORER", Shortcut: 1, TeamNum: 0, PrimaryId: "Epic|scorer|0" },
+      Assister: { Name: "TOUCHER", Shortcut: 3, TeamNum: 0, PrimaryId: "Epic|touch|0" },
+      BallLastTouch: {
+        Player: { Name: "TOUCHER", Shortcut: 3, TeamNum: 0 },
+        Speed: 2000,
+      },
+    },
+  }, now + 20);
+  assert.equal(scored.replayCard?.scorerName, "SCORER");
+  assert.equal(scored.replayCard?.team, 0);
+  assert.equal(scored.replayCard?.goals, 3);
+  assert.equal(scored.activities.length, 2);
+  assert.equal(scored.activities[0].type, "Assist");
+  assert.equal(scored.activities[0].primaryName, "TOUCHER");
+  assert.equal(scored.activities[1].type, "Goal");
+  assert.equal(scored.activities[1].primaryName, "SCORER");
+
+  // A late Goal Statfeed after GoalScored must not add a second Goal toast.
+  const afterDuplicateFeed = applyStatsApiMessage(scored, {
+    Event: "StatfeedEvent",
+    Data: {
+      EventName: "Goal",
+      Type: "Goal",
+      MainTarget: { Name: "SCORER", Shortcut: 1, TeamNum: 0 },
+    },
+  }, now + 30);
+  assert.equal(afterDuplicateFeed.activities.length, 2);
+  assert.equal(afterDuplicateFeed.activities.filter((entry) => entry.type === "Goal").length, 1);
+
+  // Empty Scorer falls back to BallLastTouch.Player (not spectated target).
+  const touchOnly = applyStatsApiMessage(withPlayers, {
+    Event: "GoalScored",
+    Data: {
+      GoalSpeed: 1000,
+      BallLastTouch: {
+        Player: { Name: "TOUCHER", Shortcut: 3, TeamNum: 0 },
+        Speed: 1000,
+      },
+    },
+  }, now + 30);
+  assert.equal(touchOnly.replayCard?.scorerName, "TOUCHER");
+
+  const afterRound = applyStatsApiMessage(scored, {
+    Event: "RoundStarted",
+    Data: {},
+  }, now + 40);
+  assert.equal(afterRound.replayCard, null);
+});
+
+test("maps GoalScored into replayCard and holds it through replay UpdateState", () => {
+  const now = Date.parse("2026-08-13T17:00:00.000Z");
+  const withPlayers = applyStatsApiMessage(createEmptyLiveFeed(), {
+    Event: "UpdateState",
+    Data: {
+      Players: [
+        {
+          Name: "SKYLIN3",
+          PrimaryId: "Epic|sky|0",
+          Shortcut: 3,
+          TeamNum: 0,
+          Goals: 2,
+          Shots: 5,
+          Assists: 1,
+          Saves: 3,
+          Score: 540,
+          Boost: 60,
+          bDemolished: false,
+        },
+        {
+          Name: "ORANG3",
+          PrimaryId: "Epic|ora|0",
+          Shortcut: 7,
+          TeamNum: 0,
+          Goals: 0,
+          Shots: 1,
+          Assists: 2,
+          Saves: 0,
+          Score: 210,
+          Boost: 20,
+          bDemolished: false,
+        },
+      ],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 1 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 120,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now);
+
+  const scored = applyStatsApiMessage(withPlayers, {
+    Event: "GoalScored",
+    Data: {
+      GoalSpeed: 3890,
+      Scorer: { Name: "SKYLIN3", Shortcut: 3, TeamNum: 0, PrimaryId: "Epic|sky|0" },
+      Assister: { Name: "ORANG3", Shortcut: 7, TeamNum: 0 },
+    },
+  }, now + 50);
+  assert.equal(scored.replayCard?.scorerName, "SKYLIN3");
+  assert.equal(scored.replayCard?.assisterName, "ORANG3");
+  assert.equal(scored.replayCard?.team, 0);
+  assert.equal(scored.replayCard?.goals, 2);
+  assert.equal(scored.replayCard?.assists, 1);
+  assert.equal(scored.replayCard?.saves, 3);
+  assert.equal(scored.replayCard?.shots, 5);
+  assert.equal(scored.replayCard?.score, 540);
+  assert.equal(scored.replayCard?.ballSpeedMph, 87);
+  assert.equal(scored.activities.filter((entry) => entry.type === "Goal").length, 1);
+  assert.equal(scored.activities.filter((entry) => entry.type === "Assist").length, 1);
+
+  const inReplay = applyStatsApiMessage(scored, {
+    Event: "UpdateState",
+    Data: {
+      Players: withPlayers.players,
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 2 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 120,
+        bOvertime: false,
+        bReplay: true,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 100);
+  assert.equal(inReplay.game.isReplay, true);
+  assert.equal(inReplay.replayCard?.scorerName, "SKYLIN3");
+  assert.equal(inReplay.replayCard?.score, 540);
+  assert.equal(inReplay.replayCard?.ballSpeedMph, 87);
+  // Activity rail clears for the whole replay — Goal Replay owns that beat.
+  assert.equal(inReplay.activities.length, 0);
+
+  const duringReplayFeed = applyStatsApiMessage(inReplay, {
+    Event: "StatfeedEvent",
+    Data: {
+      EventName: "Demolish",
+      Type: "Demolition",
+      MainTarget: { Name: "SKYLIN3", Shortcut: 3, TeamNum: 0 },
+      SecondaryTarget: { Name: "ORANG3", Shortcut: 7, TeamNum: 1 },
+    },
+  }, now + 150);
+  assert.equal(duringReplayFeed.activities.length, 0);
+
+  const duringReplayGoal = applyStatsApiMessage(inReplay, {
+    Event: "GoalScored",
+    Data: {
+      GoalSpeed: 3890,
+      Scorer: { Name: "SKYLIN3", Shortcut: 3, TeamNum: 0 },
+      Assister: { Name: "ORANG3", Shortcut: 7, TeamNum: 0 },
+    },
+  }, now + 160);
+  assert.equal(duringReplayGoal.activities.length, 0);
+  assert.equal(duringReplayGoal.replayCard?.scorerName, "SKYLIN3");
+
+  const afterReplay = applyStatsApiMessage(inReplay, {
+    Event: "UpdateState",
+    Data: {
+      Players: withPlayers.players,
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 2 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 119,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 200);
+  assert.equal(afterReplay.game.isReplay, false);
+  assert.equal(afterReplay.replayCard?.scorerName, "SKYLIN3");
+  assert.ok(afterReplay.replayClearAt > now + 200);
+
+  const cleared = applyStatsApiMessage(afterReplay, {
+    Event: "UpdateState",
+    Data: {
+      Players: withPlayers.players,
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 2 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 118,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, afterReplay.replayClearAt + 1);
+  assert.equal(cleared.replayCard, null);
+
+  // Late / duplicate GoalScored after replay must not re-fire Goal/Assist toasts.
+  const duplicateGoal = applyStatsApiMessage(cleared, {
+    Event: "GoalScored",
+    Data: {
+      GoalSpeed: 3890,
+      Scorer: { Name: "SKYLIN3", Shortcut: 3, TeamNum: 0, PrimaryId: "Epic|sky|0" },
+      Assister: { Name: "ORANG3", Shortcut: 7, TeamNum: 0 },
+    },
+  }, now + 250);
+  assert.equal(duplicateGoal.activities.filter((entry) => entry.type === "Goal" || entry.type === "Assist").length, 0);
+  assert.equal(duplicateGoal.replayCard, null);
+
+  const afterKickoff = applyStatsApiMessage(duplicateGoal, {
+    Event: "RoundStarted",
+    Data: {},
+  }, now + 300);
+  const stillDeduped = applyStatsApiMessage(afterKickoff, {
+    Event: "GoalScored",
+    Data: {
+      GoalSpeed: 3890,
+      Scorer: { Name: "SKYLIN3", Shortcut: 3, TeamNum: 0, PrimaryId: "Epic|sky|0" },
+      Assister: { Name: "ORANG3", Shortcut: 7, TeamNum: 0 },
+    },
+  }, now + 350);
+  assert.equal(stillDeduped.activities.filter((entry) => entry.type === "Goal" || entry.type === "Assist").length, 0);
+
+  const base = {
+    version: 1,
+    updatedAt: "2026-08-13T17:00:00.000Z",
+    skin: "nel",
+    header: "Test",
+    bestOf: "Bo5",
+    flipSides: false,
+    playerCardEnabled: true,
+    sponsorWidgetEnabled: false,
+    sponsors: [],
+    roundNumber: 1,
+    winsNeeded: 3,
+    leaguePrimary: "#1A75FD",
+    leagueSecondary: "#FCC500",
+    teamOne: { name: "A", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF", seriesScore: "0" },
+    teamTwo: { name: "B", standing: "", logo: "", color: "#222222", logoBackground: "#000000", seriesScore: "0" },
+    debugLiveOverride: false,
+    connection: { connected: false, lastEventAt: null },
+    game: {
+      hasGame: false,
+      hasWinner: false,
+      isOT: false,
+      isReplay: false,
+      timeSeconds: 0,
+      target: "",
+      scoreOne: 0,
+      scoreTwo: 0,
+      targetPlayer: null,
+    },
+    activities: [],
+    replayCard: null,
+  };
+  const merged = mergeRocketLeagueOverlayLive(base, inReplay, now + 100);
+  assert.equal(merged.replayCard?.scorerName, "SKYLIN3");
+  assert.equal(merged.replayCard?.assisterName, "ORANG3");
+  assert.equal(merged.game.isReplay, true);
+});
+
+test("debug Replay toggle synthesizes a sample replayCard from the target player", () => {
+  const emptyGames = Array.from({ length: 7 }, () => ({ home: "", away: "" }));
+  const team = { name: "Home", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" };
+  const away = { name: "Away", standing: "", logo: "", color: "#ABCDEF", logoBackground: "#000000" };
+  const state = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "",
+      bestOf: "Bo5",
+      playerCardEnabled: true,
+      debugActivePlayerEnabled: true,
+      debugActivePlayerScenario: "skyljn3",
+      debugLive: {
+        connected: true,
+        hasGame: true,
+        hasWinner: false,
+        isOT: false,
+        isReplay: true,
+        timeSeconds: 100,
+        target: "debug-skyljn3",
+        scoreOne: 1,
+        scoreTwo: 0,
+        targetPlayer: {
+          id: "debug-skyljn3",
+          name: "SKYLIN3",
+          team: 0,
+          goals: 2,
+          shots: 4,
+          saves: 1,
+          assists: 0,
+          boost: 50,
+          isDead: false,
+        },
+        activities: [],
+        replayCard: null,
+      },
+      games: emptyGames,
+      savedGames: emptyGames,
+    },
+    team,
+    away,
+  );
+  assert.equal(state.game.isReplay, true);
+  assert.equal(state.replayCard?.scorerName, "SKYLIN3");
+  assert.equal(state.replayCard?.goals, 2);
+  assert.equal(state.replayCard?.ballSpeedMph, 87);
+  assert.ok(state.replayCard?.assisterName);
+});
+
+test("proposes finished live Rocket League games into Results and supports auto-accept", () => {
+  const emptyGames = Array.from({ length: 7 }, () => ({ home: "", away: "" }));
+  const base = {
+    autoAcceptLiveResults: false,
+    lastLiveResultProposalKey: "",
+    games: emptyGames.map((game) => ({ ...game })),
+    savedGames: emptyGames.map((game) => ({ ...game })),
+  };
+
+  const proposed = proposeRocketLeagueLiveResult(base, {
+    id: "finish-1",
+    scoreOne: 3,
+    scoreTwo: 1,
+  });
+  assert.equal(proposed.changed, true);
+  assert.equal(proposed.proposed, true);
+  assert.equal(proposed.accepted, false);
+  assert.equal(proposed.gameIndex, 0);
+  assert.deepEqual(proposed.rocketLeague.games[0], { home: "3", away: "1" });
+  assert.deepEqual(proposed.rocketLeague.savedGames[0], { home: "", away: "" });
+
+  const again = proposeRocketLeagueLiveResult(proposed.rocketLeague, {
+    id: "finish-1",
+    scoreOne: 3,
+    scoreTwo: 1,
+  });
+  assert.equal(again.changed, false);
+  assert.equal(again.proposed, false);
+
+  const auto = proposeRocketLeagueLiveResult({
+    ...base,
+    autoAcceptLiveResults: true,
+  }, {
+    id: "finish-2",
+    scoreOne: 2,
+    scoreTwo: 0,
+  });
+  assert.equal(auto.accepted, true);
+  assert.deepEqual(auto.rocketLeague.games[0], { home: "2", away: "0" });
+  assert.deepEqual(auto.rocketLeague.savedGames[0], { home: "2", away: "0" });
+
+  const tied = proposeRocketLeagueLiveResult(base, { id: "finish-tie", scoreOne: 1, scoreTwo: 1 });
+  assert.equal(tied.changed, false);
+
+  const flipped = proposeRocketLeagueLiveResult({
+    ...base,
+    flipSides: true,
+    autoAcceptLiveResults: true,
+  }, {
+    id: "finish-flipped",
+    scoreOne: 4,
+    scoreTwo: 2,
+  });
+  // Swap assignment: Blue (scoreOne) is away, Orange (scoreTwo) is home.
+  assert.deepEqual(flipped.rocketLeague.games[0], { home: "2", away: "4" });
+  assert.deepEqual(flipped.rocketLeague.savedGames[0], { home: "2", away: "4" });
+});
+
+test("stamps finishedGame on winner rising edge and keeps it after MatchEnded", () => {
+  const now = Date.parse("2026-08-13T16:00:00.000Z");
+  const live = applyStatsApiMessage(createEmptyLiveFeed(), {
+    Event: "UpdateState",
+    Data: {
+      Players: [],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 4 },
+          { Name: "Orange", TeamNum: 1, Score: 2 },
+        ],
+        TimeSeconds: 0,
+        bOvertime: false,
+        bReplay: true,
+        bHasWinner: true,
+        bHasTarget: false,
+      },
+    },
+  }, now);
+  assert.equal(live.game.hasWinner, true);
+  assert.equal(live.game.hasGame, false);
+  assert.equal(live.postMatch, true);
+  assert.ok(live.finishedGame);
+  assert.equal(live.finishedGame.scoreOne, 4);
+  assert.equal(live.finishedGame.scoreTwo, 2);
+
+  // UpdateState on the next-match / podium screen must not bring the HUD back.
+  const stillPost = applyStatsApiMessage(live, {
+    Event: "UpdateState",
+    Data: {
+      Players: [],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 4 },
+          { Name: "Orange", TeamNum: 1, Score: 2 },
+        ],
+        TimeSeconds: 0,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: true,
+        bHasTarget: false,
+      },
+    },
+  }, now + 500);
+  assert.equal(stillPost.game.hasGame, false);
+  assert.equal(stillPost.postMatch, true);
+
+  const ended = applyStatsApiMessage(live, { Event: "MatchEnded", Data: {} }, now + 1000);
+  assert.equal(ended.game.hasGame, false);
+  assert.equal(ended.postMatch, true);
+  assert.equal(ended.finishedGame.scoreOne, 4);
+  assert.equal(ended.finishedGame.id, live.finishedGame.id);
+
+  const podium = applyStatsApiMessage(ended, { Event: "PodiumStart", Data: {} }, now + 1500);
+  assert.equal(podium.game.hasGame, false);
+  assert.equal(podium.postMatch, true);
+
+  const nextMatch = applyStatsApiMessage(podium, { Event: "MatchCreated", Data: {} }, now + 2000);
+  assert.equal(nextMatch.postMatch, false);
+  assert.equal(nextMatch.preMatch, true);
+  assert.equal(nextMatch.game.hasGame, false);
+
+  // Between matches: UpdateState often already has a shell match (5:00, 0–0, no players).
+  const between = applyStatsApiMessage(nextMatch, {
+    Event: "UpdateState",
+    Data: {
+      MatchGuid: "next-match",
+      Players: [],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 0 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 300,
+        Ball: { Speed: 0, TeamNum: 255 },
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 2200);
+  assert.equal(between.game.hasGame, false);
+  assert.equal(between.preMatch, true);
+  assert.equal(between.postMatch, false);
+
+  // Players can sit in lobby cars before countdown — stay on VS until 3-2-1.
+  const lobbyRoster = applyStatsApiMessage(between, {
+    Event: "UpdateState",
+    Data: {
+      MatchGuid: "next-match",
+      Players: [
+        {
+          Name: "PlayerA",
+          PrimaryId: "Epic|1|0",
+          Shortcut: 1,
+          TeamNum: 0,
+          Goals: 0,
+          Shots: 0,
+          Assists: 0,
+          Saves: 0,
+          Boost: 33,
+          bDemolished: false,
+        },
+      ],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 0 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 300,
+        Ball: { Speed: 0, TeamNum: 255 },
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 2300);
+  assert.equal(lobbyRoster.game.hasGame, false);
+  assert.equal(lobbyRoster.preMatch, true);
+
+  // MatchInitialized is the first-countdown signal — dismiss VS before RoundStarted/kickoff.
+  const initialized = applyStatsApiMessage(lobbyRoster, { Event: "MatchInitialized", Data: {} }, now + 2400);
+  assert.equal(initialized.postMatch, false);
+  assert.equal(initialized.preMatch, false);
+  assert.equal(initialized.game.hasGame, true);
+
+  // CountdownBegin also dismisses VS (per-round 3-2-1), including after a fresh lobby latch.
+  const countdown = applyStatsApiMessage(lobbyRoster, { Event: "CountdownBegin", Data: {} }, now + 2500);
+  assert.equal(countdown.postMatch, false);
+  assert.equal(countdown.preMatch, false);
+  assert.equal(countdown.game.hasGame, true);
+  assert.equal(countdown.game.hasWinner, false);
+
+  // Blank Players[] during countdown must not resurrect VS (would stick until RoundStarted).
+  const blankDuringCountdown = applyStatsApiMessage(countdown, {
+    Event: "UpdateState",
+    Data: {
+      MatchGuid: "next-match",
+      Players: [],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 0 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 300,
+        Ball: { Speed: 0, TeamNum: 255 },
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 2600);
+  assert.equal(blankDuringCountdown.preMatch, false);
+  assert.equal(blankDuringCountdown.game.hasGame, true);
+
+  // Idle MatchCreated shell (no countdown yet) still keeps VS.
+  const idleShell = applyStatsApiMessage(countdown, { Event: "MatchCreated", Data: {} }, now + 2700);
+  assert.equal(idleShell.preMatch, true);
+  assert.equal(idleShell.game.hasGame, false);
+  const idleUpdate = applyStatsApiMessage(idleShell, {
+    Event: "UpdateState",
+    Data: {
+      MatchGuid: "shell",
+      Players: [],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 0 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 300,
+        Ball: { Speed: 0, TeamNum: 255 },
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 2800);
+  assert.equal(idleUpdate.preMatch, true);
+  assert.equal(idleUpdate.game.hasGame, false);
+
+  const base = {
+    version: 1,
+    updatedAt: "2026-08-13T16:00:00.000Z",
+    skin: "nel",
+    header: "Test",
+    bestOf: "Bo3",
+    flipSides: false,
+    playerCardEnabled: true,
+    sponsorWidgetEnabled: true,
+    sponsors: [],
+    roundNumber: 1,
+    winsNeeded: 2,
+    leaguePrimary: "#1A75FD",
+    leagueSecondary: "#F8871E",
+    teamOne: { name: "A", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF", seriesScore: "0" },
+    teamTwo: { name: "B", standing: "", logo: "", color: "#222222", logoBackground: "#000000", seriesScore: "0" },
+    debugLiveOverride: false,
+    connection: { connected: false, lastEventAt: null },
+    game: {
+      hasGame: false,
+      hasWinner: false,
+      isOT: false,
+      isReplay: false,
+      timeSeconds: 0,
+      target: "",
+      scoreOne: 0,
+      scoreTwo: 0,
+      targetPlayer: null,
+    },
+    activities: [],
+  };
+  const merged = mergeRocketLeagueOverlayLive(base, ended, now + 2000);
+  assert.equal(merged.finishedGame.scoreOne, 4);
+  assert.equal(merged.finishedGame.id, live.finishedGame.id);
 });
 
 test("fills Rocket League series pills from draft game wins left to right", () => {
@@ -505,13 +1669,19 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /MATCH_LOOKUP_ENDPOINT/);
   assert.match(page, /displayLogoUrl\(resolved\.logo\)/);
   assert.match(page, /detectLogoBackground/);
-  assert.match(css, /\.team-logo-preview img \{[^}]*background-color: transparent/);
+  assert.match(css, /\.team-logo-preview img \{[^}]*background-color: inherit/);
   assert.match(css, /\.team-logo-preview \{[^}]*isolation: isolate/);
   assert.match(css, /\.team-logo-preview \{[^}]*width: 72px; height: 72px/);
   assert.match(page, /Logo background/);
   assert.match(page, /Auto ·/);
-  assert.match(page, /logoBackground: "#FFFFFF"/);
-  assert.match(page, /logoBackground: "#000000"/);
+  assert.match(page, /detectImagePlate/);
+  assert.match(page, /resolveImagePlate/);
+  assert.match(page, /IMAGE_PLATE_LIGHT/);
+  assert.match(page, /IMAGE_PLATE_DARK/);
+  assert.match(page, /logoBackground: IMAGE_PLATE_LIGHT/);
+  assert.match(page, />Navy</);
+  assert.match(css, /\.logo-background-options i\.navy \{[^}]*background: #171717/);
+  assert.doesNotMatch(css, /\.logo-background-options i\.black/);
   assert.match(page, /maxLength=\{TEAM_NAME_LIMIT\}/);
   assert.match(page, /nameNeedsOverride/);
   assert.match(page, /Override required: final name is/);
@@ -560,19 +1730,33 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /sponsorWidgetEnabled: true/);
   assert.match(page, /\/overlays\/valorant/);
   assert.match(page, /\/overlays\/rocket-league/);
-  assert.match(page, /useState<"results" \| "pickBans" \| "mapArtwork" \| "overlay">/);
+  assert.match(page, /useState<"results" \| "pickBans" \| "mapPool" \| "overlay">/);
   assert.match(page, /useState<"results" \| "overlay" \| "debug">\("results"\)/);
   assert.match(page, /setValorantTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("debug"\)/);
-  assert.match(page, /setValorantTab\("mapArtwork"\)/);
+  assert.match(page, /setValorantTab\("mapPool"\)/);
   assert.match(page, /VALORANT MAP DATA\.json/);
+  assert.match(page, />Map Pool</);
+  assert.match(page, /function addValorantMap\(\)/);
+  assert.match(page, /function removeValorantMap\(/);
+  assert.match(page, /function resetValorantMapPool\(\)/);
+  assert.match(page, /Reset to Default/);
+  assert.match(page, /Add map/);
+  assert.match(page, /notify\("VALORANT map pool reset to default"\)/);
+  assert.match(page, /mapPoolNames/);
+  assert.doesNotMatch(page, /VALORANT_MAPS\.map/);
+  assert.doesNotMatch(page, />Map artwork</);
   assert.match(page, /buildRocketLeagueOverlayState/);
   assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay \}/);
   assert.match(page, /Scoreboard header override/);
   assert.match(page, /Leave blank to use General Info event name\./);
   assert.match(page, /resolveScoreboardHeader/);
   assert.match(page, /Event name \/ header not configured/);
+  assert.match(page, /Auto-accept live results/);
+  assert.match(page, /autoAcceptLiveResults/);
+  assert.match(page, /proposeRocketLeagueLiveResult/);
+  assert.match(page, /ROCKET_LEAGUE_LIVE_OVERLAY_ENDPOINT/);
   assert.match(page, /Enable Rocket League active player debug/);
   assert.match(page, /debugActivePlayerEnabled/);
   assert.match(page, /debugActivePlayerScenario/);
@@ -584,7 +1768,38 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /Clock \(seconds\)/);
   assert.match(page, /Boost \(0-100\)/);
   assert.match(page, /Active player debug/);
-  assert.match(page, /Use the Debug tab to preview scenarios/);
+  assert.match(page, /Rocket League Game Data API/);
+  assert.match(page, /Auto broadcast camera/);
+  assert.match(page, /aria-label="Enable Rocket League auto broadcast camera"/);
+  assert.match(page, /broadcastSetupEnabled/);
+  assert.match(page, /Admin control/);
+  assert.match(page, /aria-label="Rocket League admin control"/);
+  assert.match(page, /setRocketLeagueTab\("admin"\)/);
+  assert.match(page, /Pause match/);
+  assert.match(page, /Resume match/);
+  assert.match(page, /aria-label="Pause Rocket League match"/);
+  assert.match(page, /aria-label="Resume Rocket League match"/);
+  assert.match(page, /\/api\/rocket-league\/match-paused/);
+  assert.match(page, /Manual fallback: press <strong>9<\/strong>, then <strong>H<\/strong> twice while spectating\./);
+  assert.match(page, /Fire sample activity/);
+  assert.match(page, /createSampleDebugActivity/);
+  assert.match(page, /aria-label="Debug has game"/);
+  assert.match(page, /updateDebugLive\(\{ hasGame: event\.target\.checked \}\)/);
+  assert.doesNotMatch(page, /aria-label="Debug lobby VS"/);
+  assert.match(page, /ROCKET_LEAGUE_VS_OVERLAY_URL/);
+  assert.match(page, /VALORANT_VS_OVERLAY_URL/);
+  assert.match(page, /Copy VS link/);
+  assert.match(page, /Open VS overlay/);
+  assert.match(page, /VS matchup URL/);
+  assert.match(page, /aria-label="Debug replay"/);
+  assert.match(page, /updateDebugLive\(\{ isReplay:/);
+  assert.match(page, /In-game team assignment/);
+  assert.match(page, /Swap assignment/);
+  assert.match(page, /Swap Rocket League left and right team assignment/);
+  assert.match(page, /overlayLeftTeam/);
+  assert.match(page, /overlayRightTeam/);
+  assert.match(page, /In-game \{overlayLeftGameSide\}/);
+  assert.match(page, /In-game \{overlayRightGameSide\}/);
   assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 2);
   assert.match(page, /aria-label="Rocket League debug"/);
   assert.match(page, /valorant-reference-ban-control/);
@@ -599,6 +1814,18 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /rocketLeague\.savedGames\.forEach/);
   assert.match(page, /games: valorant\.savedGames/);
   assert.equal((page.match(/Update results/g) ?? []).length, 2);
+  assert.equal((page.match(/Reset series/g) ?? []).length, 4);
+  assert.match(page, /function resetRocketLeagueSeries\(\)/);
+  assert.match(page, /games: createRocketLeagueGames\(\),\s*savedGames: createRocketLeagueGames\(\)/);
+  assert.match(page, /notify\("Rocket League series results cleared"\)/);
+  assert.match(page, /id="series-reset-modal-title"/);
+  assert.match(page, /Reset Rocket League series\?/);
+  assert.match(page, /function resetValorantSeries\(\)/);
+  assert.match(page, /games: createValorantGames\(\),\s*savedGames: createValorantGames\(\)/);
+  assert.match(page, /notify\("VALORANT series results cleared"\)/);
+  assert.match(page, /id="valorant-series-reset-modal-title"/);
+  assert.match(page, /Reset VALORANT series\?/);
+  assert.match(page, /setValorantSeriesResetOpen\(true\)/);
   assert.equal((page.match(/unsaved/g) ?? []).length, 2);
   assert.equal((page.match(/Tie not allowed/g) ?? []).length, 2);
   assert.equal((page.match(/Enter both scores/g) ?? []).length, 4);
@@ -794,6 +2021,7 @@ test("builds the VALORANT overlay from saved results and flips all team fields t
   ]);
 
   assert.equal(state.header, "SEL Season 5");
+  assert.equal(state.bestOf, "Bo5");
   assert.equal(state.leaguePrimary, "#644EB5");
   assert.equal(state.leagueSecondary, "#FCC500");
   assert.deepEqual(state.teamOne, {
@@ -877,6 +2105,7 @@ test("proxies public League Hub matches without credentials", async () => {
   const writer = await startJsonWriter({
     port: 0,
     outputDir,
+    enableRocketLeagueStatsApi: false,
     fetchImpl: async (url, options) => {
       requestedUrl = String(url);
       assert.deepEqual(options?.headers, { Accept: "application/json" });
@@ -908,6 +2137,7 @@ test("proxies Hub logo previews without changing their exported URL", async () =
   const writer = await startJsonWriter({
     port: 0,
     outputDir,
+    enableRocketLeagueStatsApi: false,
     fetchImpl: async (url, options) => {
       requestedUrl = String(url);
       assert.deepEqual(options?.headers, { Accept: "image/*" });
@@ -938,6 +2168,7 @@ test("serves Google Drive map artwork through the local writer", async () => {
   const writer = await startJsonWriter({
     port: 0,
     outputDir,
+    enableRocketLeagueStatsApi: false,
     fetchImpl: async (url, options) => {
       requestCount += 1;
       requestedUrl = String(url);
@@ -968,7 +2199,7 @@ test("serves Google Drive map artwork through the local writer", async () => {
 
 test("continuously writes the complete JSON package to disk", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-json-"));
-  const writer = await startJsonWriter({ port: 0, outputDir });
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
   const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: "first" }] }));
   try {
     const first = await fetch(`${writer.url}/api/live-json`, {
@@ -989,6 +2220,15 @@ test("continuously writes the complete JSON package to disk", async () => {
     assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
     const saved = JSON.parse(await readFile(path.join(outputDir, files[0].filename), "utf8"));
     assert.equal(saved[0].value, "latest");
+
+    const pause = await fetch(`${writer.url}/api/rocket-league/match-paused`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    });
+    assert.equal(pause.status, 503);
+    const pauseBody = await pause.json();
+    assert.match(String(pauseBody.error || ""), /Stats API/i);
   } finally {
     await writer.close();
   }
@@ -996,7 +2236,7 @@ test("continuously writes the complete JSON package to disk", async () => {
 
 test("writes editable VALORANT map artwork beside the unchanged six-file package", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-map-artwork-"));
-  const writer = await startJsonWriter({ port: 0, outputDir });
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
   const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
   const valorantMapData = {
     maps: [{ name: "Ascent", nextMap: "next.png", pickCard: "pick.png", banCard: "ban.png" }],
@@ -1024,7 +2264,7 @@ test("ships the editable VALORANT map artwork defaults in JSONs", async () => {
 
 test("serves the latest non-exported VALORANT overlay state without changing the six JSON files", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-overlay-"));
-  const writer = await startJsonWriter({ port: 0, outputDir });
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
   const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
   const valorant = {
     version: 1,
@@ -1067,7 +2307,7 @@ test("serves the latest non-exported VALORANT overlay state without changing the
 
 test("serves the latest non-exported Rocket League overlay state without changing the six JSON files", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-rl-overlay-"));
-  const writer = await startJsonWriter({ port: 0, outputDir });
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
   const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
   const rocketLeague = {
     version: 1,
@@ -1078,6 +2318,7 @@ test("serves the latest non-exported Rocket League overlay state without changin
     flipSides: false,
     playerCardEnabled: true,
     sponsorWidgetEnabled: true,
+    broadcastSetupEnabled: true,
     sponsors: [{ id: "oasis", name: "Gaming Oasis", logo: "oasis.png" }],
     roundNumber: 2,
     winsNeeded: 3,
@@ -1085,6 +2326,7 @@ test("serves the latest non-exported Rocket League overlay state without changin
     leagueSecondary: "#FCC500",
     teamOne: { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF", seriesScore: "1" },
     teamTwo: { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#000000", seriesScore: "0" },
+    debugLiveOverride: false,
     connection: { connected: false, lastEventAt: null },
     game: {
       hasGame: false,
@@ -1097,12 +2339,15 @@ test("serves the latest non-exported Rocket League overlay state without changin
       scoreTwo: 0,
       targetPlayer: null,
     },
+    activities: [],
+    replayCard: null,
+    finishedGame: null,
   };
 
   try {
     const before = await fetch(`${writer.url}/api/overlays/rocket-league`);
     assert.equal(before.status, 204);
-    const update = await fetch(`${writer.url}/api/live-json`, {
+  const update = await fetch(`${writer.url}/api/live-json`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ files, overlays: { rocketLeague } }),
