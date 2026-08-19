@@ -17,7 +17,7 @@ A ground-up rebuild of the Gaming Oasis vMix production control tool. This first
 - **VALORANT** — five staged map-result inputs with an explicit JSON update, flip-side and ban-swap controls, plus Bo3/Bo5 picks, bans, and starting sides
 - **Sponsors** — ten saved sponsor slots with independent rotation toggles
 - **Draw show** — Rocket League and VALORANT Tier 1/Tier 2 pool grids with Excel paste support
-- **Settings** — regional logo and sidebar visibility controls for Rocket League, VALORANT, Sponsors, and Draw Show; General Info remains always available
+- **Settings** — sidebar visibility controls for General Info, Rocket League, VALORANT, Sponsors, and Draw Show
 
 ## JSON output
 
@@ -36,7 +36,7 @@ Rocket League and VALORANT result scores are staged separately: edited rows are 
 
 **Export JSON package** remains available for manual copies. On browsers that support folder access it writes all six files directly to a selected folder; other browsers download them individually. The bottom-left **Reset local data** action requires confirmation in a modal before clearing the workstation draft.
 
-`FinalOutput.json` includes the legacy Rocket League overlay fields (`rlscore1` through `rlscore7`, `rlheader`, `rlformat#`, `rlroundnumber`, `rlseriesscore1`, and `rlseriesscore2`) alongside the shared show and match data.
+`FinalOutput.json` includes the legacy Rocket League overlay fields (`rlscore1` through `rlscore7`, `rlheader`, `rlformat#`, `rlroundnumber`, `rlseriesscore1`, and `rlseriesscore2`) alongside the shared show and match data. `regionallogo` comes from Match 1's resolved league logo in Team Info, with an optional **Podcast indicator logo** in General Info under **Podcast Run of Show**; if both are empty, it falls back to the Gaming Oasis favicon.
 
 The same file includes VALORANT scoreboard, team, result, pick/ban, map-card, next-map, winner-logo, and widget fields expected by the existing graphics.
 

@@ -103,6 +103,7 @@ type GeneralInfo = {
   startingSoonTitle: string;
   interviewName: string;
   podcastTitle: string;
+  podcastIndicatorLogo: string;
   segments: string[];
   currentSegment: string;
   matches: [Match, Match];
@@ -116,7 +117,7 @@ type Sponsor = {
 };
 
 type Settings = {
-  regionalLogo: string;
+  generalInfoEnabled: boolean;
   rocketLeagueEnabled: boolean;
   valorantEnabled: boolean;
   sponsorsEnabled: boolean;
@@ -276,6 +277,7 @@ const VALORANT_VS_OVERLAY_URL = "http://localhost:3000/overlays/valorant/vs";
 const ROCKET_LEAGUE_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league";
 const ROCKET_LEAGUE_VS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/vs";
 const ROCKET_LEAGUE_STATS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/stats";
+const GAMING_OASIS_FAVICON_URL = "http://localhost:3000/gaming-oasis-favicon.png";
 const GAMING_OASIS_SPONSOR: Sponsor = {
   id: "gaming-oasis",
   name: "Gaming Oasis",
@@ -411,6 +413,7 @@ function createInitialState(): ProductionState {
       startingSoonTitle: "THE STREAM IS",
       interviewName: "",
       podcastTitle: "",
+      podcastIndicatorLogo: "",
       segments: Array(8).fill(""),
       currentSegment: "",
       matches: [emptyMatch(), emptyMatch()],
@@ -455,7 +458,7 @@ function createInitialState(): ProductionState {
       })),
     ],
     settings: {
-      regionalLogo: "",
+      generalInfoEnabled: true,
       rocketLeagueEnabled: true,
       valorantEnabled: true,
       sponsorsEnabled: true,
@@ -497,10 +500,10 @@ function hasProductionContent(state: ProductionState) {
     state.general.secondaryCasterSocial,
     state.general.interviewName,
     state.general.podcastTitle,
+    state.general.podcastIndicatorLogo,
     state.general.currentSegment,
     state.rocketLeague.scoreboardHeader,
     state.valorant.scoreboardHeader,
-    state.settings.regionalLogo,
   ].some(hasText)
     || state.general.segments.some(hasText)
     || state.general.matches.some((match) => hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2) || leagueHasContent(match.league))
@@ -577,14 +580,18 @@ function mergeMatch(saved?: Partial<Match>): Match {
 function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
   const initial = createInitialState();
   const savedSponsors = (saved.sponsors ?? []).filter((sponsor) => sponsor.id !== GAMING_OASIS_SPONSOR.id);
-  const savedGeneral = { ...(saved.general ?? {}) } as Partial<GeneralInfo> & { broadcastDate?: unknown; productionNote?: unknown };
+  const savedGeneral = { ...(saved.general ?? {}) } as Partial<GeneralInfo> & { broadcastDate?: unknown; productionNote?: unknown; regionalLogoOverride?: unknown };
+  const legacyPodcastIndicatorLogo = typeof savedGeneral.regionalLogoOverride === "string"
+    ? savedGeneral.regionalLogoOverride
+    : "";
   delete savedGeneral.broadcastDate;
   delete savedGeneral.productionNote;
-  const savedSettings = { ...(saved.settings ?? {}) } as Partial<Settings> & { generalInfoEnabled?: unknown; leagueHubUrl?: unknown; apiKey?: unknown; matchRoute?: unknown };
-  delete savedSettings.generalInfoEnabled;
+  delete savedGeneral.regionalLogoOverride;
+  const savedSettings = { ...(saved.settings ?? {}) } as Partial<Settings> & { leagueHubUrl?: unknown; apiKey?: unknown; matchRoute?: unknown };
   delete savedSettings.leagueHubUrl;
   delete savedSettings.apiKey;
   delete savedSettings.matchRoute;
+  delete savedSettings.regionalLogo;
   const savedRocketLeagueResults = saved.rocketLeague?.savedGames ?? saved.rocketLeague?.games;
   const savedValorantResults = saved.valorant?.savedGames ?? saved.valorant?.games;
   const savedMapArtwork = Array.isArray(saved.valorantMapData?.maps) ? saved.valorantMapData.maps : [];
@@ -592,6 +599,7 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
     general: {
       ...initial.general,
       ...savedGeneral,
+      podcastIndicatorLogo: savedGeneral.podcastIndicatorLogo ?? legacyPodcastIndicatorLogo,
       segments: saved.general?.segments?.slice(0, 8) ?? initial.general.segments,
       matches: [mergeMatch(saved.general?.matches?.[0]), mergeMatch(saved.general?.matches?.[1])],
     },
@@ -661,6 +669,7 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
     settings: {
       ...initial.settings,
       ...savedSettings,
+      generalInfoEnabled: savedSettings.generalInfoEnabled ?? true,
       rocketLeagueEnabled: savedSettings.rocketLeagueEnabled ?? true,
       valorantEnabled: savedSettings.valorantEnabled ?? true,
       sponsorsEnabled: savedSettings.sponsorsEnabled ?? true,
@@ -774,6 +783,14 @@ function valorantSideLabel(side: string) {
   return "Side not selected";
 }
 
+function resolveRegionalLogo(general: GeneralInfo) {
+  const override = general.podcastIndicatorLogo.trim();
+  if (override) return override;
+  const leagueLogo = resolveLeague(general.matches[0].league).logo.trim();
+  if (leagueLogo) return leagueLogo;
+  return GAMING_OASIS_FAVICON_URL;
+}
+
 function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valorant: Valorant, mapArtwork: ValorantMapArtwork[]) {
   const output: Record<string, string> = {
     eventname: upper(general.eventName),
@@ -787,6 +804,7 @@ function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valo
     interviewname: upper(general.interviewName),
     podcasttitle: upper(general.podcastTitle),
     currentsegment: general.currentSegment,
+    regionallogo: resolveRegionalLogo(general),
   };
 
   general.segments.forEach((segment, index) => {
@@ -1824,7 +1842,7 @@ export default function Home() {
 
   const navItems: { key: Section; label: string }[] = [
     { key: "welcome", label: "Welcome" },
-    { key: "general", label: "General info" },
+    ...(state.settings.generalInfoEnabled ? [{ key: "general" as Section, label: "General info" }] : []),
     { key: "matches", label: "Team Info" },
     ...(state.settings.rocketLeagueEnabled ? [{ key: "rocketLeague" as Section, label: "Rocket League" }] : []),
     ...(state.settings.valorantEnabled ? [{ key: "valorant" as Section, label: "VALORANT" }] : []),
@@ -1867,6 +1885,7 @@ export default function Home() {
   }
 
   function renderGeneral() {
+    const matchOneLeague = resolveLeague(state.general.matches[0].league);
     return (
       <div className="page-stack">
         <SectionHeading
@@ -2061,6 +2080,9 @@ export default function Home() {
         {activeSection === "general" && generalTab === "segments" ? (
           <section className="panel-card run-card">
             <div className="card-title-row"><div><h2>Podcast Run of Show</h2></div><label className="compact-select"><span>Live segment</span><select value={state.general.currentSegment} onChange={(event) => updateGeneral("currentSegment", event.target.value)}><option value="">Not selected</option>{state.general.segments.map((segment, index) => <option key={index} value={String(index + 1)}>0{index + 1} / {segment || "Untitled"}</option>)}</select></label></div>
+            <div className="form-grid">
+              <Field label="Podcast indicator logo" value={state.general.podcastIndicatorLogo} onChange={(value) => updateGeneral("podcastIndicatorLogo", value)} placeholder={matchOneLeague.logo || "Uses Match 1 league logo"} />
+            </div>
             <div className="segment-list">
               {state.general.segments.map((segment, index) => (
                 <label className={`segment-row ${state.general.currentSegment === String(index + 1) ? "live" : ""}`} key={index}>
@@ -2725,6 +2747,10 @@ export default function Home() {
           <div className="settings-card-copy"><div><h2>Sidebar visibility</h2><p>Choose which workspaces appear in the sidebar. Hiding one does not change its data or JSON output.</p></div></div>
           <div className="settings-rows">
             <div className="setting-row">
+              <div><strong>General Info</strong><p>Show or hide General Info in the main navigation.</p></div>
+              <label className="switch large"><input aria-label="Show General Info in sidebar" type="checkbox" checked={state.settings.generalInfoEnabled} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, generalInfoEnabled: event.target.checked } }))} /><span /></label>
+            </div>
+            <div className="setting-row">
               <div><strong>Rocket League</strong><p>Show or hide Rocket League in the main navigation.</p></div>
               <label className="switch large"><input aria-label="Show Rocket League in sidebar" type="checkbox" checked={state.settings.rocketLeagueEnabled} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, rocketLeagueEnabled: event.target.checked } }))} /><span /></label>
             </div>
@@ -2739,15 +2765,6 @@ export default function Home() {
             <div className="setting-row">
               <div><strong>Draw Show</strong><p>Show or hide Draw Show in the main navigation.</p></div>
               <label className="switch large"><input aria-label="Show Draw Show in sidebar" type="checkbox" checked={state.settings.drawShowEnabled} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, drawShowEnabled: event.target.checked } }))} /><span /></label>
-            </div>
-          </div>
-        </section>
-        <section className="panel-card settings-card">
-          <div className="settings-card-copy"><div><h2>Graphics defaults</h2><p>Keep shared production assets ready for graphics that use them.</p></div></div>
-          <div className="settings-rows">
-            <div className="setting-row">
-              <div><strong>Regional logo</strong><p>Optional image URL retained for future podcast and regional graphics.</p></div>
-              <input aria-label="Regional logo URL" className="setting-input" value={state.settings.regionalLogo} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, regionalLogo: event.target.value } }))} placeholder="https://..." />
             </div>
           </div>
         </section>

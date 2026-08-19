@@ -1842,17 +1842,23 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
     assert.match(page, new RegExp(filename.replace(".", "\\.")));
   }
 
+  assert.match(page, /generalInfoEnabled:\s*true/);
   assert.match(page, /rocketLeagueEnabled:\s*true/);
   assert.match(page, /valorantEnabled:\s*true/);
   assert.match(page, /sponsorsEnabled:\s*true/);
   assert.match(page, /drawShowEnabled:\s*true/);
   assert.match(page, /Sidebar visibility/);
+  assert.doesNotMatch(page, /Graphics defaults/);
+  assert.doesNotMatch(page, /settings\.regionalLogo/);
+  assert.match(page, /regionallogo: resolveRegionalLogo\(general\)/);
+  assert.match(page, /Podcast indicator logo/);
+  assert.match(page, /podcastIndicatorLogo/);
+  assert.match(page, /return GAMING_OASIS_FAVICON_URL/);
   assert.match(page, /Hiding one does not change its data or JSON output/);
-  assert.match(page, /\{ key: "general", label: "General info" \}/);
+  assert.match(page, /generalInfoEnabled \? \[\{ key: "general" as Section, label: "General info" \}\]/);
+  assert.match(page, /Show General Info in sidebar/);
   assert.match(page, /Show Rocket League in sidebar/);
   assert.match(page, /Show VALORANT in sidebar/);
-  assert.doesNotMatch(page, /state\.settings\.generalInfoEnabled/);
-  assert.doesNotMatch(page, /Show General Info in sidebar/);
   assert.match(page, /MATCH_LOOKUP_ENDPOINT/);
   assert.match(page, /displayLogoUrl\(resolved\.logo\)/);
   assert.match(page, /detectLogoBackground/);
