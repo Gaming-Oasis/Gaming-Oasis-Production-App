@@ -190,6 +190,10 @@ type RocketLeague = {
   playerCardEnabled: boolean;
   sponsorWidgetEnabled: boolean;
   broadcastSetupEnabled: boolean;
+  /** Lobby scene on the scoreboard when !hasGame: VS matchup or post-match team stats. */
+  lobbyScene: "vs" | "stats";
+  /** Post-match stats scene canvas: transparent OBS plate or VS-style team split. */
+  statsSceneBackground: "transparent" | "team-split";
   autoAcceptLiveResults: boolean;
   lastLiveResultProposalKey: string;
   debugActivePlayerEnabled: boolean;
@@ -271,6 +275,7 @@ const VALORANT_OVERLAY_URL = "http://localhost:3000/overlays/valorant";
 const VALORANT_VS_OVERLAY_URL = "http://localhost:3000/overlays/valorant/vs";
 const ROCKET_LEAGUE_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league";
 const ROCKET_LEAGUE_VS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/vs";
+const ROCKET_LEAGUE_STATS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/stats";
 const GAMING_OASIS_SPONSOR: Sponsor = {
   id: "gaming-oasis",
   name: "Gaming Oasis",
@@ -417,6 +422,8 @@ function createInitialState(): ProductionState {
       playerCardEnabled: true,
       sponsorWidgetEnabled: true,
       broadcastSetupEnabled: true,
+      lobbyScene: "vs",
+      statsSceneBackground: "transparent",
       autoAcceptLiveResults: false,
       lastLiveResultProposalKey: "",
       debugActivePlayerEnabled: false,
@@ -598,6 +605,8 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
       playerCardEnabled: saved.rocketLeague?.playerCardEnabled !== false,
       sponsorWidgetEnabled: saved.rocketLeague?.sponsorWidgetEnabled !== false,
       broadcastSetupEnabled: saved.rocketLeague?.broadcastSetupEnabled !== false,
+      lobbyScene: saved.rocketLeague?.lobbyScene === "stats" ? "stats" : "vs",
+      statsSceneBackground: saved.rocketLeague?.statsSceneBackground === "team-split" ? "team-split" : "transparent",
       autoAcceptLiveResults: Boolean(saved.rocketLeague?.autoAcceptLiveResults),
       lastLiveResultProposalKey: String(saved.rocketLeague?.lastLiveResultProposalKey || ""),
       debugActivePlayerEnabled: Boolean(saved.rocketLeague?.debugActivePlayerEnabled),
@@ -1326,12 +1335,25 @@ export default function Home() {
     }
   }
 
+  async function copyRocketLeagueStatsOverlayLink() {
+    try {
+      await navigator.clipboard.writeText(ROCKET_LEAGUE_STATS_OVERLAY_URL);
+      notify("Rocket League stats overlay link copied");
+    } catch {
+      notify("Could not copy the stats overlay link");
+    }
+  }
+
   function openRocketLeagueOverlay() {
     window.open(ROCKET_LEAGUE_OVERLAY_URL, "_blank", "noopener,noreferrer");
   }
 
   function openRocketLeagueVsOverlay() {
     window.open(ROCKET_LEAGUE_VS_OVERLAY_URL, "_blank", "noopener,noreferrer");
+  }
+
+  function openRocketLeagueStatsOverlay() {
+    window.open(ROCKET_LEAGUE_STATS_OVERLAY_URL, "_blank", "noopener,noreferrer");
   }
 
   async function setRocketLeagueMatchPaused(paused: boolean) {
@@ -2445,6 +2467,14 @@ export default function Home() {
                 <label className="switch large"><input aria-label="Enable Rocket League sponsor widget" type="checkbox" checked={state.rocketLeague.sponsorWidgetEnabled} onChange={(event) => updateRocketLeague({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
+                <div><strong>Lobby scene: Post-match stats</strong><small>When the live feed has no active match, show the post-match team stats board instead of the VS matchup on the scoreboard URL.</small></div>
+                <label className="switch large"><input aria-label="Show post-match stats on Rocket League lobby scene" type="checkbox" checked={state.rocketLeague.lobbyScene === "stats"} onChange={(event) => updateRocketLeague({ lobbyScene: event.target.checked ? "stats" : "vs" })} /><span /></label>
+              </div>
+              <div className="browser-overlay-widget-toggle">
+                <div><strong>Stats scene: team background</strong><small>On the post-match stats URL, show the same diagonal team-color background as the VS scene instead of a fully transparent canvas.</small></div>
+                <label className="switch large"><input aria-label="Enable team background on Rocket League post-match stats scene" type="checkbox" checked={state.rocketLeague.statsSceneBackground === "team-split"} onChange={(event) => updateRocketLeague({ statsSceneBackground: event.target.checked ? "team-split" : "transparent" })} /><span /></label>
+              </div>
+              <div className="browser-overlay-widget-toggle">
                 <div><strong>Auto broadcast camera</strong><small>Switch to Director cam on match create. Hide the full native HUD at countdown start (Stats API cannot do a partial H-key hide). Restores HUD when the match ends. Requires spectating.</small></div>
                 <label className="switch large"><input aria-label="Enable Rocket League auto broadcast camera" type="checkbox" checked={state.rocketLeague.broadcastSetupEnabled} onChange={(event) => updateRocketLeague({ broadcastSetupEnabled: event.target.checked })} /><span /></label>
               </div>
@@ -2458,6 +2488,11 @@ export default function Home() {
             <div className="browser-overlay-actions">
               <button className="button secondary" type="button" onClick={copyRocketLeagueVsOverlayLink}>Copy VS link</button>
               <button className="button primary" type="button" onClick={openRocketLeagueVsOverlay}>Open VS overlay</button>
+            </div>
+            <label className="field browser-overlay-url"><span className="field-label">Post-match stats URL</span><input readOnly value={ROCKET_LEAGUE_STATS_OVERLAY_URL} /></label>
+            <div className="browser-overlay-actions">
+              <button className="button secondary" type="button" onClick={copyRocketLeagueStatsOverlayLink}>Copy stats link</button>
+              <button className="button primary" type="button" onClick={openRocketLeagueStatsOverlay}>Open stats overlay</button>
             </div>
           </section>
         ) : rocketLeagueTab === "admin" ? (
@@ -2551,7 +2586,7 @@ export default function Home() {
                     <div><strong>Replay</strong></div>
                     <label className="switch large"><input aria-label="Debug replay" type="checkbox" checked={state.rocketLeague.debugLive.isReplay} onChange={(event) => updateDebugLive({ isReplay: event.target.checked })} /><span /></label>
                   </div>
-                  <p style={{ margin: "0 0 8px", opacity: 0.85 }}>Has game off shows the lobby VS scene on the scoreboard overlay. Replay on synthesizes a sample scorer info card from the target player for overlay preview. A dedicated VS matchup URL is also available under Browser overlay.</p>
+                  <p style={{ margin: "0 0 8px", opacity: 0.85 }}>Has game off shows the lobby scene on the scoreboard overlay (VS or post-match stats from the Browser overlay toggle). Replay on synthesizes a sample scorer info card from the target player for overlay preview. Dedicated VS and stats URLs are also available under Browser overlay.</p>
                   <Field label="Clock (seconds)" value={String(state.rocketLeague.debugLive.timeSeconds)} onChange={(value) => updateDebugLive({ timeSeconds: Number.parseInt(value || "0", 10) || 0 })} placeholder="300" />
                   <Field label="Score one" value={String(state.rocketLeague.debugLive.scoreOne)} onChange={(value) => updateDebugLive({ scoreOne: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
                   <Field label="Score two" value={String(state.rocketLeague.debugLive.scoreTwo)} onChange={(value) => updateDebugLive({ scoreTwo: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />

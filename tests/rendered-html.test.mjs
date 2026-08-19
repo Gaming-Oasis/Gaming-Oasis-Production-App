@@ -8,8 +8,10 @@ import { calculateRocketLeagueSeries, formatRocketLeagueScore, proposeRocketLeag
 import { buildRocketLeagueOverlayState, resolveRocketLeagueLiveTeamColor, resolveRocketLeagueSideTeams } from "../lib/rocket-league-live.mjs";
 import {
   applyStatsApiMessage,
+  buildDebugMatchTeamStats,
   buildDirectorCamCommand,
   buildHideHudCommand,
+  buildMatchTeamStats,
   buildSetMatchPausedCommand,
   buildShowHudCommand,
   createEmptyLiveFeed,
@@ -241,7 +243,8 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.score \{[\s\S]*top: 99px;[\s\S]*height: 135px/);
   assert.match(css, /\.pillFilled \{[\s\S]*background: var\(--pill-color\)/);
   assert.match(css, /\.scoreboardSlot \{[\s\S]*width: 1000px;[\s\S]*height: 156\.25px/);
-  assert.match(page, /showLobbyVs = Boolean\(overlay && !live\)/);
+  assert.match(page, /showLobbyVs = Boolean\(overlay && !live && lobbyScene === "vs"\)/);
+  assert.match(page, /showLobbyStats = Boolean\(overlay && !live && lobbyScene === "stats"\)/);
   assert.match(page, /showInGame = Boolean\(overlay && live\)/);
   assert.match(page, /useScenePresence\(showLobbyVs\)/);
   assert.match(page, /useScenePresence\(showInGame\)/);
@@ -365,6 +368,190 @@ test("server-renders dedicated Rocket League and VALORANT VS overlay routes", as
   assert.match(css, /\.sponsorCard \{[\s\S]*background: #171717/);
   assert.doesNotMatch(css, /\.lobbyVsLogoFrame/);
   assert.doesNotMatch(shared, /lobbyVsLogoFrame/);
+});
+
+test("server-renders dedicated Rocket League post-match stats overlay route", async () => {
+  const response = await render("/overlays/rocket-league/stats");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+  const page = await readFile(new URL("../app/overlays/rocket-league/stats/page.tsx", import.meta.url), "utf8");
+  const component = await readFile(new URL("../app/overlays/rocket-league/stats/PostMatchTeamStats.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/overlays/rocket-league/stats/stats-overlay.module.css", import.meta.url), "utf8");
+  const scoreboard = await readFile(new URL("../app/overlays/rocket-league/page.tsx", import.meta.url), "utf8");
+  const operator = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /api\/overlays\/rocket-league/);
+  assert.match(page, /PostMatchTeamStatsOverlay/);
+  assert.match(page, /matchTeamStats/);
+  assert.match(component, /PostMatchTeamStatsStage/);
+  assert.match(component, /Ball Touches/);
+  assert.match(component, /VICTORY/);
+  assert.match(component, /AWAITING RESULT/);
+  assert.match(component, /formatStatValue/);
+  assert.match(css, /--league-primary/);
+  assert.match(component, /--league-secondary/);
+  assert.match(component, /styles\.resultBody/);
+  assert.match(css, /post-match\/result-body-mask\.png/);
+  assert.match(component, /styles\.boBoxAccent/);
+  assert.match(css, /post-match\/series-box-mask\.png/);
+  assert.match(css, /background-color: #171717/);
+  assert.match(component, /styles\.overlayWhite/);
+  assert.match(css, /--team-one/);
+  assert.match(css, /--team-two/);
+  assert.match(css, /post-match\/border-mask\.png/);
+  assert.match(css, /post-match\/chrome\.png/);
+  assert.match(css, /left: 892px/);
+  assert.match(css, /left: 339px/);
+  assert.match(css, /left: 277px/);
+  assert.match(component, /window\.innerWidth \/ 1920/);
+  assert.match(component, /window\.innerHeight \/ 1080/);
+  assert.match(scoreboard, /lobbyScene === "stats"/);
+  assert.match(scoreboard, /PostMatchTeamStatsStage/);
+  assert.match(operator, /lobbyScene/);
+  assert.match(operator, /overlays\/rocket-league\/stats/);
+  assert.match(component, /StatsTeamSplitBackground/);
+  assert.match(component, /StatsSceneDimLayer/);
+  assert.match(css, /\.statsSceneDim \{[\s\S]*rgb\(23 23 23 \/ 0\.8\)/);
+  assert.match(component, /statsSceneBackground === "team-split"/);
+  assert.match(css, /\.statsSceneWedgeLeft \{[\s\S]*clip-path: polygon\(0 0, 0 100%, 100% 100%\)/);
+  assert.match(css, /\.statsSceneWash \{[\s\S]*--stats-scene-wash/);
+  assert.match(css, /\.statsSceneSeam \{[\s\S]*rotate\(atan\(-1920 \/ 1080\)\)/);
+  assert.match(operator, /Stats scene: team background/);
+  assert.match(operator, /statsSceneBackground/);
+});
+
+test("buildRocketLeagueOverlayState includes lobbyScene and merge publishes matchTeamStats", () => {
+  const vs = buildRocketLeagueOverlayState(
+    { bestOf: "Bo5", lobbyScene: "vs", statsSceneBackground: "transparent", games: [], savedGames: [] },
+    { name: "Home", standing: "", logo: "", color: "#1A75FD", logoBackground: "#171717" },
+    { name: "Away", standing: "", logo: "", color: "#F6AC18", logoBackground: "#171717" },
+    { primaryColor: "#1A75FD", secondaryColor: "#FCC500" },
+  );
+  assert.equal(vs.lobbyScene, "vs");
+  assert.equal(vs.statsSceneBackground, "transparent");
+
+  const stats = buildRocketLeagueOverlayState(
+    { bestOf: "Bo3", lobbyScene: "stats", statsSceneBackground: "team-split", games: [], savedGames: [] },
+    { name: "Home", standing: "", logo: "", color: "#1A75FD", logoBackground: "#171717" },
+    { name: "Away", standing: "", logo: "", color: "#F6AC18", logoBackground: "#171717" },
+    { primaryColor: "#1A75FD", secondaryColor: "#FCC500" },
+  );
+  assert.equal(stats.lobbyScene, "stats");
+  assert.equal(stats.statsSceneBackground, "team-split");
+
+  const sample = buildMatchTeamStats([
+    { Name: "A", TeamNum: 0, Goals: 2, Assists: 1, Shots: 5, Saves: 1, Demos: 1, Touches: 20, Score: 300 },
+    { Name: "B", TeamNum: 0, Goals: 1, Assists: 0, Shots: 3, Saves: 2, Demos: 0, Touches: 14, Score: 200 },
+    { Name: "C", TeamNum: 1, Goals: 1, Assists: 1, Shots: 4, Saves: 3, Demos: 2, Touches: 18, Score: 250 },
+  ], 3, 1);
+  assert.equal(sample.winnerTeam, 0);
+  assert.equal(sample.teamOne.goals, 3);
+  assert.equal(sample.teamOne.touches, 34);
+  assert.equal(sample.teamTwo.demos, 2);
+
+  const merged = mergeRocketLeagueOverlayLive(stats, {
+    ...createEmptyLiveFeed(),
+    matchTeamStats: sample,
+    game: {
+      hasGame: false,
+      hasWinner: true,
+      isOT: false,
+      isReplay: false,
+      timeSeconds: 0,
+      target: "",
+      scoreOne: 3,
+      scoreTwo: 1,
+      targetPlayer: null,
+    },
+  });
+  assert.equal(merged.lobbyScene, "stats");
+  assert.ok(merged.matchTeamStats);
+  assert.equal(merged.matchTeamStats.teamOne.goals, 3);
+
+  const debugBase = buildRocketLeagueOverlayState(
+    {
+      bestOf: "Bo5",
+      lobbyScene: "stats",
+      debugActivePlayerEnabled: true,
+      debugLive: {
+        connected: true,
+        hasGame: false,
+        hasWinner: true,
+        isOT: false,
+        isReplay: false,
+        timeSeconds: 0,
+        target: "debug",
+        scoreOne: 2,
+        scoreTwo: 1,
+        targetPlayer: {
+          id: "debug",
+          name: "DEBUG",
+          team: 0,
+          goals: 1,
+          shots: 2,
+          saves: 1,
+          assists: 0,
+          boost: 50,
+          isDead: false,
+        },
+        activities: [],
+        replayCard: null,
+      },
+      games: [],
+      savedGames: [],
+    },
+    { name: "Home", standing: "", logo: "", color: "#1A75FD", logoBackground: "#171717" },
+    { name: "Away", standing: "", logo: "", color: "#F6AC18", logoBackground: "#171717" },
+    { primaryColor: "#1A75FD", secondaryColor: "#FCC500" },
+  );
+  const debugMerged = mergeRocketLeagueOverlayLive(debugBase, createEmptyLiveFeed());
+  assert.ok(debugMerged.matchTeamStats);
+  assert.equal(debugMerged.matchTeamStats.scoreOne, 2);
+  assert.equal(debugMerged.matchTeamStats.winnerTeam, 0);
+  assert.deepEqual(debugMerged.matchTeamStats, buildDebugMatchTeamStats(debugBase.game));
+});
+
+test("snapshots matchTeamStats on winner rising edge and clears on countdown", () => {
+  const now = Date.parse("2026-08-14T20:00:00.000Z");
+  const live = applyStatsApiMessage(createEmptyLiveFeed(), {
+    Event: "UpdateState",
+    Data: {
+      Players: [
+        { Name: "Blue1", PrimaryId: "b1", TeamNum: 0, Goals: 2, Assists: 1, Shots: 6, Saves: 2, Demos: 1, Touches: 22, Score: 400 },
+        { Name: "Orange1", PrimaryId: "o1", TeamNum: 1, Goals: 1, Assists: 0, Shots: 4, Saves: 3, Demos: 0, Touches: 19, Score: 280 },
+      ],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 2 },
+          { Name: "Orange", TeamNum: 1, Score: 1 },
+        ],
+        TimeSeconds: 0,
+        bOvertime: false,
+        bReplay: true,
+        bHasWinner: true,
+        bHasTarget: false,
+      },
+    },
+  }, now);
+  assert.ok(live.matchTeamStats);
+  assert.equal(live.matchTeamStats.winnerTeam, 0);
+  assert.equal(live.matchTeamStats.teamOne.goals, 2);
+  assert.equal(live.matchTeamStats.teamOne.demos, 1);
+  assert.equal(live.matchTeamStats.teamTwo.touches, 19);
+
+  const ended = applyStatsApiMessage(live, { Event: "MatchEnded", Data: {} }, now + 1000);
+  assert.ok(ended.matchTeamStats);
+  assert.equal(ended.matchTeamStats.teamOne.goals, 2);
+  assert.equal(ended.players.length, 0);
+
+  const lobby = applyStatsApiMessage(ended, { Event: "MatchCreated", Data: {} }, now + 2000);
+  assert.ok(lobby.matchTeamStats);
+  assert.equal(lobby.game.hasGame, false);
+
+  const countdown = applyStatsApiMessage(lobby, { Event: "CountdownBegin", Data: {} }, now + 3000);
+  assert.equal(countdown.matchTeamStats, null);
+  assert.equal(countdown.game.hasGame, true);
 });
 
 test("builds Rocket League overlay state from Match 1 teams and league colors", () => {
@@ -1731,7 +1918,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /\/overlays\/valorant/);
   assert.match(page, /\/overlays\/rocket-league/);
   assert.match(page, /useState<"results" \| "pickBans" \| "mapPool" \| "overlay">/);
-  assert.match(page, /useState<"results" \| "overlay" \| "debug">\("results"\)/);
+  assert.match(page, /useState<"results" \| "overlay" \| "admin" \| "debug">\("results"\)/);
   assert.match(page, /setValorantTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("debug"\)/);
@@ -2319,6 +2506,8 @@ test("serves the latest non-exported Rocket League overlay state without changin
     playerCardEnabled: true,
     sponsorWidgetEnabled: true,
     broadcastSetupEnabled: true,
+    lobbyScene: "vs",
+    statsSceneBackground: "transparent",
     sponsors: [{ id: "oasis", name: "Gaming Oasis", logo: "oasis.png" }],
     roundNumber: 2,
     winsNeeded: 3,
@@ -2342,6 +2531,7 @@ test("serves the latest non-exported Rocket League overlay state without changin
     activities: [],
     replayCard: null,
     finishedGame: null,
+    matchTeamStats: null,
   };
 
   try {

@@ -10,6 +10,11 @@ import {
   resolveImagePlate,
 } from "../../../lib/readable-text.mjs";
 import { VsMatchupStage } from "../vs/VsMatchupOverlay";
+import {
+  isMatchTeamStats,
+  PostMatchTeamStatsStage,
+  type MatchTeamStats,
+} from "./stats/PostMatchTeamStats";
 import styles from "./rocket-league-overlay.module.css";
 
 type OverlayTeam = {
@@ -89,6 +94,8 @@ type RocketLeagueOverlayState = {
   flipSides: boolean;
   playerCardEnabled: boolean;
   sponsorWidgetEnabled: boolean;
+  lobbyScene: "vs" | "stats";
+  statsSceneBackground: "transparent" | "team-split";
   sponsors: OverlaySponsor[];
   roundNumber: number;
   winsNeeded: number;
@@ -101,6 +108,7 @@ type RocketLeagueOverlayState = {
   game: OverlayGame;
   activities: OverlayActivity[];
   replayCard: OverlayReplayCard | null;
+  matchTeamStats: MatchTeamStats | null;
 };
 
 const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/rocket-league";
@@ -192,6 +200,12 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && typeof state.flipSides === "boolean"
     && typeof state.playerCardEnabled === "boolean"
     && typeof state.sponsorWidgetEnabled === "boolean"
+    && (state.lobbyScene === undefined
+      || state.lobbyScene === "vs"
+      || state.lobbyScene === "stats")
+    && (state.statsSceneBackground === undefined
+      || state.statsSceneBackground === "transparent"
+      || state.statsSceneBackground === "team-split")
     && isOverlaySponsors(state.sponsors)
     && typeof state.roundNumber === "number"
     && typeof state.winsNeeded === "number"
@@ -207,7 +221,10 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && isOverlayActivities(state.activities)
     && (state.replayCard === null
       || state.replayCard === undefined
-      || isOverlayReplayCard(state.replayCard));
+      || isOverlayReplayCard(state.replayCard))
+    && (state.matchTeamStats === null
+      || state.matchTeamStats === undefined
+      || isMatchTeamStats(state.matchTeamStats));
 }
 
 function formatClock(totalSeconds: number) {
@@ -1007,7 +1024,16 @@ export default function RocketLeagueOverlay() {
         const response = await fetch(OVERLAY_ENDPOINT, { cache: "no-store", signal: controller.signal });
         if (response.status === 204 || !response.ok) return;
         const next = await response.json();
-        if (active && isOverlayState(next)) setOverlay(next);
+        if (active && isOverlayState(next)) {
+          setOverlay({
+            ...next,
+            lobbyScene: next.lobbyScene === "stats" ? "stats" : "vs",
+            statsSceneBackground: next.statsSceneBackground === "team-split" ? "team-split" : "transparent",
+            matchTeamStats: next.matchTeamStats && isMatchTeamStats(next.matchTeamStats)
+              ? next.matchTeamStats
+              : null,
+          });
+        }
       } catch {
         // Keep the last valid graphic through temporary writer or network failures.
       }
@@ -1024,9 +1050,12 @@ export default function RocketLeagueOverlay() {
 
   const game = overlay?.game;
   const live = Boolean(game?.hasGame);
-  const showLobbyVs = Boolean(overlay && !live);
+  const lobbyScene = overlay?.lobbyScene === "stats" ? "stats" : "vs";
+  const showLobbyVs = Boolean(overlay && !live && lobbyScene === "vs");
+  const showLobbyStats = Boolean(overlay && !live && lobbyScene === "stats");
   const showInGame = Boolean(overlay && live);
   const vsScene = useScenePresence(showLobbyVs);
+  const statsScene = useScenePresence(showLobbyStats);
   const gameScene = useScenePresence(showInGame);
   const sides = overlay
     ? resolveRocketLeagueSideTeams(overlay.flipSides, overlay.teamOne, overlay.teamTwo)
@@ -1037,6 +1066,9 @@ export default function RocketLeagueOverlay() {
   // Swap assignment only mirrors Match identity onto those fixed game sides.
   const scoreOne = game?.scoreOne ?? 0;
   const scoreTwo = game?.scoreTwo ?? 0;
+  const matchTeamStats = overlay?.matchTeamStats && isMatchTeamStats(overlay.matchTeamStats)
+    ? overlay.matchTeamStats
+    : null;
 
   const cssVars = useMemo(() => {
     if (!overlay || !leftTeam || !rightTeam) return undefined;
@@ -1119,6 +1151,23 @@ export default function RocketLeagueOverlay() {
               sponsorWidgetEnabled={overlay.sponsorWidgetEnabled}
               ariaLabel="Rocket League lobby versus screen"
               skipEnterAnimation
+            />
+          </div>
+        ) : null}
+        {overlay && leftTeam && rightTeam && statsScene ? (
+          <div
+            className={`${styles.sceneLayer} ${styles.sceneLayerVs}${statsScene.exiting ? ` ${styles.sceneLayerExiting}` : ` ${styles.sceneLayerEntering}`}`}
+            aria-hidden={statsScene.exiting || undefined}
+          >
+            <PostMatchTeamStatsStage
+              leftTeam={leftTeam}
+              rightTeam={rightTeam}
+              bestOf={overlay.bestOf}
+              leaguePrimary={overlay.leaguePrimary}
+              leagueSecondary={overlay.leagueSecondary}
+              matchTeamStats={matchTeamStats}
+              statsSceneBackground={overlay.statsSceneBackground === "team-split" ? "team-split" : "transparent"}
+              ariaLabel="Rocket League lobby post-match team stats"
             />
           </div>
         ) : null}

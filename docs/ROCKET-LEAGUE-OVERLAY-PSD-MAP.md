@@ -3,6 +3,7 @@
 Sources:
 
 - `assets/rocket-league/NEL Scoreboard.psd`
+- `assets/rocket-league/Post Match Team.psd` (post-match team totals)
 - SEL/NEL HUD reference `header_top.png` (1920 × 300 strip)
 - Freddymac active-player assets `1_active` / `3_active` / `4_active` (1920 × 300)
 
@@ -120,10 +121,36 @@ Operator: Browser overlay tab → **VS matchup URL** (Copy / Open). Debug: turn 
 | Replay badge (`.replayIndicator`) | Separate absolute stage chip — **not** inside `.upperRightRail`. `right: 276px` (16 + 220 + **40px gap**). Plate sized to match clock’s **on-stage** type: `width/height/padding` = native `360×80` / `10 30 10 26` × `(1000/1920)` → ≈ **187.5×41.67px**, padding ≈ **5.21 / 15.63 / 5.21 / 13.54**. Vertical: badge center matches rendered `.clockValue` optical center (scaled clockSlot mid Y + `translateY(-0.03em)` at 60px × scale) — `top: calc(... - (80px * 1000 / 1920) / 2)` ≈ **79.01px**. Plate `#171717`, Orbitron `calc(60px * 1000 / 1920)` ≈ **31.25px** (clock stays **60px** in native scoreboard space), `4px` right accent (league secondary); enter 300ms / exit 260ms with restrained opacity breathe. |
 | Goal Replay card (`.replayScorerSlot` + `.replayScorerCard`) | Center stage, **outside** `.upperRightRail`. Slot: `top: 75%; left: 50%; transform: translate(-50%, -50%)` (card geometric center at lower-half midpoint / y≈810). Card `560×156` plate `#171717`, left team-accent bar, logo tile + team-color name band, header `Goal Replay`, optional `SPEED ## MPH` from `ballSpeedMph`, G/A/SV/SH/SCR row. Enter/exit on the inner card only (`translateY`) so slot centering stays intact. Clears active player (~top 930): bottom edge ≈ 888. |
 
-Debug override still drives the same fields for graphics preview without the game (Debug **Replay** synthesizes a sample scorer card from the target player when none is set, including sample ball speed). Match / player stats are not persisted yet (future stats page).
+Debug override still drives the same fields for graphics preview without the game (Debug **Replay** synthesizes a sample scorer card from the target player when none is set, including sample ball speed). Full roster totals for the post-match stats board are snapshotted into `matchTeamStats` on the winner rising edge (see below).
 
-Regenerate scoreboard masks with:
+## Post-match team stats (`/overlays/rocket-league/stats`)
+
+Source: `assets/rocket-league/Post Match Team.psd` (1920 × 1080 Aftermatch panel).
+
+Dedicated OBS browser source for the **team totals** board. It polls Match 1 Rocket League overlay state (`/api/overlays/rocket-league`).
+
+The live scoreboard route (`/overlays/rocket-league`) can show this same graphic in the lobby (`!hasGame`) when the operator toggle **Lobby scene: Post-match stats** sets `lobbyScene` to `"stats"` (default remains `"vs"`).
+
+Geometry is exported from the PSD into `public/rocket-league-overlay/post-match/`. `chrome.png` contains the exact static result bodies and stat rows. Separate PSD-derived masks own the league border, result accents, name plates, dividers, and BO series box. The browser stage only swaps **live text** and **tint colors** onto those layers — layout boxes stay native PSD coordinates.
+
+| Element | Notes |
+| --- | --- |
+| Outer frame | Isolated `border-mask.png` tinted `--league-primary`; canvas background is transparent unless **Stats scene: team background** is enabled |
+| Team background | Optional VS-style diagonal split: logo bleeds, team-color wash, `#171717` seam, then a heavy `#171717` dim layer before the stats graphic |
+| Result pill bodies | `result-body-mask.png` tinted overlay navy `#171717` |
+| VS / game score / VICTORY\|LOSS text | Orbitron at PSD text bboxes; standardized white |
+| Result pill top bars + name plates + vertical dividers | Masks tinted `--team-one` / `--team-two`; name text via `readableText` |
+| Static chrome | `chrome.png` rendered directly from the PSD stat-row layers |
+| Center BO chip | `series-box-mask.png` tinted overlay navy `#171717`; `BO n` comes from `bestOf`, and series score comes from left/right `seriesScore` |
+| Stat rows | PSD chrome + Oxanium Bold labels/values at PSD bboxes (Goals, Assists, Shots, Saves, Demos, Ball Touches) from `matchTeamStats` |
+
+`matchTeamStats` is built from Stats API `Players[]` (`Goals`, `Assists`, `Shots`, `Saves`, `Demos`, `Touches`) on winner rising edge, kept through post-match / empty lobby (`MatchCreated`), and cleared when countdown starts (`MatchInitialized` / `CountdownBegin` / `RoundStarted`). Debug with **Has game** off (or **Has winner** on) synthesizes sample totals for preview.
+
+Operator: Browser overlay tab → **Post-match stats URL** (Copy / Open), the lobby scene toggle, and **Stats scene: team background**.
+
+Regenerate overlay assets with:
 
 ```bash
 python scripts/export-rl-scoreboard-layers.py
+python scripts/export-rl-post-match-layers.py
 ```

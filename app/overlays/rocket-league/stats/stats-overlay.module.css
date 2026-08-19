@@ -1,0 +1,468 @@
+@font-face {
+  font-family: "Orbitron";
+  src: url("/rocket-league-overlay/fonts/Orbitron-VariableFont_wght.ttf") format("truetype");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Oxanium";
+  src: url("/oxanium-700.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+.viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: 0 0;
+}
+
+/* Post Match Team.psd — all coordinates are native 1920×1080 canvas space. */
+.stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: transparent;
+  color: #fff;
+  text-rendering: geometricPrecision;
+}
+
+.statsSceneBg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.statsSceneWedge {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.statsSceneWedgeLeft {
+  clip-path: polygon(0 0, 0 100%, 100% 100%);
+}
+
+.statsSceneWedgeRight {
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.statsSceneBleed {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.statsSceneBleedLogo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  display: block;
+  width: 75%;
+  height: 75%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  object-position: center;
+  transform: translate(-50%, -50%);
+}
+
+.statsSceneWedgeLeft .statsSceneBleedLogo {
+  left: 25%;
+  top: 50%;
+}
+
+.statsSceneWedgeRight .statsSceneBleedLogo {
+  left: 75%;
+  top: 50%;
+}
+
+.statsSceneWash {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  --stats-scene-wash: #171717;
+  background-image: linear-gradient(
+    to bottom left,
+    color-mix(in srgb, var(--stats-scene-wash) 12%, transparent),
+    color-mix(in srgb, var(--stats-scene-wash) 42%, transparent) 48%,
+    color-mix(in srgb, var(--stats-scene-wash) 72%, transparent)
+  );
+}
+
+.statsSceneWedgeRight .statsSceneWash {
+  background-image: linear-gradient(
+    to top right,
+    color-mix(in srgb, var(--stats-scene-wash) 12%, transparent),
+    color-mix(in srgb, var(--stats-scene-wash) 42%, transparent) 48%,
+    color-mix(in srgb, var(--stats-scene-wash) 72%, transparent)
+  );
+}
+
+.statsSceneSeam {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  width: 10px;
+  height: 240%;
+  background: #171717;
+  transform: translate(-50%, -50%) rotate(atan(-1920 / 1080));
+}
+
+.statsSceneDim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgb(23 23 23 / 0.8);
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+  pointer-events: none;
+}
+
+.border {
+  z-index: 2;
+  background-color: var(--league-primary, #1a75fd);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/border-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/border-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+.chrome {
+  z-index: 3;
+  background: url("/rocket-league-overlay/post-match/chrome.png") center / 1920px 1080px no-repeat;
+}
+
+.resultBody {
+  z-index: 3;
+  background-color: #171717;
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/result-body-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/result-body-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.resultAccentLeft {
+  z-index: 4;
+  background-color: var(--team-one, #1a75fd);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/result-accent-left-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/result-accent-left-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.resultAccentRight {
+  z-index: 4;
+  background-color: var(--team-two, #f6ac18);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/result-accent-right-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/result-accent-right-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.namePlateLeft {
+  z-index: 4;
+  background-color: var(--team-one, #1a75fd);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/name-left-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/name-left-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.namePlateRight {
+  z-index: 4;
+  background-color: var(--team-two, #f6ac18);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/name-right-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/name-right-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.dividerLeft {
+  z-index: 5;
+  background-color: var(--team-one, #1a75fd);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/divider-left-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/divider-left-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.dividerRight {
+  z-index: 5;
+  background-color: var(--team-two, #f6ac18);
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/divider-right-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/divider-right-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.text {
+  position: absolute;
+  z-index: 10;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  white-space: nowrap;
+  line-height: 1;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.orbitron {
+  font-family: "Orbitron", "Arial Narrow", system-ui, sans-serif;
+}
+
+.oxanium {
+  font-family: "Oxanium", "Arial Narrow", system-ui, sans-serif;
+  font-weight: 700;
+}
+
+.overlayWhite {
+  color: #ffffff;
+}
+
+/* Result text uses the full PSD result-body slots. */
+.resultLeft {
+  left: 339px;
+  top: 209px;
+  width: 339px;
+  height: 76px;
+  font-size: 30px;
+  font-weight: 800;
+  font-style: oblique 10deg;
+  letter-spacing: 0.1em;
+  -webkit-text-stroke: 0.5px currentColor;
+  paint-order: stroke fill;
+  text-transform: uppercase;
+}
+
+.resultRight {
+  left: 1244px;
+  top: 209px;
+  width: 339px;
+  height: 76px;
+  font-size: 30px;
+  font-weight: 800;
+  font-style: oblique 10deg;
+  letter-spacing: 0.1em;
+  -webkit-text-stroke: 0.5px currentColor;
+  paint-order: stroke fill;
+  text-transform: uppercase;
+}
+
+/* VS — PSD 892,213,1028,269 */
+.vsMark {
+  left: 892px;
+  top: 213px;
+  width: 136px;
+  height: 56px;
+  font-size: 62px;
+  font-weight: 900;
+  font-style: oblique 10deg;
+  letter-spacing: 0.06em;
+  transform: scaleX(1.08);
+  text-transform: uppercase;
+}
+
+/* One centered grid keeps one- and two-digit scores optically balanced. */
+.scoreLine {
+  left: 870px;
+  top: 317px;
+  width: 180px;
+  height: 45px;
+  grid-template-columns: 2ch 0.6ch 2ch;
+  column-gap: 0.3ch;
+  justify-content: center;
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.scoreLine > span:first-child {
+  justify-self: end;
+}
+
+.scoreLine > span:last-child {
+  justify-self: start;
+}
+
+.scoreSeparator {
+  font-size: 36px;
+}
+
+.boBoxAccent {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+  background-color: #171717;
+  -webkit-mask-image: url("/rocket-league-overlay/post-match/series-box-mask.png");
+  mask-image: url("/rocket-league-overlay/post-match/series-box-mask.png");
+  -webkit-mask-size: 1920px 1080px;
+  mask-size: 1920px 1080px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  pointer-events: none;
+}
+
+/* BO copy uses the full PSD box regions, not the placeholder glyph bounds. */
+.boHeader {
+  left: 874px;
+  top: 392px;
+  width: 174px;
+  height: 39px;
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: #ffffff;
+}
+
+.boSeriesLabel {
+  left: 874px;
+  top: 435px;
+  width: 174px;
+  height: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffffff;
+}
+
+.boSeriesScore {
+  left: 874px;
+  top: 457px;
+  width: 174px;
+  height: 39px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #ffffff;
+}
+
+/* Team names use the full PSD name plates and shrink only for long names. */
+.teamNameLeft {
+  left: 277px;
+  top: 443px;
+  width: 381px;
+  height: 56px;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--team-one-text, #ffffff);
+  overflow: hidden;
+}
+
+.teamNameRight {
+  left: 1267px;
+  top: 443px;
+  width: 381px;
+  height: 56px;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--team-two-text, #ffffff);
+  overflow: hidden;
+}
+
+/* Stats stay centered in the PSD columns with enough room for production totals. */
+.statLabel,
+.statValue {
+  color: #ffffff;
+}
+
+.statLabel {
+  left: 800px;
+  width: 320px;
+  height: 51px;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.statValue {
+  width: 150px;
+  height: 51px;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+
+.statValueLeft {
+  left: 394px;
+}
+
+.statValueRight {
+  left: 1384px;
+}
+
+.statLabelGoals { top: 515px; }
+.statLabelAssists { top: 582px; }
+.statLabelShots { top: 649px; }
+.statLabelSaves { top: 716px; }
+.statLabelDemos { top: 783px; }
+.statLabelTouches { top: 850px; }
+
+.statValueGoalsLeft { top: 515px; }
+.statValueAssistsLeft { top: 582px; }
+.statValueShotsLeft { top: 649px; }
+.statValueSavesLeft { top: 716px; }
+.statValueDemosLeft { top: 783px; }
+.statValueTouchesLeft { top: 850px; }
+
+.statValueGoalsRight { top: 515px; }
+.statValueAssistsRight { top: 582px; }
+.statValueShotsRight { top: 649px; }
+.statValueSavesRight { top: 716px; }
+.statValueDemosRight { top: 783px; }
+.statValueTouchesRight { top: 850px; }
