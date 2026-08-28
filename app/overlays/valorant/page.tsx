@@ -42,6 +42,7 @@ type ValorantOverlayState = {
   version: 1;
   updatedAt: string;
   header: string;
+  bestOf: string;
   leaguePrimary: string;
   leagueSecondary: string;
   mapWidget: MapWidget;
@@ -66,6 +67,7 @@ function isOverlayState(value: unknown): value is ValorantOverlayState {
   return state.version === 1
     && typeof state.updatedAt === "string"
     && typeof state.header === "string"
+    && typeof state.bestOf === "string"
     && typeof state.leaguePrimary === "string"
     && typeof state.leagueSecondary === "string"
     && isMapWidget(state.mapWidget)

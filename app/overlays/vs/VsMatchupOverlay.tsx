@@ -235,6 +235,50 @@ function SponsorCarousel({ sponsors }: { sponsors: VsOverlaySponsor[] }) {
   );
 }
 
+export function VsTeamSplitBackground({
+  leftTeam,
+  rightTeam,
+}: {
+  leftTeam: VsOverlayTeam;
+  rightTeam: VsOverlayTeam;
+}) {
+  return (
+    <div className={styles.teamSplitBackground} aria-hidden="true">
+      <div className={`${styles.lobbyVsWedge} ${styles.lobbyVsWedgeLeft}`}>
+        <div className={styles.lobbyVsBleed} style={{ background: resolveImagePlate(leftTeam.logoBackground) }} />
+        <div className={styles.lobbyVsWash} style={{ ["--lobby-vs-wash" as string]: leftTeam.color }} />
+        <StableLogo src={leftTeam.logo} alt="" className={styles.lobbyVsBleedLogo} />
+      </div>
+      <div className={`${styles.lobbyVsWedge} ${styles.lobbyVsWedgeRight}`}>
+        <div className={styles.lobbyVsBleed} style={{ background: resolveImagePlate(rightTeam.logoBackground) }} />
+        <div className={styles.lobbyVsWash} style={{ ["--lobby-vs-wash" as string]: rightTeam.color }} />
+        <StableLogo src={rightTeam.logo} alt="" className={styles.lobbyVsBleedLogo} />
+      </div>
+      <div className={styles.lobbyVsSeam} />
+    </div>
+  );
+}
+
+/**
+ * Background treatment for composed scenes. The matte layer keeps overlay
+ * components readable while preserving the team split underneath. Standalone
+ * VS screens intentionally use VsTeamSplitBackground directly.
+ */
+export function VsSceneBackdrop({
+  leftTeam,
+  rightTeam,
+}: {
+  leftTeam: VsOverlayTeam;
+  rightTeam: VsOverlayTeam;
+}) {
+  return (
+    <>
+      <VsTeamSplitBackground leftTeam={leftTeam} rightTeam={rightTeam} />
+      <div className={styles.sceneBackdropDim} aria-hidden="true" />
+    </>
+  );
+}
+
 function LobbyVsScreen({
   leftTeam,
   rightTeam,
@@ -259,29 +303,7 @@ function LobbyVsScreen({
       className={`${styles.lobbyVs}${skipEnterAnimation ? ` ${styles.lobbyVsNoEnter}` : ""}`}
       aria-label="Matchup versus screen"
     >
-      <div className={`${styles.lobbyVsWedge} ${styles.lobbyVsWedgeLeft}`} aria-hidden="true">
-        <div
-          className={styles.lobbyVsBleed}
-          style={{ background: resolveImagePlate(leftTeam.logoBackground) }}
-        />
-        <div
-          className={styles.lobbyVsWash}
-          style={{ ["--lobby-vs-wash" as string]: leftTeam.color }}
-        />
-        <StableLogo src={leftTeam.logo} alt="" className={styles.lobbyVsBleedLogo} />
-      </div>
-      <div className={`${styles.lobbyVsWedge} ${styles.lobbyVsWedgeRight}`} aria-hidden="true">
-        <div
-          className={styles.lobbyVsBleed}
-          style={{ background: resolveImagePlate(rightTeam.logoBackground) }}
-        />
-        <div
-          className={styles.lobbyVsWash}
-          style={{ ["--lobby-vs-wash" as string]: rightTeam.color }}
-        />
-        <StableLogo src={rightTeam.logo} alt="" className={styles.lobbyVsBleedLogo} />
-      </div>
-      <div className={styles.lobbyVsSeam} aria-hidden="true" />
+      <VsTeamSplitBackground leftTeam={leftTeam} rightTeam={rightTeam} />
       <div
         className={`${styles.lobbyVsCorner} ${styles.lobbyVsCornerLeft}`}
         style={{ color: leftText }}

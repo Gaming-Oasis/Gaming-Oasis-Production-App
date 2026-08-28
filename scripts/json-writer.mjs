@@ -1,15 +1,20 @@
 import { createServer } from "node:http";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   mergeRocketLeagueOverlayLive,
   startRocketLeagueStatsApiClient,
 } from "../lib/rocket-league-stats-api.mjs";
+import {
+  mergeLeagueOverlayLive,
+  startLeagueLiveClient,
+} from "../lib/league-of-legends-live.mjs";
 
 export const LIVE_JSON_PORT = 4877;
 export const LEAGUE_HUB_PUBLIC_URL = "https://hub.gamingoasis.gg/api/public";
 export const GOOGLE_DRIVE_THUMBNAIL_URL = "https://drive.google.com/thumbnail";
+export const DATA_DRAGON_URL = "https://ddragon.leagueoflegends.com";
 export const VALORANT_MAP_DATA_FILENAME = "VALORANT MAP DATA.json";
 export const JSON_FILENAMES = new Set([
   "FinalOutput.json",
@@ -189,6 +194,40 @@ function validRocketLeagueOverlay(value) {
     && validRocketLeagueOverlayReplayCard(value.replayCard ?? null);
 }
 
+function validLeagueDraft(value) {
+  return value && typeof value === "object"
+    && ["bluePicks", "redPicks", "blueBans", "redBans"].every((key) => Array.isArray(value[key]) && value[key].length === 5)
+    && typeof value.currentStep === "number"
+    && typeof value.timer === "number"
+    && typeof value.timerRunning === "boolean";
+}
+
+function validLeagueOverlay(value) {
+  return value && typeof value === "object"
+    && value.version === 1
+    && typeof value.updatedAt === "string"
+    && typeof value.assetVersion === "string"
+    && typeof value.header === "string"
+    && ["Bo1", "Bo3", "Bo5"].includes(value.bestOf)
+    && Number.isInteger(value.currentGame)
+    && ["standard", "fearless"].includes(value.draftMode)
+    && typeof value.playerBoardEnabled === "boolean"
+    && typeof value.sponsorWidgetEnabled === "boolean"
+    && typeof value.vsScreenEnabled === "boolean"
+    && typeof value.debugLiveOverride === "boolean"
+    && ["live", "finished", "stale"].includes(value.debugLiveScenario)
+    && typeof value.leaguePrimary === "string"
+    && typeof value.leagueSecondary === "string"
+    && validOverlayTeam(value.teamOne)
+    && validOverlayTeam(value.teamTwo)
+    && validOverlayTeam(value.blueTeam)
+    && validOverlayTeam(value.redTeam)
+    && validLeagueDraft(value.draft)
+    && validOverlaySponsors(value.sponsors)
+    && Array.isArray(value.confirmedGames)
+    && value.playerOverrides && typeof value.playerOverrides === "object";
+}
+
 function validValorantMapData(value) {
   return value && typeof value === "object"
     && Array.isArray(value.maps)
@@ -205,16 +244,47 @@ export async function startJsonWriter({
   outputDir = path.resolve("JSONs"),
   fetchImpl = fetch,
   enableRocketLeagueStatsApi = true,
+  enableLeagueLiveClient = true,
 } = {}) {
   await mkdir(outputDir, { recursive: true });
   let writeQueue = Promise.resolve();
   let lastWrite = null;
   let valorantOverlayState = null;
   let rocketLeagueOverlayState = null;
+  let leagueOverlayState = null;
   const mapArtworkCache = new Map();
+  const leagueAssetMemoryCache = new Map();
+  const leagueCacheDir = path.join(outputDir, ".league-cache");
   const rocketLeagueStatsApi = enableRocketLeagueStatsApi
     ? startRocketLeagueStatsApiClient()
     : null;
+  const leagueLiveClient = enableLeagueLiveClient ? startLeagueLiveClient() : null;
+
+  async function cachedLeagueResource(cacheKey, upstreamUrl, accept, requireType) {
+    const safeKey = cacheKey.replace(/[^A-Za-z0-9._-]/g, "_");
+    const diskPath = path.join(leagueCacheDir, safeKey);
+    const memory = leagueAssetMemoryCache.get(safeKey);
+    if (memory) return memory;
+    try {
+      const body = await readFile(diskPath);
+      const cached = { body, contentType: requireType === "image" ? "image/png" : "application/json" };
+      leagueAssetMemoryCache.set(safeKey, cached);
+      return cached;
+    } catch {
+      // Populate the last-known cache below.
+    }
+    const upstream = await fetchImpl(upstreamUrl, { headers: { Accept: accept } });
+    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
+    if (!upstream.ok || (requireType === "image" && !contentType.toLowerCase().startsWith("image/"))) {
+      throw new Error("League asset is unavailable");
+    }
+    const body = Buffer.from(await upstream.arrayBuffer());
+    await mkdir(leagueCacheDir, { recursive: true });
+    await writeFile(diskPath, body);
+    const cached = { body, contentType };
+    leagueAssetMemoryCache.set(safeKey, cached);
+    return cached;
+  }
 
   const server = createServer(async (request, response) => {
     const headers = corsHeaders(request.headers.origin);
@@ -236,6 +306,14 @@ export async function startJsonWriter({
               connected: Boolean(rocketLeagueStatsApi.getFeed().connection?.connected),
               lastEventAt: rocketLeagueStatsApi.getFeed().connection?.lastEventAt ?? null,
               broadcastSetupEnabled: rocketLeagueStatsApi.getBroadcastSetupEnabled?.() !== false,
+            }
+          : null,
+        leagueOfLegends: leagueLiveClient
+          ? {
+              ...leagueLiveClient.getFeed().connection,
+              game: leagueLiveClient.getFeed().game,
+              playerCount: leagueLiveClient.getFeed().players.length,
+              activePlayerRiotId: leagueLiveClient.getFeed().activePlayer?.riotId ?? null,
             }
           : null,
       }));
@@ -261,6 +339,68 @@ export async function startJsonWriter({
       const merged = mergeRocketLeagueOverlayLive(rocketLeagueOverlayState, liveFeed);
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(merged));
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/api/overlays/league-of-legends") {
+      if (!leagueOverlayState) {
+        response.writeHead(204).end();
+        return;
+      }
+      const merged = mergeLeagueOverlayLive(leagueOverlayState, leagueLiveClient?.getFeed() ?? null);
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(merged));
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/api/public/league-of-legends/catalog") {
+      try {
+        let version = "";
+        try {
+          const versionsResponse = await fetchImpl(`${DATA_DRAGON_URL}/api/versions.json`, { headers: { Accept: "application/json" } });
+          const versions = await versionsResponse.json();
+          version = Array.isArray(versions) && typeof versions[0] === "string" ? versions[0] : "";
+          if (version) {
+            await mkdir(leagueCacheDir, { recursive: true });
+            await writeFile(path.join(leagueCacheDir, "catalog-version.txt"), version, "utf8");
+          }
+        } catch {
+          version = String(await readFile(path.join(leagueCacheDir, "catalog-version.txt"), "utf8")).trim();
+        }
+        if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("No cached League catalog");
+        const catalog = await cachedLeagueResource(
+          `catalog-${version}.json`,
+          `${DATA_DRAGON_URL}/cdn/${encodeURIComponent(version)}/data/en_US/champion.json`,
+          "application/json",
+          "json",
+        );
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ version, data: JSON.parse(catalog.body.toString("utf8")).data ?? {} }));
+      } catch {
+        response.writeHead(503, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: "League champion catalog is unavailable" }));
+      }
+      return;
+    }
+
+    const leagueAssetRequest = request.method === "GET"
+      ? request.url?.match(/^\/api\/public\/league-of-legends\/assets\/([0-9.]+)\/(champion|item|spell)\/([A-Za-z0-9_.-]+)$/)
+      : null;
+    if (leagueAssetRequest) {
+      try {
+        const [, version, kind, filename] = leagueAssetRequest;
+        const asset = await cachedLeagueResource(
+          `${version}-${kind}-${filename}`,
+          `${DATA_DRAGON_URL}/cdn/${encodeURIComponent(version)}/img/${kind}/${encodeURIComponent(filename)}`,
+          "image/*",
+          "image",
+        );
+        response.writeHead(200, { "Content-Type": asset.contentType, "Content-Length": asset.body.length });
+        response.end(asset.body);
+      } catch {
+        response.writeHead(404, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: "League asset is unavailable" }));
+      }
       return;
     }
 
@@ -413,6 +553,10 @@ export async function startJsonWriter({
       if (nextRocketLeagueOverlay !== undefined && !validRocketLeagueOverlay(nextRocketLeagueOverlay)) {
         throw new Error("Invalid Rocket League overlay state");
       }
+      const nextLeagueOverlay = payload.overlays?.leagueOfLegends;
+      if (nextLeagueOverlay !== undefined && !validLeagueOverlay(nextLeagueOverlay)) {
+        throw new Error("Invalid League of Legends overlay state");
+      }
       const nextValorantMapData = payload.valorantMapData;
       if (nextValorantMapData !== undefined && !validValorantMapData(nextValorantMapData)) {
         throw new Error("Invalid VALORANT map data");
@@ -426,6 +570,7 @@ export async function startJsonWriter({
           rocketLeagueOverlayState = nextRocketLeagueOverlay;
           rocketLeagueStatsApi?.setBroadcastSetupEnabled?.(nextRocketLeagueOverlay.broadcastSetupEnabled !== false);
         }
+        if (nextLeagueOverlay !== undefined) leagueOverlayState = nextLeagueOverlay;
         lastWrite = new Date().toISOString();
       });
       await writeQueue;
@@ -452,6 +597,7 @@ export async function startJsonWriter({
     url: `http://127.0.0.1:${activePort}`,
     close: async () => {
       rocketLeagueStatsApi?.stop();
+      leagueLiveClient?.stop();
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     },
   };

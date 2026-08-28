@@ -36,8 +36,23 @@ import {
   VALORANT_GAME_COUNT,
   VALORANT_MAP_ARTWORK,
 } from "../lib/valorant.mjs";
+import {
+  DEFAULT_LEAGUE_CHAMPIONS,
+  LEAGUE_DRAFT_STEPS,
+  LEAGUE_GAME_COUNT,
+  buildLeagueOverlayState,
+  calculateLeagueCurrentGame,
+  calculateLeagueSeries,
+  createLeagueDraftState,
+  draftSlots,
+  fearlessChampionSet,
+  lockLeagueDraftSelection,
+  leagueGameLimit,
+  normalizeLeagueDraft,
+  undoLeagueDraftSelection,
+} from "../lib/league-of-legends.mjs";
 
-type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "sponsors" | "draw" | "settings";
+type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "leagueOfLegends" | "sponsors" | "draw" | "settings";
 type ConnectionState = "idle" | "connected" | "error";
 type LiveSyncState = "starting" | "saving" | "synced" | "error";
 type ColorSource = "primary" | "alternate" | "backup1" | "backup2";
@@ -120,8 +135,95 @@ type Settings = {
   generalInfoEnabled: boolean;
   rocketLeagueEnabled: boolean;
   valorantEnabled: boolean;
+  leagueOfLegendsEnabled: boolean;
   sponsorsEnabled: boolean;
   drawShowEnabled: boolean;
+};
+
+type LeagueDraftState = {
+  currentStep: number;
+  selections: string[];
+  timerSeconds: number;
+  timeRemaining: number;
+  timerRunning: boolean;
+};
+
+type LeagueConfirmedGame = {
+  id: string;
+  gameNumber: number;
+  winner: "team1" | "team2";
+  bluePicks: string[];
+  redPicks: string[];
+  snapshot: unknown;
+  confirmedAt: string;
+};
+
+type LeagueResultProposal = {
+  id: string;
+  winner: "team1" | "team2" | "";
+  gameNumber: number;
+  snapshot: unknown;
+  detectedAt: string;
+} | null;
+
+type LeagueResultGame = {
+  winner: "team1" | "team2" | "";
+  id: string;
+  snapshot: unknown;
+  bluePicks: string[];
+  redPicks: string[];
+  detectedAt: string;
+};
+
+type LeagueLivePreviewPlayer = {
+  riotId: string;
+  displayName: string;
+  champion: string;
+  team: "ORDER" | "CHAOS";
+  position: string;
+  level: number;
+  isDead: boolean;
+  respawnTimer: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  creepScore: number;
+  wardScore: number;
+  items: Array<{ id: number; name: string; slot: number; count: number }>;
+  summonerSpells: Array<{ id: string; displayName: string }>;
+  runes: { keystone?: { displayName?: string } | null };
+};
+
+type LeagueLivePreview = {
+  connection: { connected: boolean; stale?: boolean };
+  game: { finished?: boolean; winnerTeam?: "ORDER" | "CHAOS" | null; gameTime: number; gameMode?: string; mapName?: string; mapNumber?: number; mapTerrain?: string };
+  activePlayer: null | {
+    riotId: string;
+    currentGold: number;
+    abilities: Record<string, unknown>;
+    championStats: Record<string, number | string>;
+    fullRunes: { generalRunes?: unknown[]; statRunes?: unknown[] };
+  };
+  players: LeagueLivePreviewPlayer[];
+  events: Array<{ id: string; name: string; time: number; team?: "ORDER" | "CHAOS" | null }>;
+};
+
+type LeagueOfLegends = {
+  scoreboardHeader: string;
+  bestOf: "Bo1" | "Bo3" | "Bo5";
+  draftMode: "standard" | "fearless";
+  currentGame: number;
+  blueTeam: "team1" | "team2";
+  playerBoardEnabled: boolean;
+  sponsorWidgetEnabled: boolean;
+  vsScreenEnabled: boolean;
+  debugLiveEnabled: boolean;
+  debugLiveScenario: "live" | "finished" | "stale";
+  results: LeagueResultGame[];
+  draft: LeagueDraftState;
+  confirmedGames: LeagueConfirmedGame[];
+  resultProposal: LeagueResultProposal;
+  playerOverrides: Record<string, string>;
 };
 
 type DrawKey = "RLT1" | "RLT2" | "VALT1" | "VALT2";
@@ -260,6 +362,7 @@ type ProductionState = {
   general: GeneralInfo;
   rocketLeague: RocketLeague;
   valorant: Valorant;
+  leagueOfLegends: LeagueOfLegends;
   valorantMapData: ValorantMapData;
   sponsors: Sponsor[];
   settings: Settings;
@@ -277,6 +380,12 @@ const VALORANT_VS_OVERLAY_URL = "http://localhost:3000/overlays/valorant/vs";
 const ROCKET_LEAGUE_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league";
 const ROCKET_LEAGUE_VS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/vs";
 const ROCKET_LEAGUE_STATS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/stats";
+const LEAGUE_DRAFT_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/draft";
+const LEAGUE_LIVE_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/live";
+const LEAGUE_RECAP_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/recap";
+const LEAGUE_VS_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/vs";
+const LEAGUE_OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/league-of-legends";
+const LEAGUE_CATALOG_ENDPOINT = "http://127.0.0.1:4877/api/public/league-of-legends/catalog";
 const GAMING_OASIS_FAVICON_URL = "http://localhost:3000/gaming-oasis-favicon.png";
 const GAMING_OASIS_SPONSOR: Sponsor = {
   id: "gaming-oasis",
@@ -447,6 +556,23 @@ function createInitialState(): ProductionState {
       bo3: { ban1: "", ban2: "", pick1: "", pick2: "", ban3: "", ban4: "", decider: "", side1: "", side2: "", side3: "" },
       bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
     },
+    leagueOfLegends: {
+      scoreboardHeader: "",
+      bestOf: "Bo3",
+      draftMode: "standard",
+      currentGame: 1,
+      blueTeam: "team1",
+      playerBoardEnabled: true,
+      sponsorWidgetEnabled: true,
+      vsScreenEnabled: false,
+      debugLiveEnabled: false,
+      debugLiveScenario: "live",
+      results: createLeagueResultGames(),
+      draft: createLeagueDraftState(30) as LeagueDraftState,
+      confirmedGames: [],
+      resultProposal: null,
+      playerOverrides: {},
+    },
     valorantMapData: { maps: VALORANT_MAP_ARTWORK.map((map) => ({ ...map })) },
     sponsors: [
       { ...GAMING_OASIS_SPONSOR },
@@ -461,6 +587,7 @@ function createInitialState(): ProductionState {
       generalInfoEnabled: true,
       rocketLeagueEnabled: true,
       valorantEnabled: true,
+      leagueOfLegendsEnabled: true,
       sponsorsEnabled: true,
       drawShowEnabled: true,
     },
@@ -504,6 +631,7 @@ function hasProductionContent(state: ProductionState) {
     state.general.currentSegment,
     state.rocketLeague.scoreboardHeader,
     state.valorant.scoreboardHeader,
+    state.leagueOfLegends.scoreboardHeader,
   ].some(hasText)
     || state.general.segments.some(hasText)
     || state.general.matches.some((match) => hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2) || leagueHasContent(match.league))
@@ -511,6 +639,9 @@ function hasProductionContent(state: ProductionState) {
     || scoresHaveContent(state.rocketLeague.savedGames)
     || scoresHaveContent(state.valorant.games)
     || scoresHaveContent(state.valorant.savedGames)
+    || state.leagueOfLegends.results.some((game) => hasText(game.winner))
+    || state.leagueOfLegends.draft.selections.some(hasText)
+    || state.leagueOfLegends.confirmedGames.length > 0
     || Object.values(state.valorant.bo3).some(hasText)
     || Object.values(state.valorant.bo5).some(hasText)
     || state.sponsors.some((sponsor) => sponsor.id !== GAMING_OASIS_SPONSOR.id && (hasText(sponsor.name) || hasText(sponsor.logo)))
@@ -595,6 +726,15 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
   const savedRocketLeagueResults = saved.rocketLeague?.savedGames ?? saved.rocketLeague?.games;
   const savedValorantResults = saved.valorant?.savedGames ?? saved.valorant?.games;
   const savedMapArtwork = Array.isArray(saved.valorantMapData?.maps) ? saved.valorantMapData.maps : [];
+  const savedLeagueBestOf = ["Bo1", "Bo3", "Bo5"].includes(saved.leagueOfLegends?.bestOf ?? "")
+    ? saved.leagueOfLegends!.bestOf
+    : initial.leagueOfLegends.bestOf;
+  const savedLeagueConfirmedGames = Array.isArray(saved.leagueOfLegends?.confirmedGames)
+    ? saved.leagueOfLegends.confirmedGames.filter((game) => game?.winner === "team1" || game?.winner === "team2")
+    : [];
+  const savedLeagueResults = Array.isArray(saved.leagueOfLegends?.results)
+    ? createLeagueResultGames(saved.leagueOfLegends.results)
+    : leagueResultsFromConfirmedGames(savedLeagueConfirmedGames);
   return {
     general: {
       ...initial.general,
@@ -653,6 +793,28 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
       bo3: { ...initial.valorant.bo3, ...(saved.valorant?.bo3 ?? {}) },
       bo5: { ...initial.valorant.bo5, ...(saved.valorant?.bo5 ?? {}) },
     },
+    leagueOfLegends: {
+      ...initial.leagueOfLegends,
+      ...(saved.leagueOfLegends ?? {}),
+      bestOf: savedLeagueBestOf,
+      draftMode: saved.leagueOfLegends?.draftMode === "fearless" ? "fearless" : "standard",
+      currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
+      blueTeam: saved.leagueOfLegends?.blueTeam === "team2" ? "team2" : "team1",
+      playerBoardEnabled: saved.leagueOfLegends?.playerBoardEnabled !== false,
+      sponsorWidgetEnabled: saved.leagueOfLegends?.sponsorWidgetEnabled !== false,
+      vsScreenEnabled: Boolean(saved.leagueOfLegends?.vsScreenEnabled),
+      debugLiveEnabled: Boolean(saved.leagueOfLegends?.debugLiveEnabled),
+      debugLiveScenario: ["live", "finished", "stale"].includes(saved.leagueOfLegends?.debugLiveScenario ?? "")
+        ? saved.leagueOfLegends!.debugLiveScenario
+        : "live",
+      results: savedLeagueResults,
+      draft: normalizeLeagueDraft(saved.leagueOfLegends?.draft, saved.leagueOfLegends?.draft?.timerSeconds ?? 30) as LeagueDraftState,
+      confirmedGames: savedLeagueConfirmedGames,
+      resultProposal: saved.leagueOfLegends?.resultProposal?.id ? saved.leagueOfLegends.resultProposal : null,
+      playerOverrides: saved.leagueOfLegends?.playerOverrides && typeof saved.leagueOfLegends.playerOverrides === "object"
+        ? saved.leagueOfLegends.playerOverrides
+        : {},
+    },
     valorantMapData: {
       maps: savedMapArtwork.length > 0
         ? savedMapArtwork.map((map) => ({
@@ -672,6 +834,7 @@ function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
       generalInfoEnabled: savedSettings.generalInfoEnabled ?? true,
       rocketLeagueEnabled: savedSettings.rocketLeagueEnabled ?? true,
       valorantEnabled: savedSettings.valorantEnabled ?? true,
+      leagueOfLegendsEnabled: savedSettings.leagueOfLegendsEnabled ?? true,
       sponsorsEnabled: savedSettings.sponsorsEnabled ?? true,
       drawShowEnabled: savedSettings.drawShowEnabled ?? true,
     },
@@ -750,6 +913,42 @@ function colorSimilarity(first: string, second: string) {
 
 function safeColor(value: string, fallback = "#404040") {
   return colorToRgb(value) ? value : fallback;
+}
+
+function createLeagueResultGames(values: Array<Partial<LeagueResultGame>> = []): LeagueResultGame[] {
+  return Array.from({ length: LEAGUE_GAME_COUNT }, (_, index) => {
+    const value = values[index] ?? {};
+    return {
+      winner: value.winner === "team1" || value.winner === "team2" ? value.winner : "",
+      id: typeof value.id === "string" ? value.id : "",
+      snapshot: value.snapshot ?? null,
+      bluePicks: Array.from({ length: 5 }, (__, pickIndex) => String(value.bluePicks?.[pickIndex] ?? "")),
+      redPicks: Array.from({ length: 5 }, (__, pickIndex) => String(value.redPicks?.[pickIndex] ?? "")),
+      detectedAt: typeof value.detectedAt === "string" ? value.detectedAt : "",
+    };
+  });
+}
+
+function leagueResultsFromConfirmedGames(games: LeagueConfirmedGame[]): LeagueResultGame[] {
+  const values = Array.from({ length: LEAGUE_GAME_COUNT }, () => ({} as Partial<LeagueResultGame>));
+  games.forEach((game) => {
+    const index = game.gameNumber - 1;
+    if (index < 0 || index >= LEAGUE_GAME_COUNT) return;
+    values[index] = {
+      winner: game.winner,
+      id: game.id,
+      snapshot: game.snapshot,
+      bluePicks: game.bluePicks,
+      redPicks: game.redPicks,
+      detectedAt: game.confirmedAt,
+    };
+  });
+  return createLeagueResultGames(values);
+}
+
+function leagueResultPendingCount(results: LeagueResultGame[], saved: LeagueConfirmedGame[], bestOf: LeagueOfLegends["bestOf"]) {
+  const savedWinners = new Map(saved.map((game) => [game.gameNumber, game.winner]));
+  return results.slice(0, leagueGameLimit(bestOf)).filter((game, index) => game.winner !== (savedWinners.get(index + 1) ?? "")).length;
 }
 
 function resultIsPending(draft: RocketLeagueGame, saved: RocketLeagueGame) {
@@ -1009,6 +1208,11 @@ export default function Home() {
   const [generalTab, setGeneralTab] = useState<"talent" | "segments">("talent");
   const [valorantTab, setValorantTab] = useState<"results" | "pickBans" | "mapPool" | "overlay">("results");
   const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "overlay" | "admin" | "debug">("results");
+  const [leagueTab, setLeagueTab] = useState<"results" | "draft" | "live" | "overlay">("results");
+  const [leagueChampion, setLeagueChampion] = useState("");
+  const [leagueCatalog, setLeagueCatalog] = useState<Array<{ id: string; name: string }>>(() => [...DEFAULT_LEAGUE_CHAMPIONS]);
+  const [leagueCatalogVersion, setLeagueCatalogVersion] = useState("latest");
+  const [leagueLivePreview, setLeagueLivePreview] = useState<LeagueLivePreview | null>(null);
   const [drawTab, setDrawTab] = useState<DrawKey>("RLT1");
   const [drawPastePool, setDrawPastePool] = useState<number | null>(null);
   const [drawPasteText, setDrawPasteText] = useState("");
@@ -1030,6 +1234,104 @@ export default function Home() {
   const seriesResetTriggerRef = useRef<HTMLButtonElement>(null);
   const valorantSeriesResetModalRef = useRef<HTMLDivElement>(null);
   const valorantSeriesResetTriggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!hydrated || !state.leagueOfLegends.draft.timerRunning) return;
+    const timer = window.setInterval(() => {
+      setState((current) => {
+        const draft = current.leagueOfLegends.draft;
+        if (!draft.timerRunning) return current;
+        const timeRemaining = Math.max(0, draft.timeRemaining - 1);
+        return {
+          ...current,
+          leagueOfLegends: {
+            ...current.leagueOfLegends,
+            draft: { ...draft, timeRemaining, timerRunning: timeRemaining > 0 },
+          },
+        };
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hydrated, state.leagueOfLegends.draft.timerRunning]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const controller = new AbortController();
+    fetch(LEAGUE_CATALOG_ENDPOINT, { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((payload) => {
+        const entries = Object.values(payload?.data ?? {}) as Array<{ id?: string; name?: string }>;
+        const catalog = entries
+          .filter((entry) => entry?.id && entry?.name)
+          .map((entry) => ({ id: String(entry.id), name: String(entry.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        if (catalog.length > 100) setLeagueCatalog(catalog);
+        if (typeof payload?.version === "string") setLeagueCatalogVersion(payload.version);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    let active = true;
+    const controller = new AbortController();
+
+    async function pollLeagueLive() {
+      try {
+        const response = await fetch(LEAGUE_OVERLAY_ENDPOINT, { cache: "no-store", signal: controller.signal });
+        if (!active || response.status === 204 || !response.ok) return;
+        const payload = await response.json();
+        setLeagueLivePreview(payload?.live ?? null);
+        if (!payload?.live?.game?.finished) return;
+        const endEvent = [...(payload.live.events ?? [])].reverse().find((event: { id?: string; name?: string }) => String(event?.name).toLowerCase() === "gameend");
+        const playerSignature = (payload.live.players ?? []).map((player: { riotId?: string; champion?: string }) => `${player.riotId ?? ""}:${player.champion ?? ""}`).join("|");
+        const proposalId = `lol-${endEvent?.id ?? "end"}-${Math.floor(payload.live.game.gameTime ?? 0)}-${playerSignature}`;
+        setState((current) => {
+          if (current.leagueOfLegends.resultProposal?.id === proposalId || current.leagueOfLegends.confirmedGames.some((game) => game.id === proposalId)) return current;
+          const winnerTeam = payload.live.game.winnerTeam;
+          const blueWinner = current.leagueOfLegends.blueTeam === "team1" ? "team1" : "team2";
+          const redWinner = blueWinner === "team1" ? "team2" : "team1";
+          const winner = winnerTeam === "ORDER" ? blueWinner : winnerTeam === "CHAOS" ? redWinner : "";
+          const gameNumber = current.leagueOfLegends.currentGame;
+          const slots = draftSlots(current.leagueOfLegends.draft);
+          const results = current.leagueOfLegends.results.map((game, index) => index === gameNumber - 1 ? {
+            ...game,
+            winner,
+            id: proposalId,
+            snapshot: payload.live,
+            bluePicks: slots.bluePicks,
+            redPicks: slots.redPicks,
+            detectedAt: new Date().toISOString(),
+          } : game);
+          return {
+            ...current,
+            leagueOfLegends: {
+              ...current.leagueOfLegends,
+              results,
+              resultProposal: {
+                id: proposalId,
+                winner,
+                gameNumber,
+                snapshot: payload.live,
+                detectedAt: new Date().toISOString(),
+              },
+            },
+          };
+        });
+      } catch {
+        if (active) setLeagueLivePreview((current) => current ? { ...current, connection: { ...current.connection, connected: false } } : null);
+      }
+    }
+
+    void pollLeagueLive();
+    const timer = window.setInterval(pollLeagueLive, 500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     try {
@@ -1187,6 +1489,14 @@ export default function Home() {
     { eventName: state.general.eventName },
     state.sponsors,
   ), [state.rocketLeague, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
+  const leagueOverlay = useMemo(() => buildLeagueOverlayState(
+    state.leagueOfLegends,
+    resolveTeam(state.general.matches[0].team1),
+    resolveTeam(state.general.matches[0].team2),
+    { primaryColor: matchOneLeague.primaryColor, secondaryColor: matchOneLeague.secondaryColor },
+    state.sponsors,
+    { eventName: state.general.eventName, assetVersion: leagueCatalogVersion },
+  ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, leagueCatalogVersion]);
   const hasLiveProductionContent = useMemo(() => hasProductionContent(state), [state]);
   const filledSponsors = state.sponsors.filter((sponsor) => sponsor.name.trim() || sponsor.logo.trim()).length;
   const filledMatches = state.general.matches.filter((match) => resolveTeam(match.team1).name && resolveTeam(match.team2).name).length;
@@ -1202,6 +1512,12 @@ export default function Home() {
   const valorantInvalidResults = invalidResultCount(state.valorant.games);
   const valorantHeader = resolveScoreboardHeader(state.valorant.scoreboardHeader, state.general.eventName);
   const valorantReady = Boolean(valorantHeader);
+  const leagueGameCount = leagueGameLimit(state.leagueOfLegends.bestOf);
+  const leagueConfirmedGames = state.leagueOfLegends.confirmedGames.filter((game) => game.gameNumber <= leagueGameCount);
+  const leagueSeries = calculateLeagueSeries(leagueConfirmedGames);
+  const leaguePendingResults = leagueResultPendingCount(state.leagueOfLegends.results, leagueConfirmedGames, state.leagueOfLegends.bestOf);
+  const leagueHeader = resolveScoreboardHeader(state.leagueOfLegends.scoreboardHeader, state.general.eventName);
+  const leagueReady = Boolean(leagueHeader);
 
   useEffect(() => {
     if (!hydrated || !liveWriteReady) return;
@@ -1215,7 +1531,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             files,
-            overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay },
+            overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay },
             valorantMapData: state.valorantMapData,
           }),
           signal: controller.signal,
@@ -1232,7 +1548,7 @@ export default function Home() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [files, valorantOverlay, rocketLeagueOverlay, state.valorantMapData, hydrated, liveWriteReady, hasLiveProductionContent, allowEmptyLiveWrite]);
+  }, [files, valorantOverlay, rocketLeagueOverlay, leagueOverlay, state.valorantMapData, hydrated, liveWriteReady, hasLiveProductionContent, allowEmptyLiveWrite]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1372,6 +1688,164 @@ export default function Home() {
 
   function openRocketLeagueStatsOverlay() {
     window.open(ROCKET_LEAGUE_STATS_OVERLAY_URL, "_blank", "noopener,noreferrer");
+  }
+
+  async function copyLeagueOverlayLink(label: string, url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      notify(`${label} overlay link copied`);
+    } catch {
+      notify("Could not copy the overlay link");
+    }
+  }
+
+  function openLeagueOverlay(url: string) {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function updateLeagueOfLegends(patch: Partial<LeagueOfLegends>) {
+    setState((current) => ({ ...current, leagueOfLegends: { ...current.leagueOfLegends, ...patch } }));
+  }
+
+  function updateLeagueBestOf(bestOf: LeagueOfLegends["bestOf"]) {
+    setState((current) => ({
+      ...current,
+      leagueOfLegends: {
+        ...current.leagueOfLegends,
+        bestOf,
+        currentGame: calculateLeagueCurrentGame(current.leagueOfLegends.confirmedGames, bestOf),
+      },
+    }));
+  }
+
+  function lockLeagueChampion() {
+    let failure = "";
+    setState((current) => {
+      const unavailable = current.leagueOfLegends.draftMode === "fearless"
+        ? fearlessChampionSet(current.leagueOfLegends.confirmedGames)
+        : new Set();
+      const result = lockLeagueDraftSelection(current.leagueOfLegends.draft, leagueChampion, unavailable);
+      if (!result.changed) {
+        failure = result.reason || "Could not lock champion";
+        return current;
+      }
+      return {
+        ...current,
+        leagueOfLegends: { ...current.leagueOfLegends, draft: result.draft as LeagueDraftState },
+      };
+    });
+    if (failure) notify(failure);
+    else setLeagueChampion("");
+  }
+
+  function undoLeagueDraft() {
+    setState((current) => ({
+      ...current,
+      leagueOfLegends: {
+        ...current.leagueOfLegends,
+        draft: undoLeagueDraftSelection(current.leagueOfLegends.draft) as LeagueDraftState,
+      },
+    }));
+  }
+
+  function resetLeagueDraft() {
+    if (!window.confirm("Reset the current League of Legends draft? Confirmed games and fearless history will remain.")) return;
+    setState((current) => ({
+      ...current,
+      leagueOfLegends: {
+        ...current.leagueOfLegends,
+        draft: createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds) as LeagueDraftState,
+      },
+    }));
+    setLeagueChampion("");
+    notify("League of Legends draft reset");
+  }
+
+  function updateLeagueResult(gameIndex: number, winner: LeagueResultGame["winner"]) {
+    setState((current) => ({
+      ...current,
+      leagueOfLegends: {
+        ...current.leagueOfLegends,
+        results: current.leagueOfLegends.results.map((game, index) => index === gameIndex ? { ...game, winner } : game),
+      },
+    }));
+  }
+
+  function discardLeagueResultProposal() {
+    setState((current) => {
+      const proposal = current.leagueOfLegends.resultProposal;
+      if (!proposal) return current;
+      const saved = current.leagueOfLegends.confirmedGames.find((game) => game.gameNumber === proposal.gameNumber);
+      const replacement = saved ? leagueResultsFromConfirmedGames([saved])[proposal.gameNumber - 1] : createLeagueResultGames()[proposal.gameNumber - 1];
+      return {
+        ...current,
+        leagueOfLegends: {
+          ...current.leagueOfLegends,
+          results: current.leagueOfLegends.results.map((game, index) => index === proposal.gameNumber - 1 ? replacement : game),
+          resultProposal: null,
+        },
+      };
+    });
+    notify("Live League result proposal discarded");
+  }
+
+  function saveLeagueResults() {
+    if (!leaguePendingResults) return;
+    setState((current) => {
+      const slots = draftSlots(current.leagueOfLegends.draft);
+      const currentDraftHasPicks = [...slots.bluePicks, ...slots.redPicks].some(Boolean);
+      const previousByGame = new Map(current.leagueOfLegends.confirmedGames.map((game) => [game.gameNumber, game]));
+      const gameLimit = leagueGameLimit(current.leagueOfLegends.bestOf);
+      const confirmedGames = current.leagueOfLegends.results.slice(0, gameLimit).flatMap((result, index) => {
+        if (!result.winner) return [];
+        const gameNumber = index + 1;
+        const existing = previousByGame.get(gameNumber);
+        const resultHasPicks = [...result.bluePicks, ...result.redPicks].some(Boolean);
+        const useCurrentDraft = gameNumber === current.leagueOfLegends.currentGame && currentDraftHasPicks;
+        return [{
+          id: result.id || existing?.id || `manual-${gameNumber}-${Date.now()}`,
+          gameNumber,
+          winner: result.winner,
+          bluePicks: resultHasPicks ? result.bluePicks : useCurrentDraft ? slots.bluePicks : existing?.bluePicks ?? Array(5).fill(""),
+          redPicks: resultHasPicks ? result.redPicks : useCurrentDraft ? slots.redPicks : existing?.redPicks ?? Array(5).fill(""),
+          snapshot: result.snapshot ?? existing?.snapshot ?? null,
+          confirmedAt: new Date().toISOString(),
+        } as LeagueConfirmedGame];
+      });
+      const currentResultChanged = (previousByGame.get(current.leagueOfLegends.currentGame)?.winner ?? "")
+        !== (current.leagueOfLegends.results[current.leagueOfLegends.currentGame - 1]?.winner ?? "");
+      const currentGame = calculateLeagueCurrentGame(confirmedGames, current.leagueOfLegends.bestOf);
+      return {
+        ...current,
+        leagueOfLegends: {
+          ...current.leagueOfLegends,
+          confirmedGames,
+          results: leagueResultsFromConfirmedGames(confirmedGames),
+          currentGame,
+          draft: currentResultChanged || currentGame !== current.leagueOfLegends.currentGame
+            ? createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds) as LeagueDraftState
+            : current.leagueOfLegends.draft,
+          resultProposal: null,
+        },
+      };
+    });
+    notify("League of Legends results updated");
+  }
+
+  function resetLeagueSeries() {
+    if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool.")) return;
+    setState((current) => ({
+      ...current,
+      leagueOfLegends: {
+        ...current.leagueOfLegends,
+        currentGame: 1,
+        results: createLeagueResultGames(),
+        draft: createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds) as LeagueDraftState,
+        confirmedGames: [],
+        resultProposal: null,
+      },
+    }));
+    notify("League of Legends series reset");
   }
 
   async function setRocketLeagueMatchPaused(paused: boolean) {
@@ -1835,6 +2309,7 @@ export default function Home() {
     matches: "Team Info",
     rocketLeague: "Rocket League",
     valorant: "VALORANT",
+    leagueOfLegends: "League of Legends",
     sponsors: "Sponsors",
     draw: "Draw show",
     settings: "Settings",
@@ -1846,6 +2321,7 @@ export default function Home() {
     { key: "matches", label: "Team Info" },
     ...(state.settings.rocketLeagueEnabled ? [{ key: "rocketLeague" as Section, label: "Rocket League" }] : []),
     ...(state.settings.valorantEnabled ? [{ key: "valorant" as Section, label: "VALORANT" }] : []),
+    ...(state.settings.leagueOfLegendsEnabled ? [{ key: "leagueOfLegends" as Section, label: "League of Legends" }] : []),
     ...(state.settings.sponsorsEnabled ? [{ key: "sponsors" as Section, label: "Sponsors" }] : []),
     ...(state.settings.drawShowEnabled ? [{ key: "draw" as Section, label: "Draw show" }] : []),
     { key: "settings", label: "Settings" },
@@ -2154,14 +2630,13 @@ export default function Home() {
         />
         <div className="tabs" role="tablist" aria-label="VALORANT views">
           <button className={valorantTab === "results" ? "active" : ""} onClick={() => setValorantTab("results")}>Results & setup</button>
-          <button className={valorantTab === "pickBans" ? "active" : ""} onClick={() => setValorantTab("pickBans")}>Picks / bans</button>
-          <button className={valorantTab === "mapPool" ? "active" : ""} onClick={() => setValorantTab("mapPool")}>Map Pool</button>
+          <button className={valorantTab === "pickBans" ? "active" : ""} onClick={() => setValorantTab("pickBans")}>Pick / ban</button>
+          <button className={valorantTab === "mapPool" ? "active" : ""} onClick={() => setValorantTab("mapPool")}>Map pool</button>
           <button className={valorantTab === "overlay" ? "active" : ""} onClick={() => setValorantTab("overlay")}>Browser overlay</button>
         </div>
 
         {valorantTab === "results" ? (
-          <>
-          <div className="rocket-league-layout valorant-results-layout">
+          <div className="rocket-league-layout valorant-results-layout game-results-layout">
             <section className="panel-card rocket-score-card">
               <div className="card-title-row result-card-heading"><div><h2>Map results</h2><p>Enter both scores with a clear winner, then update the live JSON.</p></div><div className="result-update-controls"><span className={valorantInvalidResults ? "invalid" : valorantPendingResults ? "pending" : "current"}>{valorantInvalidResults ? `${valorantInvalidResults} invalid ${valorantInvalidResults === 1 ? "result" : "results"}` : valorantPendingResults ? `${valorantPendingResults} unsaved` : "Results current"}</span><button className={`button ${valorantPendingResults && !valorantInvalidResults ? "primary" : "secondary"}`} type="button" onClick={saveValorantResults} disabled={!valorantPendingResults || Boolean(valorantInvalidResults)}>Update results</button><button ref={valorantSeriesResetTriggerRef} className="button danger" type="button" onClick={() => setValorantSeriesResetOpen(true)}>Reset series</button></div></div>
               <div className="rocket-score-head" aria-hidden="true"><span>Map</span><strong>{homeTeam}</strong><span>vs</span><strong>{awayTeam}</strong></div>
@@ -2201,18 +2676,16 @@ export default function Home() {
                   <div className="valorant-toggle-row"><div><strong>Flip sides</strong><p>Swap team names, colors, logos, and series totals on screen. Entered map scores stay in home/away order.</p></div><label className="switch large"><input aria-label="Flip VALORANT team sides" type="checkbox" checked={state.valorant.flipSides} onChange={(event) => updateValorant({ flipSides: event.target.checked })} /><span /></label></div>
                 </div>
               </section>
-
+              <section className="panel-card rocket-indicator-card valorant-live-card" aria-label="VALORANT live match indicators">
+                <div className="card-title-row"><div><h2>Live match indicators</h2><p>Calculated from the results currently saved to JSON.</p></div></div>
+                <dl className="rocket-indicators valorant-live-indicators">
+                  <div><dt>Current map</dt><dd className="map-indicator-value">Map {valorantCurrentMap.number}</dd><small className="map-name">{valorantCurrentMap.name || "Map not selected"}</small></div>
+                  <div><dt>{displayTeamOne}</dt><dd>{displayWinsOne}</dd><small>Series wins</small><span className="valorant-live-side">{valorantSideLabel(valorantCurrentSides.one)}</span></div>
+                  <div><dt>{displayTeamTwo}</dt><dd>{displayWinsTwo}</dd><small>Series wins</small><span className="valorant-live-side">{valorantSideLabel(valorantCurrentSides.two)}</span></div>
+                </dl>
+              </section>
             </div>
           </div>
-          <section className="panel-card rocket-indicator-card valorant-live-card" aria-label="VAL Live info">
-            <div className="card-title-row"><div><h2>VAL Live info</h2><p>Current map, series score, and starting sides calculated from the results saved to JSON.</p></div></div>
-            <dl className="rocket-indicators valorant-live-indicators">
-              <div><dt>Current map</dt><dd className="map-indicator-value">Map {valorantCurrentMap.number}</dd><small className="map-name">{valorantCurrentMap.name || "Map not selected"}</small></div>
-              <div><dt>{displayTeamOne}</dt><dd>{displayWinsOne}</dd><small>Series wins</small><span className="valorant-live-side">{valorantSideLabel(valorantCurrentSides.one)}</span></div>
-              <div><dt>{displayTeamTwo}</dt><dd>{displayWinsTwo}</dd><small>Series wins</small><span className="valorant-live-side">{valorantSideLabel(valorantCurrentSides.two)}</span></div>
-            </dl>
-          </section>
-          </>
         ) : valorantTab === "pickBans" ? (
           <div className="valorant-pickban-stack">
             <section className="panel-card valorant-reference" aria-label="VALORANT ban team assignments">
@@ -2342,32 +2815,17 @@ export default function Home() {
         />
         <div className="tabs" role="tablist" aria-label="Rocket League views">
           <button className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
-          <button className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
           <button className={rocketLeagueTab === "admin" ? "active" : ""} onClick={() => setRocketLeagueTab("admin")}>Admin control</button>
           <button className={rocketLeagueTab === "debug" ? "active" : ""} onClick={() => setRocketLeagueTab("debug")}>Debug</button>
+          <button className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
         </div>
 
         {rocketLeagueTab === "results" ? (
-          <div className="rocket-league-layout">
+          <div className="rocket-league-layout game-results-layout">
             <section className="panel-card rocket-score-card">
               <div className="card-title-row result-card-heading">
                 <div><h2>Match results</h2><p>Enter both scores with a clear winner, then update the live JSON. Finished live games propose into the next open row.</p></div>
                 <div className="result-update-controls"><span className={rocketLeagueInvalidResults ? "invalid" : rocketLeaguePendingResults ? "pending" : "current"}>{rocketLeagueInvalidResults ? `${rocketLeagueInvalidResults} invalid ${rocketLeagueInvalidResults === 1 ? "result" : "results"}` : rocketLeaguePendingResults ? `${rocketLeaguePendingResults} unsaved` : "Results current"}</span><button className={`button ${rocketLeaguePendingResults && !rocketLeagueInvalidResults ? "primary" : "secondary"}`} type="button" onClick={saveRocketLeagueResults} disabled={!rocketLeaguePendingResults || Boolean(rocketLeagueInvalidResults)}>Update results</button><button ref={seriesResetTriggerRef} className="button danger" type="button" onClick={() => setRocketLeagueSeriesResetOpen(true)}>Reset series</button></div>
-              </div>
-              <div className="valorant-toggle-row" style={{ marginBottom: 12 }}>
-                <div>
-                  <strong>Auto-accept live results</strong>
-                  <p>When a live round ends, fill the next game row and write it to JSON without using the save button.</p>
-                </div>
-                <label className="switch large">
-                  <input
-                    aria-label="Auto-accept live Rocket League results"
-                    type="checkbox"
-                    checked={state.rocketLeague.autoAcceptLiveResults}
-                    onChange={(event) => updateRocketLeague({ autoAcceptLiveResults: event.target.checked })}
-                  />
-                  <span />
-                </label>
               </div>
               <div className="rocket-score-head" aria-hidden="true">
                 <span>Game</span>
@@ -2415,6 +2873,12 @@ export default function Home() {
                     </select>
                   </label>
                 </div>
+                <div className="valorant-toggle-list">
+                  <div className="valorant-toggle-row">
+                    <div><strong>Auto-accept live results</strong><p>When a live round ends, save the next game result automatically. Leave off to review it before updating results.</p></div>
+                    <label className="switch large"><input aria-label="Auto-accept live Rocket League results" type="checkbox" checked={state.rocketLeague.autoAcceptLiveResults} onChange={(event) => updateRocketLeague({ autoAcceptLiveResults: event.target.checked })} /><span /></label>
+                  </div>
+                </div>
               </section>
 
               <section className="panel-card rocket-indicator-card">
@@ -2426,11 +2890,6 @@ export default function Home() {
                 </dl>
               </section>
 
-              <section className="panel-card rocket-output-card">
-                <span>Live output</span>
-                <strong>{state.rocketLeague.bestOf} · Round {rocketLeagueSeries.roundNumber}</strong>
-                <small>{rocketLeagueSeries.completedGames} of {ROCKET_LEAGUE_GAME_COUNT} game scores complete</small>
-              </section>
             </div>
           </div>
         ) : rocketLeagueTab === "overlay" ? (
@@ -2489,12 +2948,12 @@ export default function Home() {
                 <label className="switch large"><input aria-label="Enable Rocket League sponsor widget" type="checkbox" checked={state.rocketLeague.sponsorWidgetEnabled} onChange={(event) => updateRocketLeague({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
-                <div><strong>Lobby scene: Post-match stats</strong><small>When the live feed has no active match, show the post-match team stats board instead of the VS matchup on the scoreboard URL.</small></div>
-                <label className="switch large"><input aria-label="Show post-match stats on Rocket League lobby scene" type="checkbox" checked={state.rocketLeague.lobbyScene === "stats"} onChange={(event) => updateRocketLeague({ lobbyScene: event.target.checked ? "stats" : "vs" })} /><span /></label>
+                <div><strong>VS screen background</strong><small>Place the team-split VS treatment behind the post-match Stats scene.</small></div>
+                <label className="switch large"><input aria-label="Show Rocket League VS screen background" type="checkbox" checked={state.rocketLeague.statsSceneBackground === "team-split"} onChange={(event) => updateRocketLeague({ statsSceneBackground: event.target.checked ? "team-split" : "transparent" })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
-                <div><strong>Stats scene: team background</strong><small>On the post-match stats URL, show the same diagonal team-color background as the VS scene instead of a fully transparent canvas.</small></div>
-                <label className="switch large"><input aria-label="Enable team background on Rocket League post-match stats scene" type="checkbox" checked={state.rocketLeague.statsSceneBackground === "team-split"} onChange={(event) => updateRocketLeague({ statsSceneBackground: event.target.checked ? "team-split" : "transparent" })} /><span /></label>
+                <div><strong>Lobby scene: Post-match stats</strong><small>When the live feed has no active match, show post-match stats instead of the full VS matchup screen.</small></div>
+                <label className="switch large"><input aria-label="Show post-match stats on Rocket League lobby scene" type="checkbox" checked={state.rocketLeague.lobbyScene === "stats"} onChange={(event) => updateRocketLeague({ lobbyScene: event.target.checked ? "stats" : "vs" })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
                 <div><strong>Auto broadcast camera</strong><small>Switch to Director cam on match create. Hide the full native HUD at countdown start (Stats API cannot do a partial H-key hide). Restores HUD when the match ends. Requires spectating.</small></div>
@@ -2668,6 +3127,196 @@ export default function Home() {
     );
   }
 
+  function renderLeagueOfLegends() {
+    const teamOne = resolveTeam(state.general.matches[0].team1);
+    const teamTwo = resolveTeam(state.general.matches[0].team2);
+    const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
+    const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
+    const activeStep = LEAGUE_DRAFT_STEPS[state.leagueOfLegends.draft.currentStep];
+    const unavailable = state.leagueOfLegends.draftMode === "fearless"
+      ? fearlessChampionSet(leagueConfirmedGames)
+      : new Set<string>();
+    const used = new Set(state.leagueOfLegends.draft.selections.filter(Boolean));
+    const livePlayers = Array.isArray(leagueLivePreview?.players) ? leagueLivePreview.players : [];
+    const liveEvents = Array.isArray(leagueLivePreview?.events) ? leagueLivePreview.events : [];
+    const activeLeaguePlayer = leagueLivePreview?.activePlayer ?? null;
+    const liveConnected = Boolean(leagueLivePreview?.connection?.connected);
+    const liveStale = Boolean(leagueLivePreview?.connection?.stale);
+    const formatClock = (seconds: number) => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds) % 60)).padStart(2, "0")}`;
+
+    return (
+      <div className="page-stack league-page">
+        <SectionHeading
+          eyebrow="Game setup"
+          title="League of Legends"
+          description="Run champion select, verify the local spectator feed, and confirm each game before it changes the series. Match 1 supplies team and league branding."
+        />
+        <div className="tabs" role="tablist" aria-label="League of Legends views">
+          <button className={leagueTab === "results" ? "active" : ""} onClick={() => setLeagueTab("results")}>Results & setup</button>
+          <button className={leagueTab === "draft" ? "active" : ""} onClick={() => setLeagueTab("draft")}>Draft</button>
+          <button className={leagueTab === "live" ? "active" : ""} onClick={() => setLeagueTab("live")}>Debug</button>
+          <button className={leagueTab === "overlay" ? "active" : ""} onClick={() => setLeagueTab("overlay")}>Browser overlay</button>
+        </div>
+
+        {leagueTab === "overlay" ? (
+          <section className="panel-card browser-overlay-card browser-overlay-workspace league-overlay-links" aria-label="Browser overlay">
+            <div className="card-title-row"><div><h2>League browser overlay</h2><p>Add each transparent 1920×1080 URL to its matching OBS or vMix scene.</p></div></div>
+            <div className="browser-overlay-widget-controls" aria-label="Overlay widget visibility">
+              <div className="browser-overlay-widget-toggle">
+                <div><strong>VS screen background</strong><small>Place the team-split VS treatment behind the Draft and Post-game recap scenes.</small></div>
+                <label className="switch large"><input aria-label="Show League of Legends VS screen background" type="checkbox" checked={state.leagueOfLegends.vsScreenEnabled} onChange={(event) => updateLeagueOfLegends({ vsScreenEnabled: event.target.checked })} /><span /></label>
+              </div>
+              <div className="browser-overlay-widget-toggle">
+                <div><strong>Sponsor widget</strong><small>Show the rotating included sponsors on the VS screen.</small></div>
+                <label className="switch large"><input aria-label="Enable League of Legends sponsor widget" type="checkbox" checked={state.leagueOfLegends.sponsorWidgetEnabled} onChange={(event) => updateLeagueOfLegends({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
+              </div>
+            </div>
+            {[["Draft", LEAGUE_DRAFT_OVERLAY_URL], ["Live HUD", LEAGUE_LIVE_OVERLAY_URL], ["Post-game recap", LEAGUE_RECAP_OVERLAY_URL]].map(([label, url]) => (
+              <div className="league-overlay-link" key={url}>
+                <label className="field"><span className="field-label">{label}</span><input readOnly value={url} /></label>
+                <button className="button secondary" type="button" onClick={() => copyLeagueOverlayLink(label, url)}>Copy</button>
+                <button className="button secondary" type="button" onClick={() => openLeagueOverlay(url)}>Open</button>
+              </div>
+            ))}
+            <div className="league-overlay-link">
+              <label className="field"><span className="field-label">VS matchup URL</span><input readOnly value={LEAGUE_VS_OVERLAY_URL} /></label>
+              <button className="button secondary" type="button" onClick={() => copyLeagueOverlayLink("League VS", LEAGUE_VS_OVERLAY_URL)}>Copy VS link</button>
+              <button className="button secondary" type="button" onClick={() => openLeagueOverlay(LEAGUE_VS_OVERLAY_URL)}>Open VS overlay</button>
+            </div>
+          </section>
+        ) : null}
+
+        {leagueTab === "draft" ? (
+          <div className="league-draft-layout">
+            <section className="panel-card league-draft-control">
+              <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the canonical tournament draft order. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div><span className={`league-timer ${state.leagueOfLegends.draft.timeRemaining === 0 ? "expired" : ""}`}>{state.leagueOfLegends.draft.timeRemaining}</span></div>
+              {activeStep ? (
+                <div className="league-active-step">
+                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {activeStep.slot + 1}</strong></div>
+                  <label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
+                  <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button>
+                </div>
+              ) : <div className="league-draft-complete"><strong>Draft complete</strong><span>Review the picks, then move to the Live tab.</span></div>}
+              <div className="league-draft-actions">
+                <button className="button secondary" type="button" onClick={() => updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, timerRunning: !state.leagueOfLegends.draft.timerRunning && Boolean(activeStep) } })}>{state.leagueOfLegends.draft.timerRunning ? "Pause timer" : "Start timer"}</button>
+                <button className="button secondary" type="button" onClick={() => updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, timeRemaining: state.leagueOfLegends.draft.timerSeconds, timerRunning: false } })}>Reset timer</button>
+                <label className="compact-select"><span>Seconds</span><select value={state.leagueOfLegends.draft.timerSeconds} onChange={(event) => { const timerSeconds = Number(event.target.value); updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, timerSeconds, timeRemaining: timerSeconds, timerRunning: false } }); }}><option value="20">20</option><option value="25">25</option><option value="30">30</option><option value="45">45</option><option value="60">60</option></select></label>
+                <button className="button secondary" type="button" onClick={undoLeagueDraft} disabled={state.leagueOfLegends.draft.currentStep === 0}>Undo</button>
+                <button className="button danger" type="button" onClick={resetLeagueDraft}>Reset draft</button>
+              </div>
+            </section>
+            <section className="panel-card league-draft-history">
+              <div className="card-title-row"><div><h2>Draft order</h2><p>{state.leagueOfLegends.draft.currentStep} of {LEAGUE_DRAFT_STEPS.length} selections locked.</p></div></div>
+              <div className="league-draft-steps">{LEAGUE_DRAFT_STEPS.map((step) => <div className={`${step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small></div>)}</div>
+            </section>
+          </div>
+        ) : null}
+
+        {leagueTab === "live" ? (
+          <>
+            <section className={`panel-card league-live-status ${liveConnected ? "connected" : "disconnected"}`}>
+              <div><span className="eyebrow">Local spectator feed</span><h2>{state.leagueOfLegends.debugLiveEnabled ? "Debug fixture active" : liveConnected ? "League client connected" : liveStale ? "League data stale" : "Waiting for League client"}</h2><p>{liveConnected ? `${livePlayers.length} players · ${formatClock(Number(leagueLivePreview?.game?.gameTime ?? 0))}` : "Start or spectate a game on this Windows PC. Static team and series branding stays on air while live statistics are unavailable."}</p></div>
+              <div className="league-live-toggles">
+                <label><span>Player board</span><span className="switch large"><input aria-label="Show League of Legends player board" type="checkbox" checked={state.leagueOfLegends.playerBoardEnabled} onChange={(event) => updateLeagueOfLegends({ playerBoardEnabled: event.target.checked })} /><span /></span></label>
+                <label><span>Debug data</span><span className="switch large"><input aria-label="Enable League of Legends debug data" type="checkbox" checked={state.leagueOfLegends.debugLiveEnabled} onChange={(event) => updateLeagueOfLegends({ debugLiveEnabled: event.target.checked })} /><span /></span></label>
+                {state.leagueOfLegends.debugLiveEnabled ? <label><span>Scenario</span><select aria-label="League of Legends debug scenario" value={state.leagueOfLegends.debugLiveScenario} onChange={(event) => updateLeagueOfLegends({ debugLiveScenario: event.target.value as LeagueOfLegends["debugLiveScenario"] })}><option value="live">Full live match</option><option value="finished">Game finished</option><option value="stale">Connection stale</option></select></label> : null}
+              </div>
+            </section>
+            {state.leagueOfLegends.debugLiveEnabled && liveConnected ? <section className="panel-card league-feed-coverage">
+              <div className="card-title-row"><div><h2>Official Live Client coverage</h2><p>The debug fixture fills the complete normalized <code>/allgamedata</code> contract. Active-player gold is available for that player only and is never used as team gold.</p></div></div>
+              <div className="league-coverage-grid">
+                <div><span>Active player</span><strong>{activeLeaguePlayer?.riotId || "Unavailable"}</strong><small>{Object.keys(activeLeaguePlayer?.abilities ?? {}).length} abilities · {Object.keys(activeLeaguePlayer?.championStats ?? {}).length} champion stats · {activeLeaguePlayer?.currentGold ?? 0} active-player gold</small></div>
+                <div><span>Game data</span><strong>{leagueLivePreview?.game?.mapName || "Unknown map"} · {leagueLivePreview?.game?.gameMode || "Unknown mode"}</strong><small>Map {leagueLivePreview?.game?.mapNumber ?? "—"} · {leagueLivePreview?.game?.mapTerrain || "Unknown terrain"} · {formatClock(Number(leagueLivePreview?.game?.gameTime ?? 0))}</small></div>
+                <div><span>All players</span><strong>{livePlayers.length} players · {livePlayers.reduce((total, player) => total + (player.items?.length ?? 0), 0)} item slots</strong><small>Identity, champion, role, level, death/respawn, skin, K/D/A/CS/vision, runes, spells, and complete item properties</small></div>
+                <div><span>Events</span><strong>{liveEvents.length} normalized events</strong><small>{liveEvents.map((event) => event.name).filter(Boolean).join(" · ") || "No events received"}</small></div>
+              </div>
+            </section> : null}
+            <section className="panel-card league-player-table">
+              <div className="card-title-row"><div><h2>Ten-player board</h2><p>Display names are local production overrides; Riot IDs remain the source identity.</p></div></div>
+              <div className="league-player-head"><span>Side</span><span>Player</span><span>Champion</span><span>Role</span><span>Level</span><span>K / D / A</span><span>CS</span><span>Live details</span><span>Items</span></div>
+              {livePlayers.length ? livePlayers.map((player: LeagueLivePreviewPlayer) => (
+                <div className="league-player-row" key={`${player.team}-${player.riotId}`}>
+                  <span>{player.team === "ORDER" ? "Blue" : "Red"}</span>
+                  <label><span className="sr-only">Display name for {player.riotId}</span><input value={state.leagueOfLegends.playerOverrides[player.riotId] ?? player.displayName ?? ""} onChange={(event) => updateLeagueOfLegends({ playerOverrides: { ...state.leagueOfLegends.playerOverrides, [player.riotId]: event.target.value } })} /></label>
+                  <strong>{player.champion || "—"}</strong><span>{player.position || "—"}</span><span>{player.level || "—"}</span><span>{player.kills} / {player.deaths} / {player.assists}</span><span>{player.creepScore}</span><small>{player.isDead ? `Respawn ${Math.ceil(player.respawnTimer)}s` : "Alive"} · {player.wardScore} vision · {player.runes?.keystone?.displayName || "No keystone"} · {(player.summonerSpells ?? []).map((spell) => spell.displayName).filter(Boolean).join(" + ") || "No spells"}</small><small>{(player.items ?? []).map((item) => `${item.name}${item.count > 1 ? ` ×${item.count}` : ""}`).filter(Boolean).join(", ") || "—"}</small>
+                </div>
+              )) : <div className="league-empty-row">No live players available. Enable Debug data to verify the full overlay without a running match.</div>}
+            </section>
+          </>
+        ) : null}
+
+        {leagueTab === "results" ? (
+          <div className="rocket-league-layout game-results-layout">
+            <section className="panel-card league-winner-card">
+              <div className="card-title-row result-card-heading">
+                <div><h2>Game results</h2><p>Select one winner for each game, then update results. Saved winners drive the current game, series score, recap, and fearless history.</p></div>
+                <div className="result-update-controls">
+                  <span className={leaguePendingResults ? "pending" : "current"}>{leaguePendingResults ? `${leaguePendingResults} unsaved` : "Results current"}</span>
+                  <button className={`button ${leaguePendingResults ? "primary" : "secondary"}`} type="button" onClick={saveLeagueResults} disabled={!leaguePendingResults}>Update results</button>
+                  <button className="button danger" type="button" onClick={resetLeagueSeries}>Reset series</button>
+                </div>
+              </div>
+              {state.leagueOfLegends.resultProposal ? (
+                <div className="league-live-proposal">
+                  <div><span>Live result detected</span><strong>Game {state.leagueOfLegends.resultProposal.gameNumber} · {state.leagueOfLegends.resultProposal.winner === "team1" ? teamOne.name || "Team 1" : state.leagueOfLegends.resultProposal.winner === "team2" ? teamTwo.name || "Team 2" : "Winner not detected"}</strong><small>Placed in results. Review the winner, then update results.</small></div>
+                  <button className="button secondary" type="button" onClick={discardLeagueResultProposal}>Discard proposal</button>
+                </div>
+              ) : null}
+              <div className="league-winner-table">
+                <div className="league-winner-head" aria-hidden="true"><span>Game</span><strong>{teamOne.name || "Team 1"}</strong><strong>{teamTwo.name || "Team 2"}</strong><span>Clear</span></div>
+                <div className="league-winner-list">
+                  {Array.from({ length: leagueGameCount }, (_, gameIndex) => {
+                    const result = state.leagueOfLegends.results[gameIndex];
+                    const savedWinner = leagueConfirmedGames.find((game) => game.gameNumber === gameIndex + 1)?.winner ?? "";
+                    const isPending = result.winner !== savedWinner;
+                    const isSaved = Boolean(savedWinner) && !isPending;
+                    return (
+                      <div className={`league-winner-row ${isSaved ? "complete" : ""} ${isPending ? "pending" : ""}`} key={gameIndex}>
+                        <span>Game {gameIndex + 1}<small>{isPending ? "Unsaved" : isSaved ? "Saved" : ""}</small></span>
+                        <button type="button" className={result.winner === "team1" ? "selected" : ""} aria-pressed={result.winner === "team1"} onClick={() => updateLeagueResult(gameIndex, "team1")}>{teamOne.name || "Team 1"}</button>
+                        <button type="button" className={result.winner === "team2" ? "selected" : ""} aria-pressed={result.winner === "team2"} onClick={() => updateLeagueResult(gameIndex, "team2")}>{teamTwo.name || "Team 2"}</button>
+                        <button className="league-result-clear" type="button" onClick={() => updateLeagueResult(gameIndex, "")} disabled={!result.winner}>Clear</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+            <div className="rocket-side-stack">
+              <section className="panel-card league-series-card league-series-compact">
+                <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values control the League graphics, series, and draft.</p></div><span className={leagueReady ? "status-inline ready" : "status-inline"}>{leagueReady ? "Ready" : "Needs header"}</span></div>
+                <div className="form-grid">
+                  <Field label="Scoreboard header" value={state.leagueOfLegends.scoreboardHeader} onChange={(value) => updateLeagueOfLegends({ scoreboardHeader: value })} placeholder={state.general.eventName || "Event name"} />
+                  <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
+                  <label className="field"><span className="field-label">Draft rules</span><select value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Standard</option><option value="fearless">Global fearless</option></select></label>
+                  <label className="field"><span className="field-label">Current game · driven by saved results</span><input readOnly value={`Game ${state.leagueOfLegends.currentGame}`} /></label>
+                </div>
+                <div className="league-side-row">
+                  <div><span>Blue side</span><strong>{blueTeam.name || "Team 1"}</strong></div>
+                  <button className="button secondary" type="button" onClick={() => updateLeagueOfLegends({ blueTeam: state.leagueOfLegends.blueTeam === "team1" ? "team2" : "team1" })}>Swap</button>
+                  <div><span>Red side</span><strong>{redTeam.name || "Team 2"}</strong></div>
+                </div>
+              </section>
+              <section className="panel-card league-results-summary">
+                <div className="card-title-row"><div><h2>Live match indicators</h2><p>Only saved winners change the current game and series values sent to browser sources and live JSON.</p></div></div>
+                <div className="league-result-output-grid">
+                  <div><span>Current game</span><strong>{state.leagueOfLegends.currentGame}</strong><small>{state.leagueOfLegends.bestOf}</small></div>
+                  <div><span>{teamOne.name || "Team 1"}</span><strong>{leagueSeries.teamOne}</strong><small>series wins</small></div>
+                  <div><span>{teamTwo.name || "Team 2"}</span><strong>{leagueSeries.teamTwo}</strong><small>series wins</small></div>
+                </div>
+              </section>
+              <section className="panel-card league-confirmed-games">
+                <div className="card-title-row"><div><h2>Saved game history</h2><p>Changing a saved winner rebuilds the recap and global fearless pool.</p></div></div>
+                {leagueConfirmedGames.length ? leagueConfirmedGames.map((game) => <div key={game.id}><span>Game {game.gameNumber}</span><strong>{game.winner === "team1" ? teamOne.name || "Team 1" : teamTwo.name || "Team 2"}</strong><small>{[...game.bluePicks, ...game.redPicks].filter(Boolean).length} fearless picks</small></div>) : <div className="league-empty-row">No saved game results.</div>}
+              </section>
+            </div>
+          </div>
+        ) : null}
+
+      </div>
+    );
+  }
+
   function renderSponsors() {
     const includedSponsors = state.sponsors.filter((sponsor) => sponsor.enabled && (sponsor.name.trim() || sponsor.logo.trim())).length;
 
@@ -2759,6 +3408,10 @@ export default function Home() {
               <label className="switch large"><input aria-label="Show VALORANT in sidebar" type="checkbox" checked={state.settings.valorantEnabled} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, valorantEnabled: event.target.checked } }))} /><span /></label>
             </div>
             <div className="setting-row">
+              <div><strong>League of Legends</strong><p>Show or hide League of Legends in the main navigation.</p></div>
+              <label className="switch large"><input aria-label="Show League of Legends in sidebar" type="checkbox" checked={state.settings.leagueOfLegendsEnabled} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, leagueOfLegendsEnabled: event.target.checked } }))} /><span /></label>
+            </div>
+            <div className="setting-row">
               <div><strong>Sponsors</strong><p>Show or hide Sponsors in the main navigation.</p></div>
               <label className="switch large"><input aria-label="Show Sponsors in sidebar" type="checkbox" checked={state.settings.sponsorsEnabled} onChange={(event) => setState((current) => ({ ...current, settings: { ...current.settings, sponsorsEnabled: event.target.checked } }))} /><span /></label>
             </div>
@@ -2800,6 +3453,7 @@ export default function Home() {
           {activeSection === "general" || activeSection === "matches" ? renderGeneral() : null}
           {activeSection === "rocketLeague" ? renderRocketLeague() : null}
           {activeSection === "valorant" ? renderValorant() : null}
+          {activeSection === "leagueOfLegends" ? renderLeagueOfLegends() : null}
           {activeSection === "sponsors" ? renderSponsors() : null}
           {activeSection === "draw" ? renderDraw() : null}
           {activeSection === "settings" ? renderSettings() : null}

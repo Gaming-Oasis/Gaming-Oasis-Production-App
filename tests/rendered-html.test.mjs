@@ -31,6 +31,22 @@ import {
   readableText,
 } from "../lib/readable-text.mjs";
 import { buildValorantFields, buildValorantOverlayState, calculateValorantSeries, formatValorantScore, getValorantCurrentMap, getValorantCurrentSides, VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
+import {
+  LEAGUE_CHAMPION_STAT_KEYS,
+  LEAGUE_DRAFT_STEPS,
+  buildLeagueOverlayState,
+  calculateLeagueCurrentGame,
+  calculateLeagueSeries,
+  createLeagueDebugFeed,
+  createLeagueDraftState,
+  draftSlots,
+  fearlessChampionSet,
+  leagueGameLimit,
+  lockLeagueDraftSelection,
+  normalizeLeagueLiveFeed,
+  undoLeagueDraftSelection,
+} from "../lib/league-of-legends.mjs";
+import { mergeLeagueOverlayLive, startLeagueLiveClient } from "../lib/league-of-legends-live.mjs";
 import { JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
 
 test("readableText and image plates favor white unless necessary", () => {
@@ -56,6 +72,134 @@ test("resolves scoreboard headers from event name with game-level override", () 
   assert.equal(resolveScoreboardHeader("  ", "Spring Invitational"), "Spring Invitational");
   assert.equal(resolveScoreboardHeader("RL Finals", "Spring Invitational"), "RL Finals");
   assert.equal(resolveScoreboardHeader("", ""), "");
+});
+
+test("runs the canonical League draft sequence with undo and global fearless locks", () => {
+  assert.equal(LEAGUE_DRAFT_STEPS.length, 20);
+  assert.deepEqual(LEAGUE_DRAFT_STEPS.slice(0, 4).map(({ action, side }) => [action, side]), [
+    ["ban", "ORDER"], ["ban", "CHAOS"], ["ban", "ORDER"], ["ban", "CHAOS"],
+  ]);
+  let draft = createLeagueDraftState(30);
+  for (const champion of ["Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Ambessa", "Amumu"]) {
+    const result = lockLeagueDraftSelection(draft, champion);
+    assert.equal(result.changed, true);
+    draft = result.draft;
+  }
+  assert.equal(draft.currentStep, 7);
+  assert.equal(draftSlots(draft).bluePicks[0], "Amumu");
+  draft = undoLeagueDraftSelection(draft);
+  assert.equal(draft.currentStep, 6);
+  assert.equal(draftSlots(draft).bluePicks[0], "");
+
+  const fearless = fearlessChampionSet([{ bluePicks: ["Gnar"], redPicks: ["Vi"] }]);
+  assert.equal(fearless.has("Gnar"), true);
+  assert.equal(lockLeagueDraftSelection(createLeagueDraftState(), "Gnar", fearless).changed, false);
+});
+
+test("derives the League current game from saved winner-only results", () => {
+  const game = (gameNumber, winner) => ({ gameNumber, winner });
+  assert.equal(leagueGameLimit("Bo1"), 1);
+  assert.equal(leagueGameLimit("Bo3"), 3);
+  assert.equal(leagueGameLimit("Bo5"), 5);
+  assert.equal(calculateLeagueCurrentGame([], "Bo3"), 1);
+  assert.equal(calculateLeagueCurrentGame([game(1, "team1")], "Bo3"), 2);
+  assert.equal(calculateLeagueCurrentGame([game(1, "team1"), game(2, "team2")], "Bo3"), 3);
+  assert.equal(calculateLeagueCurrentGame([game(1, "team1"), game(2, "team1")], "Bo3"), 2);
+  assert.equal(calculateLeagueCurrentGame([game(1, "team1"), game(3, "team2")], "Bo5"), 2);
+  assert.equal(calculateLeagueCurrentGame([game(1, "team2"), game(2, "team2"), game(3, "team2")], "Bo5"), 3);
+});
+
+test("normalizes documented League live data and expires a disconnected overlay after ten seconds", () => {
+  const feed = normalizeLeagueLiveFeed({
+    playerlist: [
+      { riotId: "Blue#GO", riotIdGameName: "Blue", championName: "Ahri", team: "ORDER", level: 12, scores: { kills: 3, deaths: 1, assists: 4, creepScore: 140 }, items: [{ itemID: 1001, displayName: "Boots" }] },
+      { riotId: "Red#GO", riotIdGameName: "Red", championName: "Orianna", team: "CHAOS", level: 11, scores: { kills: 1, deaths: 3, assists: 2, creepScore: 132 }, items: [] },
+    ],
+    gamestats: { gameTime: 900, gameMode: "CLASSIC", mapName: "Map11" },
+    eventdata: { Events: [{ EventID: 1, EventName: "DragonKill", EventTime: 700, KillerName: "Blue#GO" }] },
+  }, null, new Date("2026-01-01T00:00:00.000Z"));
+  assert.equal(feed.players.length, 2);
+  assert.equal(feed.players[0].kills, 3);
+  assert.equal(feed.objectives.ORDER.dragons, 1);
+
+  const base = buildLeagueOverlayState({
+    scoreboardHeader: "Finals", bestOf: "Bo3", currentGame: 1, draftMode: "standard", blueTeam: "team1",
+    playerBoardEnabled: true, sponsorWidgetEnabled: true, vsScreenEnabled: true, debugLiveEnabled: false, draft: createLeagueDraftState(), confirmedGames: [], resultProposal: null, playerOverrides: {},
+  }, { name: "Blue", standing: "", logo: "", color: "#123456", logoBackground: "#FFFFFF" }, { name: "Red", standing: "", logo: "", color: "#654321", logoBackground: "#FFFFFF" });
+  assert.equal(base.vsScreenEnabled, true);
+  assert.equal(base.sponsorWidgetEnabled, true);
+  const disconnected = { ...feed, connection: { connected: false, lastEventAt: "2026-01-01T00:00:00.000Z", stale: false } };
+  const held = mergeLeagueOverlayLive(base, disconnected, Date.parse("2026-01-01T00:00:09.000Z"));
+  const expired = mergeLeagueOverlayLive(base, disconnected, Date.parse("2026-01-01T00:00:11.000Z"));
+  assert.equal(held.live.players.length, 2);
+  assert.equal(expired.live.players.length, 0);
+  assert.equal(expired.live.connection.stale, true);
+});
+
+test("fills every normalized official Live Client category in League debug scenarios", () => {
+  const now = new Date("2026-01-01T00:00:00.000Z");
+  const live = createLeagueDebugFeed("live", now);
+  assert.equal(live.connection.connected, true);
+  assert.equal(live.players.length, 10);
+  assert.equal(live.game.mapNumber, 11);
+  assert.equal(live.game.mapTerrain, "Default");
+  assert.equal(live.activePlayer.currentGold, 1432.5);
+  assert.equal(Object.keys(live.activePlayer.abilities).length, 5);
+  assert.equal(LEAGUE_CHAMPION_STAT_KEYS.every((key) => typeof live.activePlayer.championStats[key] === "number"), true);
+  assert.equal(live.activePlayer.fullRunes.generalRunes.length, 6);
+  assert.equal(live.activePlayer.fullRunes.statRunes.length, 3);
+  assert.equal(live.players[0].items.length, 7);
+  assert.equal(live.players[0].items[6].slot, 6);
+  assert.equal(live.players[0].items[5].consumable, true);
+  assert.equal(live.players[0].summonerSpells[0].id, "SummonerFlash");
+  assert.equal(live.players[0].runes.keystone.displayName, "Fleet Footwork");
+  assert.equal(live.players[8].isDead, true);
+  assert.equal(live.players[8].respawnTimer, 18.4);
+  assert.equal(live.players[0].wardScore, 8.5);
+  assert.equal(live.events.some((event) => event.name === "DragonKill" && event.dragonType === "Earth"), true);
+  assert.equal(live.events.some((event) => event.name === "HeraldKill" && event.stolen === true), true);
+  assert.equal(live.events.some((event) => event.name === "ChampionKill" && event.victimName === "Player 9#GO"), true);
+  assert.deepEqual(new Set(live.events.map((event) => event.name)), new Set([
+    "GameStart", "MinionsSpawning", "FirstBlood", "FirstBrick", "TurretKilled", "InhibKilled",
+    "InhibRespawned", "DragonKill", "HeraldKill", "BaronKill", "ChampionKill", "Multikill", "Ace",
+  ]));
+
+  const finished = createLeagueDebugFeed("finished", now);
+  assert.equal(finished.game.finished, true);
+  assert.equal(finished.game.winnerTeam, "ORDER");
+  assert.equal(finished.events.at(-1).name, "GameEnd");
+
+  const stale = createLeagueDebugFeed("stale", now);
+  assert.equal(stale.connection.connected, false);
+  assert.equal(stale.connection.stale, true);
+});
+
+test("polls Riot allgamedata as the complete official League live snapshot", async () => {
+  const requests = [];
+  const client = startLeagueLiveClient({
+    intervalMs: 60_000,
+    requestJson: async (url) => {
+      requests.push(url);
+      return {
+        activePlayer: { riotId: "Blue#GO", riotIdGameName: "Blue", riotIdTagLine: "GO", currentGold: 500, level: 1, abilities: {}, championStats: {}, fullRunes: {} },
+        allPlayers: [{ riotId: "Blue#GO", riotIdGameName: "Blue", championName: "Ahri", team: "ORDER", scores: {} }],
+        events: { Events: [{ EventID: 0, EventName: "GameStart", EventTime: 0 }] },
+        gameData: { gameTime: 1, gameMode: "CLASSIC", mapName: "Map11", mapNumber: 11, mapTerrain: "Default" },
+      };
+    },
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(requests, ["https://127.0.0.1:2999/liveclientdata/allgamedata"]);
+    assert.equal(client.getFeed().activePlayer.currentGold, 500);
+    assert.equal(client.getFeed().players.length, 1);
+  } finally {
+    client.stop();
+  }
+});
+
+test("calculates confirmed League series scores", () => {
+  assert.deepEqual(calculateLeagueSeries([{ winner: "team1" }, { winner: "team2" }, { winner: "team1" }]), { teamOne: 2, teamTwo: 1 });
 });
 
 async function render(pathname = "/") {
@@ -99,6 +243,29 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
 });
 
+test("server-renders the four transparent League of Legends browser sources", async () => {
+  for (const scene of ["draft", "live", "recap", "vs"]) {
+    const response = await render(`/overlays/league-of-legends/${scene}`);
+    assert.equal(response.status, 200, scene);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  }
+  const component = await readFile(new URL("../app/overlays/league-of-legends/LeagueOverlay.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/overlays/league-of-legends/league-overlay.module.css", import.meta.url), "utf8");
+  assert.match(component, /api\/overlays\/league-of-legends/);
+  assert.match(component, /scene === "draft"/);
+  assert.match(component, /scene === "recap"/);
+  assert.match(component, /data\.vsScreenEnabled/);
+  assert.equal((component.match(/data\.vsScreenEnabled \? <VsSceneBackdrop/g) ?? []).length, 2);
+  const vsComponent = await readFile(new URL("../app/overlays/vs/VsMatchupOverlay.tsx", import.meta.url), "utf8");
+  const vsCss = await readFile(new URL("../app/overlays/vs/vs-overlay.module.css", import.meta.url), "utf8");
+  assert.match(vsComponent, /function VsSceneBackdrop/);
+  assert.match(vsComponent, /sceneBackdropDim/);
+  assert.match(vsCss, /\.sceneBackdropDim \{[\s\S]*rgb\(23 23 23 \/ 0\.8\)/);
+  assert.match(css, /width: 1920px; height: 1080px/);
+  assert.match(css, /background: #171717/);
+  assert.doesNotMatch(css, /linear-gradient|radial-gradient|box-shadow/);
+});
+
 test("server-renders the transparent VALORANT browser overlay route", async () => {
   const response = await render("/overlays/valorant");
   assert.equal(response.status, 200);
@@ -117,6 +284,7 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(page, /VALORANT series maps/);
   assert.match(page, /SponsorCarousel/);
   assert.match(page, /overlay\.sponsorWidgetEnabled \? <SponsorCarousel/);
+  assert.doesNotMatch(page, /vsScreenEnabled|VsTeamSplitBackground/);
   assert.match(page, /SPONSOR_ROTATION_MS = 15000/);
   assert.match(page, /aria-label="Sponsor rotation"/);
   assert.match(page, /displayableSignature/);
@@ -322,16 +490,20 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /primaryName\.trim\(\)/);
 });
 
-test("server-renders dedicated Rocket League and VALORANT VS overlay routes", async () => {
+test("server-renders dedicated VS overlay routes for all three games", async () => {
   const rlResponse = await render("/overlays/rocket-league/vs");
   const valResponse = await render("/overlays/valorant/vs");
+  const leagueResponse = await render("/overlays/league-of-legends/vs");
   assert.equal(rlResponse.status, 200);
   assert.equal(valResponse.status, 200);
+  assert.equal(leagueResponse.status, 200);
   assert.match(rlResponse.headers.get("content-type") ?? "", /^text\/html\b/i);
   assert.match(valResponse.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.match(leagueResponse.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const rlPage = await readFile(new URL("../app/overlays/rocket-league/vs/page.tsx", import.meta.url), "utf8");
   const valPage = await readFile(new URL("../app/overlays/valorant/vs/page.tsx", import.meta.url), "utf8");
+  const leaguePage = await readFile(new URL("../app/overlays/league-of-legends/vs/page.tsx", import.meta.url), "utf8");
   const shared = await readFile(new URL("../app/overlays/vs/VsMatchupOverlay.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/overlays/vs/vs-overlay.module.css", import.meta.url), "utf8");
 
@@ -342,6 +514,10 @@ test("server-renders dedicated Rocket League and VALORANT VS overlay routes", as
   assert.match(valPage, /api\/overlays\/valorant/);
   assert.match(valPage, /winsNeededFromBestOf/);
   assert.match(valPage, /VsMatchupOverlay/);
+  assert.match(leaguePage, /api\/overlays\/league-of-legends/);
+  assert.match(leaguePage, /blueTeam/);
+  assert.match(leaguePage, /redTeam/);
+  assert.match(leaguePage, /VsMatchupOverlay/);
   assert.match(shared, /function LobbyVsScreen/);
   assert.match(shared, /export function VsMatchupStage/);
   assert.match(shared, /aria-label="Matchup versus screen"/);
@@ -417,7 +593,8 @@ test("server-renders dedicated Rocket League post-match stats overlay route", as
   assert.match(css, /\.statsSceneWedgeLeft \{[\s\S]*clip-path: polygon\(0 0, 0 100%, 100% 100%\)/);
   assert.match(css, /\.statsSceneWash \{[\s\S]*--stats-scene-wash/);
   assert.match(css, /\.statsSceneSeam \{[\s\S]*rotate\(atan\(-1920 \/ 1080\)\)/);
-  assert.match(operator, /Stats scene: team background/);
+  assert.match(operator, /VS screen background/);
+  assert.match(operator, /behind the post-match Stats scene/);
   assert.match(operator, /statsSceneBackground/);
 });
 
@@ -1914,7 +2091,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /rlseriesscore2/);
   assert.match(page, /buildValorantFields/);
   assert.match(page, /Picks \/ bans/);
-  assert.match(page, /VAL Live info/);
+  assert.match(page, /VALORANT live match indicators/);
   assert.match(page, /Browser overlay/);
   assert.match(page, /Open overlay/);
   assert.match(page, /Enable VALORANT map widget/);
@@ -1941,7 +2118,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.doesNotMatch(page, /VALORANT_MAPS\.map/);
   assert.doesNotMatch(page, />Map artwork</);
   assert.match(page, /buildRocketLeagueOverlayState/);
-  assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay \}/);
+  assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay \}/);
   assert.match(page, /Scoreboard header override/);
   assert.match(page, /Leave blank to use General Info event name\./);
   assert.match(page, /resolveScoreboardHeader/);
@@ -1981,6 +2158,14 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.doesNotMatch(page, /aria-label="Debug lobby VS"/);
   assert.match(page, /ROCKET_LEAGUE_VS_OVERLAY_URL/);
   assert.match(page, /VALORANT_VS_OVERLAY_URL/);
+  assert.match(page, /LEAGUE_VS_OVERLAY_URL/);
+  assert.equal((page.match(/Copy VS link/g) ?? []).length, 3);
+  assert.equal((page.match(/Open VS overlay/g) ?? []).length, 3);
+  assert.equal((page.match(/VS matchup URL/g) ?? []).length, 3);
+  assert.equal((page.match(/VS screen background/g) ?? []).length, 4);
+  assert.doesNotMatch(page, /Show VALORANT VS screen background/);
+  assert.match(page, /Show Rocket League VS screen background/);
+  assert.match(page, /Show League of Legends VS screen background/);
   assert.match(page, /Copy VS link/);
   assert.match(page, /Open VS overlay/);
   assert.match(page, /VS matchup URL/);
@@ -1993,7 +2178,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /overlayRightTeam/);
   assert.match(page, /In-game \{overlayLeftGameSide\}/);
   assert.match(page, /In-game \{overlayRightGameSide\}/);
-  assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 2);
+  assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 3);
   assert.match(page, /aria-label="Rocket League debug"/);
   assert.match(page, /valorant-reference-ban-control/);
   assert.match(page, /Ban Team A/);
@@ -2006,8 +2191,16 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /savedValorantResults = saved\.valorant\?\.savedGames \?\? saved\.valorant\?\.games/);
   assert.match(page, /rocketLeague\.savedGames\.forEach/);
   assert.match(page, /games: valorant\.savedGames/);
-  assert.equal((page.match(/Update results/g) ?? []).length, 2);
-  assert.equal((page.match(/Reset series/g) ?? []).length, 4);
+  assert.equal((page.match(/Update results/g) ?? []).length, 3);
+  assert.equal((page.match(/Reset series/g) ?? []).length, 5);
+  assert.equal((page.match(/>Results & setup</g) ?? []).length, 3);
+  assert.equal((page.match(/>Browser overlay</g) ?? []).length, 3);
+  assert.equal((page.match(/>Draft</g) ?? []).length, 1);
+  assert.equal((page.match(/>Pick \/ ban</g) ?? []).length, 1);
+  assert.equal((page.match(/setLeagueTab\("live"\)\}>Debug</g) ?? []).length, 1);
+  assert.equal((page.match(/game-results-layout/g) ?? []).length, 3);
+  assert.equal((page.match(/<h2>Scoreboard setup<\/h2>/g) ?? []).length, 3);
+  assert.equal((page.match(/<h2>Live match indicators<\/h2>/g) ?? []).length, 3);
   assert.match(page, /function resetRocketLeagueSeries\(\)/);
   assert.match(page, /games: createRocketLeagueGames\(\),\s*savedGames: createRocketLeagueGames\(\)/);
   assert.match(page, /notify\("Rocket League series results cleared"\)/);
@@ -2019,7 +2212,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /id="valorant-series-reset-modal-title"/);
   assert.match(page, /Reset VALORANT series\?/);
   assert.match(page, /setValorantSeriesResetOpen\(true\)/);
-  assert.equal((page.match(/unsaved/g) ?? []).length, 2);
+  assert.equal((page.match(/unsaved/g) ?? []).length, 3);
   assert.equal((page.match(/Tie not allowed/g) ?? []).length, 2);
   assert.equal((page.match(/Enter both scores/g) ?? []).length, 4);
   assert.match(page, /function invalidResultCount\(games: RocketLeagueGame\[\]\)/);
@@ -2053,6 +2246,17 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.doesNotMatch(page, /productionnote:\s*general\.productionNote/);
 
   assert.doesNotMatch(page, /label="Producer note"/);
+  assert.match(page, /Official Live Client coverage/);
+  assert.match(page, /League of Legends debug scenario/);
+  assert.match(page, /function saveLeagueResults\(\)/);
+  assert.match(page, /Saved winners drive the current game, series score, recap, and fearless history/);
+  assert.match(page, /Current game · driven by saved results/);
+  assert.match(page, /aria-pressed=\{result\.winner === "team1"\}/);
+  assert.match(page, /Full live match/);
+  assert.match(page, /Game finished/);
+  assert.match(page, /Connection stale/);
+  assert.match(page, /active-player gold/);
+  assert.match(css, /\.league-coverage-grid/);
   assert.doesNotMatch(page, /Show information/);
   assert.equal((page.match(/Export JSON package/g) ?? []).length, 1);
   assert.match(page, /className="sidebar-footer"[\s\S]*Export JSON package[\s\S]*sidebar-reset-button/);
@@ -2463,6 +2667,7 @@ test("serves the latest non-exported VALORANT overlay state without changing the
     version: 1,
     updatedAt: new Date().toISOString(),
     header: "SEL Season 5",
+    bestOf: "Bo3",
     leaguePrimary: "#644EB5",
     leagueSecondary: "#FCC500",
     sponsorWidgetEnabled: true,
@@ -2553,6 +2758,35 @@ test("serves the latest non-exported Rocket League overlay state without changin
     const response = await fetch(`${writer.url}/api/overlays/rocket-league`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), rocketLeague);
+    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+  } finally {
+    await writer.close();
+  }
+});
+
+test("serves normalized League overlay state without changing the six JSON files", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-lol-overlay-"));
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
+  const leagueOfLegends = buildLeagueOverlayState({
+    scoreboardHeader: "SEL Finals", bestOf: "Bo3", currentGame: 1, draftMode: "fearless", blueTeam: "team1",
+    playerBoardEnabled: true, debugLiveEnabled: false, draft: createLeagueDraftState(), confirmedGames: [], resultProposal: null, playerOverrides: {},
+  }, { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF" }, { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#171717" }, { primaryColor: "#F6AC18", secondaryColor: "#47213F" }, []);
+
+  try {
+    const before = await fetch(`${writer.url}/api/overlays/league-of-legends`);
+    assert.equal(before.status, 204);
+    const update = await fetch(`${writer.url}/api/live-json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files, overlays: { leagueOfLegends } }),
+    });
+    assert.equal(update.status, 200);
+    const response = await fetch(`${writer.url}/api/overlays/league-of-legends`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.header, "SEL Finals");
+    assert.equal(payload.live.connection.connected, false);
     assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
   } finally {
     await writer.close();

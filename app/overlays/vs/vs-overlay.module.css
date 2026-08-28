@@ -157,6 +157,22 @@
   animation: none;
 }
 
+.teamSplitBackground {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sceneBackdropDim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgb(23 23 23 / 0.8);
+}
+
 .lobbyVsWedge {
   position: absolute;
   inset: 0;
