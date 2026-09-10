@@ -15,6 +15,8 @@ import {
   PostMatchTeamStatsStage,
   type MatchTeamStats,
 } from "./stats/PostMatchTeamStats";
+import { usePollingJson } from "../usePollingJson";
+import { useStableImageSource } from "../useStableImageSource";
 import styles from "./rocket-league-overlay.module.css";
 
 type OverlayTeam = {
@@ -214,7 +216,7 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && isOverlayTeam(state.teamOne)
     && isOverlayTeam(state.teamTwo)
     && typeof state.debugLiveOverride === "boolean"
-    && Boolean(connection)
+    && connection !== undefined
     && typeof connection.connected === "boolean"
     && (connection.lastEventAt === null || typeof connection.lastEventAt === "string")
     && isOverlayGame(state.game)
@@ -225,6 +227,17 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
     && (state.matchTeamStats === null
       || state.matchTeamStats === undefined
       || isMatchTeamStats(state.matchTeamStats));
+}
+
+function normalizeOverlayState(next: RocketLeagueOverlayState): RocketLeagueOverlayState {
+  return {
+    ...next,
+    lobbyScene: next.lobbyScene === "stats" ? "stats" : "vs",
+    statsSceneBackground: next.statsSceneBackground === "team-split" ? "team-split" : "transparent",
+    matchTeamStats: next.matchTeamStats && isMatchTeamStats(next.matchTeamStats)
+      ? next.matchTeamStats
+      : null,
+  };
 }
 
 function formatClock(totalSeconds: number) {
@@ -265,21 +278,8 @@ function StableLogo({
   alt: string;
   className?: string;
 }) {
-  const [displayedSource, setDisplayedSource] = useState("");
-
-  useEffect(() => {
-    if (!src) {
-      setDisplayedSource("");
-      return;
-    }
-    const candidate = localLogoUrl(src);
-    const image = new Image();
-    image.onload = () => setDisplayedSource(candidate);
-    image.src = candidate;
-    return () => {
-      image.onload = null;
-    };
-  }, [src]);
+  const candidate = src ? localLogoUrl(src) : "";
+  const { displayedSource, handleDisplayedError } = useStableImageSource(candidate);
 
   return displayedSource
     ? (
@@ -288,7 +288,7 @@ function StableLogo({
         className={className ?? styles.logoImage}
         src={displayedSource}
         alt={alt}
-        onError={() => setDisplayedSource("")}
+        onError={handleDisplayedError}
       />
     )
     : null;
@@ -356,6 +356,8 @@ function SeriesPills({ wins, needed, color }: { wins: number; needed: number; co
 }
 
 const SPONSOR_ROTATION_MS = 15000;
+const SPONSOR_ASSET_RETRY_BASE_MS = 1000;
+const SPONSOR_ASSET_RETRY_MAX_MS = 60000;
 
 function sponsorAssetKey(sponsor: OverlaySponsor) {
   return `${sponsor.id}\u0000${sponsor.logo}`;
@@ -364,43 +366,85 @@ function sponsorAssetKey(sponsor: OverlaySponsor) {
 function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
   const [rotation, setRotation] = useState({ currentId: "", previousId: "" });
   const [assetState, setAssetState] = useState<Record<string, "loaded" | "failed">>({});
+  const retryAssetRef = useRef<(sponsor: OverlaySponsor) => void>(() => undefined);
   const sponsorSignature = JSON.stringify(sponsors);
+  const stableSponsors = useMemo(() => JSON.parse(sponsorSignature) as OverlaySponsor[], [sponsorSignature]);
 
   useEffect(() => {
     let active = true;
-    const loaders: HTMLImageElement[] = [];
+    const loaders = new Map<string, HTMLImageElement>();
+    const retryTimers = new Map<string, number>();
+    const retryAttempts = new Map<string, number>();
+    const currentKeys = new Set(stableSponsors.filter((sponsor) => sponsor.logo).map(sponsorAssetKey));
 
-    sponsors.forEach((sponsor) => {
-      if (!sponsor.logo) return;
+    setAssetState((current) => {
+      const staleKeys = Object.keys(current).filter((key) => !currentKeys.has(key));
+      if (!staleKeys.length) return current;
+      return Object.fromEntries(Object.entries(current).filter(([key]) => currentKeys.has(key)));
+    });
+
+    function scheduleRetry(sponsor: OverlaySponsor) {
+      if (!active || !sponsor.logo) return;
       const key = sponsorAssetKey(sponsor);
+      if (!currentKeys.has(key) || loaders.has(key) || retryTimers.has(key)) return;
+      const attempt = retryAttempts.get(key) ?? 0;
+      const delay = Math.min(
+        SPONSOR_ASSET_RETRY_BASE_MS * (2 ** Math.min(attempt, 6)),
+        SPONSOR_ASSET_RETRY_MAX_MS,
+      );
+      retryAttempts.set(key, attempt + 1);
+      retryTimers.set(key, window.setTimeout(() => {
+        retryTimers.delete(key);
+        loadAsset(sponsor);
+      }, delay));
+    }
+
+    function loadAsset(sponsor: OverlaySponsor) {
+      if (!active || !sponsor.logo) return;
+      const key = sponsorAssetKey(sponsor);
+      if (!currentKeys.has(key) || loaders.has(key)) return;
       const image = new Image();
-      loaders.push(image);
+      loaders.set(key, image);
       image.onload = () => {
-        if (active) setAssetState((current) => ({ ...current, [key]: "loaded" }));
+        loaders.delete(key);
+        retryAttempts.delete(key);
+        if (active) {
+          setAssetState((current) => current[key] === "loaded" ? current : { ...current, [key]: "loaded" });
+        }
       };
       image.onerror = () => {
-        if (active) setAssetState((current) => ({ ...current, [key]: "failed" }));
+        loaders.delete(key);
+        if (active) {
+          setAssetState((current) => current[key] ? current : { ...current, [key]: "failed" });
+          scheduleRetry(sponsor);
+        }
       };
       image.src = localLogoUrl(sponsor.logo);
+    }
+
+    stableSponsors.forEach((sponsor) => {
+      loadAsset(sponsor);
     });
+    retryAssetRef.current = scheduleRetry;
 
     return () => {
       active = false;
+      retryAssetRef.current = () => undefined;
+      retryTimers.forEach((timer) => window.clearTimeout(timer));
       loaders.forEach((image) => {
         image.onload = null;
         image.onerror = null;
       });
+      retryTimers.clear();
+      loaders.clear();
     };
-  }, [sponsorSignature]);
+  }, [stableSponsors]);
 
-  const displayableSponsors = sponsors.filter((sponsor) => {
+  const displayableSponsors = useMemo(() => stableSponsors.filter((sponsor) => {
     if (!sponsor.logo) return Boolean(sponsor.name);
     const status = assetState[sponsorAssetKey(sponsor)];
     return status === "loaded" || (status === "failed" && Boolean(sponsor.name));
-  });
-  const displayableSignature = displayableSponsors
-    .map((sponsor) => `${sponsorAssetKey(sponsor)}\u0000${assetState[sponsorAssetKey(sponsor)] || "name"}`)
-    .join("\u0001");
+  }), [assetState, stableSponsors]);
 
   useEffect(() => {
     if (!displayableSponsors.length) {
@@ -422,7 +466,7 @@ function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
       });
     }, SPONSOR_ROTATION_MS);
     return () => window.clearInterval(timer);
-  }, [displayableSignature]);
+  }, [displayableSponsors]);
 
   const sponsor = displayableSponsors.find((entry) => entry.id === rotation.currentId) || displayableSponsors[0];
   if (!sponsor) return null;
@@ -436,7 +480,11 @@ function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
       <img
         src={localLogoUrl(entry.logo)}
         alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
-        onError={() => setAssetState((current) => ({ ...current, [sponsorAssetKey(entry)]: "failed" }))}
+        onError={() => {
+          const key = sponsorAssetKey(entry);
+          setAssetState((current) => current[key] === "failed" ? current : { ...current, [key]: "failed" });
+          retryAssetRef.current(entry);
+        }}
       />
     ) : <span>{entry.name}</span>;
   }
@@ -1002,7 +1050,12 @@ function ActivityFeed({
 }
 
 export default function RocketLeagueOverlay() {
-  const [overlay, setOverlay] = useState<RocketLeagueOverlayState | null>(null);
+  const overlay = usePollingJson({
+    endpoint: OVERLAY_ENDPOINT,
+    intervalMs: 250,
+    validate: isOverlayState,
+    normalize: normalizeOverlayState,
+  });
   const [frame, setFrame] = useState({ scale: 1, left: 0 });
 
   useEffect(() => {
@@ -1013,39 +1066,6 @@ export default function RocketLeagueOverlay() {
     fitStage();
     window.addEventListener("resize", fitStage);
     return () => window.removeEventListener("resize", fitStage);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-
-    async function refresh() {
-      try {
-        const response = await fetch(OVERLAY_ENDPOINT, { cache: "no-store", signal: controller.signal });
-        if (response.status === 204 || !response.ok) return;
-        const next = await response.json();
-        if (active && isOverlayState(next)) {
-          setOverlay({
-            ...next,
-            lobbyScene: next.lobbyScene === "stats" ? "stats" : "vs",
-            statsSceneBackground: next.statsSceneBackground === "team-split" ? "team-split" : "transparent",
-            matchTeamStats: next.matchTeamStats && isMatchTeamStats(next.matchTeamStats)
-              ? next.matchTeamStats
-              : null,
-          });
-        }
-      } catch {
-        // Keep the last valid graphic through temporary writer or network failures.
-      }
-    }
-
-    refresh();
-    const timer = window.setInterval(refresh, 250);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      controller.abort();
-    };
   }, []);
 
   const game = overlay?.game;

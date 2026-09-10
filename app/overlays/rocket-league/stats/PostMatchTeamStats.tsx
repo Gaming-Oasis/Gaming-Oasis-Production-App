@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readableText, resolveImagePlate } from "../../../../lib/readable-text.mjs";
+import { useStableImageSource } from "../../useStableImageSource";
 import styles from "./stats-overlay.module.css";
 
 export type StatsOverlayTeam = {
@@ -105,21 +106,8 @@ function BackgroundLogo({
   src: string;
   className: string;
 }) {
-  const [displayedSource, setDisplayedSource] = useState("");
-
-  useEffect(() => {
-    if (!src) {
-      setDisplayedSource("");
-      return;
-    }
-    const candidate = localLogoUrl(src);
-    const image = new Image();
-    image.onload = () => setDisplayedSource(candidate);
-    image.src = candidate;
-    return () => {
-      image.onload = null;
-    };
-  }, [src]);
+  const candidate = src ? localLogoUrl(src) : "";
+  const { displayedSource, handleDisplayedError } = useStableImageSource(candidate);
 
   return displayedSource
     ? (
@@ -128,7 +116,7 @@ function BackgroundLogo({
         className={className}
         src={displayedSource}
         alt=""
-        onError={() => setDisplayedSource("")}
+        onError={handleDisplayedError}
       />
     )
     : null;

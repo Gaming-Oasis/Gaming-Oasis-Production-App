@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { usePollingJson } from "../../usePollingJson";
 import {
   isVsOverlaySponsors,
   isVsOverlayTeam,
@@ -34,6 +34,19 @@ function isValorantVsState(value: unknown): value is ValorantVsState {
     && isVsOverlayTeam(state.teamTwo);
 }
 
+function normalizeValorantVsState(next: ValorantVsState): ValorantVsState {
+  return {
+    version: 1,
+    bestOf: typeof next.bestOf === "string" ? next.bestOf : undefined,
+    leaguePrimary: next.leaguePrimary,
+    leagueSecondary: next.leagueSecondary,
+    sponsorWidgetEnabled: next.sponsorWidgetEnabled,
+    sponsors: next.sponsors,
+    teamOne: next.teamOne,
+    teamTwo: next.teamTwo,
+  };
+}
+
 function winsNeededFromBestOf(bestOf: string | undefined, winsOne: number, winsTwo: number) {
   const match = String(bestOf || "").match(/^Bo(\d+)$/i);
   const fromFormat = match ? Math.ceil(Number(match[1]) / 2) : 0;
@@ -42,42 +55,12 @@ function winsNeededFromBestOf(bestOf: string | undefined, winsOne: number, winsT
 }
 
 export default function ValorantVsOverlayPage() {
-  const [overlay, setOverlay] = useState<ValorantVsState | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-
-    async function refresh() {
-      try {
-        const response = await fetch(OVERLAY_ENDPOINT, { cache: "no-store", signal: controller.signal });
-        if (response.status === 204 || !response.ok) return;
-        const next = await response.json();
-        if (active && isValorantVsState(next)) {
-          setOverlay({
-            version: 1,
-            bestOf: typeof next.bestOf === "string" ? next.bestOf : undefined,
-            leaguePrimary: next.leaguePrimary,
-            leagueSecondary: next.leagueSecondary,
-            sponsorWidgetEnabled: next.sponsorWidgetEnabled,
-            sponsors: next.sponsors,
-            teamOne: next.teamOne,
-            teamTwo: next.teamTwo,
-          });
-        }
-      } catch {
-        // Keep the last valid graphic through temporary writer or network failures.
-      }
-    }
-
-    refresh();
-    const timer = window.setInterval(refresh, 500);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      controller.abort();
-    };
-  }, []);
+  const overlay = usePollingJson({
+    endpoint: OVERLAY_ENDPOINT,
+    intervalMs: 1000,
+    validate: isValorantVsState,
+    normalize: normalizeValorantVsState,
+  });
 
   if (!overlay) return (
     <main>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { resolveRocketLeagueSideTeams } from "../../../../lib/rocket-league-live.mjs";
+import { usePollingJson } from "../../usePollingJson";
 import {
   isVsOverlaySponsors,
   isVsOverlayTeam,
@@ -38,44 +38,27 @@ function isRocketLeagueVsState(value: unknown): value is RocketLeagueVsState {
     && isVsOverlayTeam(state.teamTwo);
 }
 
+function normalizeRocketLeagueVsState(next: RocketLeagueVsState): RocketLeagueVsState {
+  return {
+    version: 1,
+    flipSides: next.flipSides,
+    winsNeeded: next.winsNeeded,
+    leaguePrimary: next.leaguePrimary,
+    leagueSecondary: next.leagueSecondary,
+    sponsorWidgetEnabled: next.sponsorWidgetEnabled,
+    sponsors: next.sponsors,
+    teamOne: next.teamOne,
+    teamTwo: next.teamTwo,
+  };
+}
+
 export default function RocketLeagueVsOverlayPage() {
-  const [overlay, setOverlay] = useState<RocketLeagueVsState | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-
-    async function refresh() {
-      try {
-        const response = await fetch(OVERLAY_ENDPOINT, { cache: "no-store", signal: controller.signal });
-        if (response.status === 204 || !response.ok) return;
-        const next = await response.json();
-        if (active && isRocketLeagueVsState(next)) {
-          setOverlay({
-            version: 1,
-            flipSides: next.flipSides,
-            winsNeeded: next.winsNeeded,
-            leaguePrimary: next.leaguePrimary,
-            leagueSecondary: next.leagueSecondary,
-            sponsorWidgetEnabled: next.sponsorWidgetEnabled,
-            sponsors: next.sponsors,
-            teamOne: next.teamOne,
-            teamTwo: next.teamTwo,
-          });
-        }
-      } catch {
-        // Keep the last valid graphic through temporary writer or network failures.
-      }
-    }
-
-    refresh();
-    const timer = window.setInterval(refresh, 250);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      controller.abort();
-    };
-  }, []);
+  const overlay = usePollingJson({
+    endpoint: OVERLAY_ENDPOINT,
+    intervalMs: 1000,
+    validate: isRocketLeagueVsState,
+    normalize: normalizeRocketLeagueVsState,
+  });
 
   if (!overlay) return (
     <main>

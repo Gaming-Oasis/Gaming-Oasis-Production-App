@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -47,7 +48,131 @@ import {
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
 import { mergeLeagueOverlayLive, startLeagueLiveClient } from "../lib/league-of-legends-live.mjs";
-import { JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
+import { FINAL_OUTPUT_KEYS, JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
+import { resolveNpmInvocation, stopChild } from "../scripts/launch-production.mjs";
+
+const WRITER_TEST_ORIGIN = "http://localhost:3000";
+const writerTestSessions = new WeakMap();
+
+async function productionFileFixtures(marker = "") {
+  const files = [];
+  for (const filename of JSON_FILENAMES) {
+    let data;
+    if (filename === "FinalOutput.json") {
+      data = [Object.fromEntries([...FINAL_OUTPUT_KEYS].map((key) => [key, key === "eventname" ? marker : ""]))];
+    } else if (filename === "sponsors.json") {
+      data = [{
+        id: "gaming-oasis",
+        name: "Gaming Oasis",
+        logo: "http://localhost:3000/gaming-oasis-logo-light.png",
+        enabled: true,
+      }];
+    } else {
+      data = JSON.parse(await readFile(new URL(`../JSONs/${filename}`, import.meta.url), "utf8"));
+    }
+    files.push({ filename, data });
+  }
+  return files;
+}
+
+async function writerToken(writer) {
+  const cached = writerTestSessions.get(writer);
+  if (cached?.token) return cached.token;
+  const response = await fetch(`${writer.url}/api/live-json/session`, { headers: { Origin: WRITER_TEST_ORIGIN } });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(typeof payload.token, "string");
+  writerTestSessions.set(writer, { token: payload.token, revision: 0 });
+  return payload.token;
+}
+
+async function postWriter(writer, pathname, payload) {
+  const token = await writerToken(writer);
+  const session = writerTestSessions.get(writer);
+  let body = payload;
+  if (pathname === "/api/live-json") {
+    const writerId = "writer-test-session";
+    const claim = await fetch(`${writer.url}/api/live-json/claim`, {
+      method: "POST",
+      headers: {
+        Origin: WRITER_TEST_ORIGIN,
+        "Content-Type": "application/json",
+        "X-Gaming-Oasis-Writer-Token": token,
+      },
+      body: JSON.stringify({ writerId, force: false }),
+    });
+    assert.equal(claim.status, 200);
+    const claimPayload = await claim.json();
+    body = { ...payload, writerId, fence: claimPayload.fence, revision: ++session.revision };
+  }
+  return fetch(`${writer.url}${pathname}`, {
+    method: "POST",
+    headers: {
+      Origin: WRITER_TEST_ORIGIN,
+      "Content-Type": "application/json",
+      "X-Gaming-Oasis-Writer-Token": token,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+test("launcher resolves a directly runnable npm command", () => {
+  const invocation = resolveNpmInvocation(["--version"]);
+  const result = spawnSync(invocation.command, invocation.args, { encoding: "utf8", windowsHide: true });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+/);
+});
+
+test("launcher asks its local runner to shut down over IPC", async () => {
+  const child = spawn(process.execPath, ["-e", "process.on('message', (message) => { if (message?.type === 'shutdown') process.exit(0); }); setInterval(() => {}, 1000);"], {
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  await new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  });
+  await stopChild(child, 2_000);
+  assert.equal(child.exitCode, 0);
+});
+
+test("launcher fallback removes an unresponsive Windows child process tree", { skip: process.platform !== "win32" }, async () => {
+  const child = spawn(process.execPath, ["-e", [
+    "const { spawn } = require('node:child_process');",
+    "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    "process.send({ grandchildPid: grandchild.pid });",
+    "process.on('message', () => {});",
+    "setInterval(() => {}, 1000);",
+  ].join(" ")], {
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  const grandchildPid = await new Promise((resolve, reject) => {
+    child.once("message", (message) => resolve(message.grandchildPid));
+    child.once("error", reject);
+  });
+  const processExists = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    await stopChild(child, 50);
+    const deadline = Date.now() + 2_000;
+    while (processExists(grandchildPid) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(processExists(grandchildPid), false);
+    assert.ok(child.exitCode !== null || child.signalCode !== null);
+  } finally {
+    if (processExists(grandchildPid)) {
+      spawnSync("taskkill.exe", ["/PID", String(grandchildPid), "/T", "/F"], { stdio: "ignore", windowsHide: true, shell: false });
+    }
+    await stopChild(child, 0);
+  }
+});
 
 test("readableText and image plates favor white unless necessary", () => {
   assert.ok(PREFERRED_WHITE_MIN_CONTRAST < 2.5);
@@ -232,13 +357,27 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /Always included/);
   assert.match(page, /readOnly=\{lockedSponsor\}/);
   assert.match(page, /current\.sponsors\[index\]\?\.id === GAMING_OASIS_SPONSOR\.id/);
-  assert.match(page, /savedSponsors = \(saved\.sponsors \?\? \[\]\)\.filter/);
-  assert.match(page, /const \[liveWriteReady, setLiveWriteReady\] = useState\(false\)/);
-  assert.match(page, /if \(!hydrated \|\| !liveWriteReady\) return/);
-  assert.match(page, /if \(state === initialStateRef\.current\) return/);
-  assert.match(page, /function hasProductionContent\(state: ProductionState\)/);
-  assert.match(page, /if \(!hasLiveProductionContent && !allowEmptyLiveWrite\) return/);
-  assert.match(page, /setAllowEmptyLiveWrite\(true\)/);
+  assert.match(page, /Array\.isArray\(saved\.sponsors\)/);
+  assert.match(page, /schemaVersion: STORAGE_SCHEMA_VERSION/);
+  assert.match(page, /outputActivated: activated/);
+  assert.match(page, /WRITER_LEASE_KEY/);
+  assert.match(page, /yieldedForHandoffRef\.current/);
+  assert.match(page, /current\.expiresAt <= now[\s\S]{0,120}yieldedForHandoffRef\.current = false/);
+  assert.match(page, /serverOwnershipRetryAtRef\.current = Date\.now\(\) \+ WRITER_SERVER_CONFLICT_RETRY_MS/);
+  assert.match(page, /Date\.now\(\) < serverOwnershipRetryAtRef\.current[\s\S]{0,240}serverOwnershipBlockedRef\.current = false/);
+  assert.match(page, /X-Gaming-Oasis-Writer-Token/);
+  assert.match(page, /retryDelays = \[0, 500, 1_500, 3_500\]/);
+  assert.match(page, /response\.status === 204[\s\S]{0,240}setLiveRetryNonce/);
+  assert.match(page, /stateRef\.current\.general\.matches\[matchIndex\]\.id\.trim\(\) === requestedId/);
+  assert.match(page, /outputActivated: isEnvelope \? parsed\.outputActivated === true : hasProductionContent\(state\)/);
+  assert.match(page, /createJsonPackageArchive\(files\)/);
+  assert.match(page, /VALORANT_MAP_DATA_FILENAME/);
+  assert.equal((page.match(/window\.confirm/g) ?? []).length, 2, "only excluded League of Legends controls retain native confirmation prompts");
+  assert.match(page, /actionConfirmationModalRef[\s\S]*isPrimaryTabRef\.current\) confirmation\.onConfirm\(\)/);
+  assert.match(page, /current\.general\.eventName === previousResolved\.eventName[\s\S]{0,300}eventName: shouldRestoreSourceEvent/);
+  assert.match(page, /eventName: matchIndex === 0 && updatesEventName \? resolved\.eventName : current\.general\.eventName/);
+  assert.match(page, /eventName: shouldRestoreSourceEvent \? resolved\.eventName : current\.general\.eventName/);
+  assert.doesNotMatch(page, /allowEmptyLiveWrite|liveWriteReady/);
   assert.match(html, /Export JSON package/);
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
 });
@@ -276,7 +415,9 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(page, /width:100%.*background:transparent/);
   assert.match(page, /1920/);
   assert.match(page, /1080/);
-  assert.match(page, /setInterval\(refresh, 500\)/);
+  assert.match(page, /usePollingJson/);
+  assert.match(page, /intervalMs: 750/);
+  assert.doesNotMatch(page, /setInterval\(refresh/);
   assert.match(page, /MapWidgetStrip/);
   assert.match(page, /MapArtwork/);
   assert.match(page, /className=\{styles\.mapArtwork\}/);
@@ -286,8 +427,11 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(page, /overlay\.sponsorWidgetEnabled \? <SponsorCarousel/);
   assert.doesNotMatch(page, /vsScreenEnabled|VsTeamSplitBackground/);
   assert.match(page, /SPONSOR_ROTATION_MS = 15000/);
+  assert.match(page, /SPONSOR_ASSET_RETRY_MAX_MS = 60000/);
+  assert.match(page, /scheduleRetry\(sponsor/);
   assert.match(page, /aria-label="Sponsor rotation"/);
-  assert.match(page, /displayableSignature/);
+  assert.match(page, /stableSponsors/);
+  assert.doesNotMatch(page, /\[sponsorSignature, sponsors\]/);
   assert.match(page, /status === "failed" && Boolean\(sponsor\.name\)/);
   assert.doesNotMatch(page, /SideIcon|<svg viewBox="0 0 16 16"/);
   assert.doesNotMatch(page, /pickerSide|SIDE TBD|starts attack|starts defense/);
@@ -320,9 +464,7 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.doesNotMatch(css, /\.mapItem::after|skewX\(-35deg\)/);
   assert.match(css, /\.mapItem:last-child \{[^}]*clip-path: polygon/);
   assert.doesNotMatch(css, /\.mapWidget::before \{[^}]*clip-path/);
-  assert.match(css, /animation: mapAccentGradientDrift 20s ease-in-out infinite/);
-  assert.match(css, /\.sponsorCard::before,\s*\.mapWidget::before \{[\s\S]*animation: mapAccentGradientDrift 20s ease-in-out infinite;[\s\S]*will-change: background-position/);
-  assert.match(css, /@keyframes mapAccentGradientDrift/);
+  assert.doesNotMatch(css, /mapAccentGradientDrift|will-change: background-position/);
   assert.doesNotMatch(css, /\.mapWidget::after/);
   assert.doesNotMatch(css, /margin-left: -7px/);
   assert.match(css, /center-rail\.png/);
@@ -332,12 +474,7 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(page, /key=\{overlay\.teamTwo\.seriesScore\}/);
   assert.match(page, /key=\{overlay\.teamOne\.name\}/);
   assert.match(page, /key=\{overlay\.teamTwo\.name\}/);
-  assert.match(css, /@keyframes railGradientDrift/);
-  assert.match(css, /animation: railGradientDrift 16s ease-in-out infinite/);
-  assert.match(css, /width: 112%/);
-  assert.match(css, /0%, 50%, 100% \{ transform: translate3d\(0, 0, 0\)/);
-  assert.match(css, /translate3d\(-4%, 0, 0\)/);
-  assert.match(css, /translate3d\(4%, 0, 0\)/);
+  assert.doesNotMatch(css, /railGradientDrift/);
   assert.doesNotMatch(css, /railSheen/);
   assert.doesNotMatch(css, /teamSheen|changeInLeft|changeInRight/);
   assert.match(css, /@keyframes scoreChange/);
@@ -488,6 +625,8 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.activityToast \{[\s\S]*background: #171717/);
   assert.match(page, /ReplayIndicatorHost[\s\S]*ReplayScorerCardHost[\s\S]*upperRightRail[\s\S]*ActivityFeed/);
   assert.match(page, /primaryName\.trim\(\)/);
+  assert.match(page, /SPONSOR_ASSET_RETRY_MAX_MS = 60000/);
+  assert.match(page, /retryAssetRef\.current\(entry\)/);
 });
 
 test("server-renders dedicated VS overlay routes for all three games", async () => {
@@ -525,6 +664,8 @@ test("server-renders dedicated VS overlay routes for all three games", async () 
   assert.match(shared, /--lobby-vs-wash/);
   assert.match(shared, /VS_NAME_MAX_PX/);
   assert.match(shared, /seriesPillColor/);
+  assert.match(shared, /SPONSOR_ASSET_RETRY_MAX_MS = 60000/);
+  assert.match(shared, /retryAssetRef\.current\(entry\)/);
   assert.match(css, /\.lobbyVsWedgeLeft \{[\s\S]*clip-path: polygon\(0 0, 0 100%, 100% 100%\)/);
   assert.match(css, /\.lobbyVsWedgeRight \{[\s\S]*clip-path: polygon\(0 0, 100% 0, 100% 100%\)/);
   assert.match(css, /\.lobbyVsBleedLogo \{[\s\S]*z-index: 2;[\s\S]*width: 75%/);
@@ -1695,6 +1836,45 @@ test("proposes finished live Rocket League games into Results and supports auto-
   assert.deepEqual(auto.rocketLeague.games[0], { home: "2", away: "0" });
   assert.deepEqual(auto.rocketLeague.savedGames[0], { home: "2", away: "0" });
 
+  const matchingDraft = emptyGames.map((game) => ({ ...game }));
+  matchingDraft[0] = { home: "5", away: "2" };
+  const matchingAutoAccept = proposeRocketLeagueLiveResult({
+    ...base,
+    autoAcceptLiveResults: true,
+    games: matchingDraft,
+  }, {
+    id: "finish-prefilled",
+    scoreOne: 5,
+    scoreTwo: 2,
+  });
+  assert.equal(matchingAutoAccept.proposed, true);
+  assert.equal(matchingAutoAccept.accepted, true);
+  assert.deepEqual(matchingAutoAccept.rocketLeague.savedGames[0], { home: "5", away: "2" });
+
+  const draftWithUnrelatedEdit = emptyGames.map((game) => ({ ...game }));
+  const oneSavedGame = emptyGames.map((game) => ({ ...game }));
+  draftWithUnrelatedEdit[0] = { home: "1", away: "0" };
+  draftWithUnrelatedEdit[3] = { home: "99", away: "1" };
+  oneSavedGame[0] = { home: "1", away: "0" };
+  const isolatedAutoAccept = proposeRocketLeagueLiveResult({
+    ...base,
+    bestOf: "Bo5",
+    autoAcceptLiveResults: true,
+    games: draftWithUnrelatedEdit,
+    savedGames: oneSavedGame,
+  }, {
+    id: "finish-isolated",
+    scoreOne: 3,
+    scoreTwo: 2,
+  });
+  assert.deepEqual(isolatedAutoAccept.rocketLeague.savedGames.slice(0, 4), [
+    { home: "1", away: "0" },
+    { home: "3", away: "2" },
+    { home: "", away: "" },
+    { home: "", away: "" },
+  ]);
+  assert.deepEqual(isolatedAutoAccept.rocketLeague.games[3], { home: "99", away: "1" });
+
   const tied = proposeRocketLeagueLiveResult(base, { id: "finish-tie", scoreOne: 1, scoreTwo: 1 });
   assert.equal(tied.changed, false);
 
@@ -1932,9 +2112,23 @@ test("stamps finishedGame on winner rising edge and keeps it after MatchEnded", 
   assert.equal(merged.finishedGame.id, live.finishedGame.id);
 });
 
-test("fills Rocket League series pills from draft game wins left to right", () => {
+test("fills Rocket League series pills only from saved game wins", () => {
   const empty = Array.from({ length: 6 }, () => ({ home: "", away: "" }));
   const oneWin = buildRocketLeagueOverlayState(
+    {
+      scoreboardHeader: "Series",
+      bestOf: "Bo5",
+      games: [{ home: "3", away: "1" }, ...empty],
+      savedGames: [{ home: "3", away: "1" }, ...empty],
+    },
+    { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
+    { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
+  );
+  assert.equal(oneWin.teamOne.seriesScore, "1");
+  assert.equal(oneWin.teamTwo.seriesScore, "0");
+  assert.equal(oneWin.winsNeeded, 3);
+
+  const draftOnly = buildRocketLeagueOverlayState(
     {
       scoreboardHeader: "Series",
       bestOf: "Bo5",
@@ -1944,9 +2138,7 @@ test("fills Rocket League series pills from draft game wins left to right", () =
     { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
     { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
   );
-  assert.equal(oneWin.teamOne.seriesScore, "1");
-  assert.equal(oneWin.teamTwo.seriesScore, "0");
-  assert.equal(oneWin.winsNeeded, 3);
+  assert.equal(draftOnly.teamOne.seriesScore, "0");
 
   const twoOneBo5 = buildRocketLeagueOverlayState(
     {
@@ -1958,7 +2150,12 @@ test("fills Rocket League series pills from draft game wins left to right", () =
         { home: "0", away: "3" },
         ...empty.slice(0, 4),
       ],
-      savedGames: Array.from({ length: 7 }, () => ({ home: "", away: "" })),
+      savedGames: [
+        { home: "3", away: "1" },
+        { home: "2", away: "0" },
+        { home: "0", away: "3" },
+        ...empty.slice(0, 4),
+      ],
     },
     { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
     { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
@@ -1973,7 +2170,7 @@ test("fills Rocket League series pills from draft game wins left to right", () =
       scoreboardHeader: "Series",
       bestOf: "Bo7",
       games: [{ home: "3", away: "1" }, { home: "2", away: "0" }, { home: "0", away: "1" }, ...empty.slice(0, 4)],
-      savedGames: Array.from({ length: 7 }, () => ({ home: "", away: "" })),
+      savedGames: [{ home: "3", away: "1" }, { home: "2", away: "0" }, { home: "0", away: "1" }, ...empty.slice(0, 4)],
     },
     { name: "Alpha", standing: "", logo: "", color: "#111111", logoBackground: "#FFFFFF" },
     { name: "Beta", standing: "", logo: "", color: "#222222", logoBackground: "#000000" },
@@ -2023,7 +2220,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /rocketLeagueEnabled:\s*true/);
   assert.match(page, /valorantEnabled:\s*true/);
   assert.match(page, /sponsorsEnabled:\s*true/);
-  assert.match(page, /drawShowEnabled:\s*true/);
+  assert.match(page, /drawShowEnabled:\s*false/);
   assert.match(page, /Sidebar visibility/);
   assert.doesNotMatch(page, /Graphics defaults/);
   assert.doesNotMatch(page, /settings\.regionalLogo/);
@@ -2072,9 +2269,14 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(packageJson, /"name": "gaming-oasis-production-os"/);
   assert.doesNotMatch(packageJson, /valospectra|observer/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.match(launcher, /Closing any previous Gaming Oasis Production OS instance/);
-  assert.match(launcher, /Get-NetTCPConnection/);
-  assert.match(launcher, /3000, 4877/);
+  assert.doesNotMatch(launcher, /Stop-Process|taskkill|Get-NetTCPConnection/);
+  assert.match(launcher, /launch-production\.mjs/);
+  const productionLauncher = await readFile(new URL("../scripts/launch-production.mjs", import.meta.url), "utf8");
+  assert.match(productionLauncher, /minimumNode = \[22, 13, 0\]/);
+  assert.match(productionLauncher, /gaming-oasis-production-os-writer/);
+  assert.match(productionLauncher, /npm.*ci|"ci"/s);
+  assert.match(productionLauncher, /--include=dev/);
+  assert.match(productionLauncher, /waitForReadiness/);
   assert.doesNotMatch(launcher, /valospectra|Spectra Server/i);
   assert.match(localRunner, /\.production-os\.pid/);
   assert.match(page, /gaming-oasis-logo-light\.png/);
@@ -2187,10 +2389,10 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/Swap VALORANT pick ban teams/g) ?? []).length, 1);
   assert.match(page, /valorantSideLabel\(valorantCurrentSides\.one\)/);
   assert.match(page, /valorantSideLabel\(valorantCurrentSides\.two\)/);
-  assert.match(page, /savedRocketLeagueResults = saved\.rocketLeague\?\.savedGames \?\? saved\.rocketLeague\?\.games/);
-  assert.match(page, /savedValorantResults = saved\.valorant\?\.savedGames \?\? saved\.valorant\?\.games/);
-  assert.match(page, /rocketLeague\.savedGames\.forEach/);
-  assert.match(page, /games: valorant\.savedGames/);
+  assert.match(page, /Array\.isArray\(savedRocketLeague\.savedGames\)[\s\S]{0,120}savedRocketLeague\.games/);
+  assert.match(page, /Array\.isArray\(savedValorant\.savedGames\)[\s\S]{0,120}savedValorant\.games/);
+  assert.match(page, /savedRocketLeagueGames\.forEach/);
+  assert.match(page, /games: savedValorantGames/);
   assert.equal((page.match(/Update results/g) ?? []).length, 3);
   assert.equal((page.match(/Reset series/g) ?? []).length, 5);
   assert.equal((page.match(/>Results & setup</g) ?? []).length, 3);
@@ -2213,9 +2415,20 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /Reset VALORANT series\?/);
   assert.match(page, /setValorantSeriesResetOpen\(true\)/);
   assert.equal((page.match(/unsaved/g) ?? []).length, 3);
-  assert.equal((page.match(/Tie not allowed/g) ?? []).length, 2);
-  assert.equal((page.match(/Enter both scores/g) ?? []).length, 4);
-  assert.match(page, /function invalidResultCount\(games: RocketLeagueGame\[\]\)/);
+  assert.equal((page.match(/Tie not allowed/g) ?? []).length, 1);
+  assert.equal((page.match(/Enter both scores/g) ?? []).length, 3);
+  assert.match(page, /function resultSequenceIssues\(games: RocketLeagueGame\[\], gameLimit: number\)/);
+  assert.match(page, /Complete earlier \$\{itemName\}s or clear this result/);
+  assert.match(page, /the series is already complete/);
+  assert.match(page, /role="group" aria-labelledby=\{outputColorLabelId\}/);
+  assert.match(page, /aria-pressed=\{selected\}/);
+  assert.match(page, /createLivePayloadSignature\(livePayload\)/);
+  assert.match(page, /lastSuccessfulPayloadSignatureRef\.current = livePayloadSignature/);
+  assert.match(page, /force: forceWriterClaimRef\.current/);
+  assert.match(page, /updatesEventName[\s\S]{0,400}matchIndex === 0 && updatesEventName/);
+  assert.match(page, /aria-invalid=\{leaguePrimaryColorInvalid \|\| undefined\}/);
+  assert.match(page, /aria-describedby=\{customColorInvalid \? customColorErrorId : undefined\}/);
+  assert.match(page, /setOwnership\(ownsLease: boolean\)[\s\S]{0,500}setResetConfirmationOpen\(false\)/);
   assert.match(page, /disabled=\{!rocketLeaguePendingResults \|\| Boolean\(rocketLeagueInvalidResults\)\}/);
   assert.match(page, /disabled=\{!valorantPendingResults \|\| Boolean\(valorantInvalidResults\)\}/);
   assert.doesNotMatch(page, /Event & matches/);
@@ -2258,9 +2471,9 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /active-player gold/);
   assert.match(css, /\.league-coverage-grid/);
   assert.doesNotMatch(page, /Show information/);
-  assert.equal((page.match(/Export JSON package/g) ?? []).length, 1);
+  assert.equal((page.match(/Export JSON package/g) ?? []).length, 2);
   assert.match(page, /className="sidebar-footer"[\s\S]*Export JSON package[\s\S]*sidebar-reset-button/);
-  assert.equal((page.match(/Reset local data/g) ?? []).length, 2);
+  assert.equal((page.match(/Reset local data/g) ?? []).length, 3);
   assert.match(page, /className="confirmation-modal" role="dialog" aria-modal="true"/);
   assert.match(page, /function resetLocalData\(\)/);
   assert.doesNotMatch(page, /window\.confirm\("Reset all locally saved production data/);
@@ -2325,6 +2538,25 @@ test("calculates VALORANT results and pick-ban outputs", () => {
   assert.equal(fields.valbo3s3text, "TBD");
   assert.equal(fields.valbo3map1winnerlogo, "one.png");
   assert.match(fields.valbo3mapimage3, /^https:\/\//);
+  const clinchedFields = buildValorantFields({
+    scoreboardHeader: "Final",
+    bestOf: "Bo3",
+    flipSides: false,
+    banSwap: false,
+    games: [
+      { home: "13", away: "8" },
+      { home: "13", away: "10" },
+      { home: "", away: "" },
+      { home: "", away: "" },
+      { home: "", away: "" },
+    ],
+    bo3: { ban1: "Abyss", ban2: "Bind", pick1: "Ascent", pick2: "Haven", ban3: "Lotus", ban4: "Split", decider: "Sunset", side1: "attack", side2: "defense", side3: "" },
+    bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
+  }, teamOne, teamTwo);
+  assert.equal(clinchedFields.valwidgetmap2, "HAVEN: 13 - 10");
+  assert.equal(clinchedFields.valwidgetlogo2, "one.png");
+  assert.equal(clinchedFields.valbo3nextmapi, "");
+  assert.doesNotMatch(clinchedFields.valwidgetmap2, /^CURRENT:/);
   assert.deepEqual(getValorantCurrentMap({ bestOf: "Bo3", bo3: fieldsFixtureBo3(), bo5: {} }, 2), { number: 2, name: "Haven" });
   assert.deepEqual(getValorantCurrentSides({
     bestOf: "Bo3",
@@ -2503,6 +2735,7 @@ test("proxies public League Hub matches without credentials", async () => {
     port: 0,
     outputDir,
     enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
     fetchImpl: async (url, options) => {
       requestedUrl = String(url);
       assert.deepEqual(options?.headers, { Accept: "application/json" });
@@ -2531,13 +2764,19 @@ test("proxies Hub logo previews without changing their exported URL", async () =
   const teamId = "ee1aeb5a-6366-4dfb-b39a-c76e4b9451dc";
   const imageBytes = new Uint8Array([137, 80, 78, 71]);
   let requestedUrl = "";
+  let requestCount = 0;
   const writer = await startJsonWriter({
     port: 0,
     outputDir,
     enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    hubLogoCacheTtlMs: 20,
+    hubLogoRetryCacheTtlMs: 100,
     fetchImpl: async (url, options) => {
+      requestCount += 1;
       requestedUrl = String(url);
       assert.deepEqual(options?.headers, { Accept: "image/*" });
+      if (requestCount > 1) throw new Error("injected temporary logo outage");
       return new Response(imageBytes, { status: 200, headers: { "Content-Type": "image/png" } });
     },
   });
@@ -2548,10 +2787,97 @@ test("proxies Hub logo previews without changing their exported URL", async () =
     });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "image/png");
+    assert.match(response.headers.get("cache-control") ?? "", /^public, max-age=/);
     assert.equal(response.headers.get("access-control-allow-origin"), "http://localhost:3000");
     assert.match(requestedUrl, new RegExp(`/api/public/logos/teams/${teamId}$`));
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), imageBytes);
+    const cached = await fetch(`${writer.url}/api/public/logos/teams/${teamId}`);
+    assert.equal(cached.status, 200);
+    assert.deepEqual(new Uint8Array(await cached.arrayBuffer()), imageBytes);
+    assert.equal(requestCount, 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const stale = await fetch(`${writer.url}/api/public/logos/teams/${teamId}`);
+    assert.equal(stale.status, 200);
+    assert.match(stale.headers.get("cache-control") ?? "", /max-age=0/);
+    assert.deepEqual(new Uint8Array(await stale.arrayBuffer()), imageBytes);
+    assert.equal(requestCount, 2);
+    const retryCached = await fetch(`${writer.url}/api/public/logos/teams/${teamId}`);
+    assert.equal(retryCached.status, 200);
+    assert.equal(requestCount, 2);
   } finally {
+    await writer.close();
+  }
+});
+
+test("bounds and coalesces simultaneous public League Hub requests", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-hub-request-cap-"));
+  const pending = new Map();
+  let upstreamCount = 0;
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    fetchImpl: async (url) => {
+      upstreamCount += 1;
+      return new Promise((resolve) => pending.set(String(url), resolve));
+    },
+  });
+  const matchIds = Array.from({ length: 8 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`);
+  const waitForCount = async (expected) => {
+    const deadline = Date.now() + 1_000;
+    while (upstreamCount < expected && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(upstreamCount, expected);
+  };
+  const settle = (suffix, response) => {
+    const entry = [...pending.entries()].find(([url]) => url.endsWith(suffix));
+    assert.ok(entry, `Expected a pending request ending in ${suffix}`);
+    pending.delete(entry[0]);
+    entry[1](response);
+  };
+
+  try {
+    const initial = matchIds.map((matchId) => fetch(`${writer.url}/api/public/matches/${matchId}`));
+    await waitForCount(8);
+    const coalesced = fetch(`${writer.url}/api/public/matches/${matchIds[0]}`);
+    const overflowLogoId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const overflow = await fetch(`${writer.url}/api/public/logos/teams/${overflowLogoId}`);
+    assert.equal(overflow.status, 429);
+    assert.equal(overflow.headers.get("retry-after"), "1");
+    assert.equal(upstreamCount, 8);
+
+    settle(`/matches/${matchIds[0]}`, new Response(JSON.stringify({ match: { id: matchIds[0] } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const [first, joined] = await Promise.all([initial[0], coalesced]);
+    assert.equal(first.status, 200);
+    assert.equal(joined.status, 200);
+    assert.equal(upstreamCount, 8);
+
+    const logoRequest = fetch(`${writer.url}/api/public/logos/teams/${overflowLogoId}`);
+    await waitForCount(9);
+    settle(`/logos/teams/${overflowLogoId}`, new Response(new Uint8Array([137, 80, 78, 71]), {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    }));
+    for (const matchId of matchIds.slice(1)) {
+      settle(`/matches/${matchId}`, new Response(JSON.stringify({ match: { id: matchId } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    assert.equal((await logoRequest).status, 200);
+    assert.ok((await Promise.all(initial.slice(1))).every((response) => response.status === 200));
+  } finally {
+    for (const [url, resolve] of pending) {
+      resolve(url.includes("/logos/")
+        ? new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { "Content-Type": "image/png" } })
+        : new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
     await writer.close();
   }
 });
@@ -2560,27 +2886,33 @@ test("serves Google Drive map artwork through the local writer", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-map-artwork-proxy-"));
   const artworkId = "11SdWSDE3TrGNrFlXRZmE3UjvLIVrTVHi";
   const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const refreshedImageBytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3, 4]);
   let requestCount = 0;
   let requestedUrl = "";
   const writer = await startJsonWriter({
     port: 0,
     outputDir,
     enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    mapArtworkCacheTtlMs: 20,
     fetchImpl: async (url, options) => {
       requestCount += 1;
       requestedUrl = String(url);
       assert.deepEqual(options?.headers, { Accept: "image/*" });
-      return new Response(imageBytes, { status: 200, headers: { "Content-Type": "image/png" } });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(requestCount === 1 ? imageBytes : refreshedImageBytes, { status: 200, headers: { "Content-Type": "image/png" } });
     },
   });
 
   try {
-    const first = await fetch(`${writer.url}/api/public/map-artwork/${artworkId}`, {
-      headers: { Origin: "http://localhost:3000" },
-    });
-    const second = await fetch(`${writer.url}/api/public/map-artwork/${artworkId}`, {
-      headers: { Origin: "http://localhost:3000" },
-    });
+    const [first, second] = await Promise.all([
+      fetch(`${writer.url}/api/public/map-artwork/${artworkId}`, {
+        headers: { Origin: "http://localhost:3000" },
+      }),
+      fetch(`${writer.url}/api/public/map-artwork/${artworkId}`, {
+        headers: { Origin: "http://localhost:3000" },
+      }),
+    ]);
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
     assert.equal(first.headers.get("content-type"), "image/png");
@@ -2589,6 +2921,384 @@ test("serves Google Drive map artwork through the local writer", async () => {
     assert.deepEqual(new Uint8Array(await first.arrayBuffer()), imageBytes);
     assert.deepEqual(new Uint8Array(await second.arrayBuffer()), imageBytes);
     assert.equal(requestCount, 1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const refreshed = await fetch(`${writer.url}/api/public/map-artwork/${artworkId}`);
+    assert.equal(refreshed.status, 200);
+    assert.deepEqual(new Uint8Array(await refreshed.arrayBuffer()), refreshedImageBytes);
+    assert.equal(requestCount, 2);
+  } finally {
+    await writer.close();
+  }
+});
+
+test("bounds concurrent map artwork fetches, coalesces matching IDs, and releases slots", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-map-artwork-cap-"));
+  const pendingByArtworkId = new Map();
+  const upstreamCountWaiters = [];
+  let upstreamCount = 0;
+
+  const waitForUpstreamCount = (expected) => {
+    if (upstreamCount >= expected) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expected} map artwork requests; received ${upstreamCount}`)), 1_000);
+      upstreamCountWaiters.push({
+        expected,
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+      });
+    });
+  };
+  const notifyUpstreamCount = () => {
+    for (let index = upstreamCountWaiters.length - 1; index >= 0; index -= 1) {
+      const waiter = upstreamCountWaiters[index];
+      if (upstreamCount < waiter.expected) continue;
+      upstreamCountWaiters.splice(index, 1);
+      waiter.resolve();
+    }
+  };
+  const settleArtwork = (artworkId, outcome = "resolve") => {
+    const controls = pendingByArtworkId.get(artworkId) ?? [];
+    assert.ok(controls.length > 0, `Expected a pending upstream request for ${artworkId}`);
+    for (const control of controls) {
+      if (outcome === "reject") control.reject(new Error(`Injected upstream failure for ${artworkId}`));
+      else control.resolve(new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { "Content-Type": "image/png" } }));
+    }
+  };
+
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    fetchImpl: async (url) => {
+      const artworkId = new URL(String(url)).searchParams.get("id");
+      upstreamCount += 1;
+      return new Promise((resolve, reject) => {
+        const controls = pendingByArtworkId.get(artworkId) ?? [];
+        controls.push({ resolve, reject });
+        pendingByArtworkId.set(artworkId, controls);
+        notifyUpstreamCount();
+      });
+    },
+  });
+
+  const artworkIds = Array.from({ length: 8 }, (_, index) => `cap-artwork-${String(index).padStart(2, "0")}`);
+  try {
+    const initialRequests = artworkIds.map((artworkId) => fetch(`${writer.url}/api/public/map-artwork/${artworkId}`));
+    await waitForUpstreamCount(8);
+
+    const coalescedRequest = fetch(`${writer.url}/api/public/map-artwork/${artworkIds[0]}`);
+    const overflow = await fetch(`${writer.url}/api/public/map-artwork/cap-artwork-overflow`);
+    assert.equal(overflow.status, 429);
+    assert.equal(overflow.headers.get("retry-after"), "1");
+    assert.equal(upstreamCount, 8);
+
+    settleArtwork(artworkIds[0]);
+    const [first, coalesced] = await Promise.all([initialRequests[0], coalescedRequest]);
+    assert.equal(first.status, 200);
+    assert.equal(coalesced.status, 200);
+    assert.equal(upstreamCount, 8);
+
+    const afterSuccessRequest = fetch(`${writer.url}/api/public/map-artwork/cap-artwork-after-success`);
+    await waitForUpstreamCount(9);
+    assert.equal(upstreamCount, 9);
+
+    settleArtwork(artworkIds[1], "reject");
+    assert.equal((await initialRequests[1]).status, 502);
+    const afterFailureRequest = fetch(`${writer.url}/api/public/map-artwork/cap-artwork-after-failure`);
+    await waitForUpstreamCount(10);
+    assert.equal(upstreamCount, 10);
+
+    for (const artworkId of artworkIds.slice(2)) settleArtwork(artworkId);
+    settleArtwork("cap-artwork-after-success");
+    settleArtwork("cap-artwork-after-failure");
+    const remaining = await Promise.all([
+      ...initialRequests.slice(2),
+      afterSuccessRequest,
+      afterFailureRequest,
+    ]);
+    assert.ok(remaining.every((response) => response.status === 200));
+  } finally {
+    await writer.close();
+  }
+});
+
+test("stops Rocket League and VALORANT series at gaps, invalid scores, format limits, and clinches", () => {
+  const gap = [
+    { home: "3", away: "1" },
+    { home: "", away: "" },
+    { home: "4", away: "0" },
+  ];
+  assert.deepEqual(calculateRocketLeagueSeries(gap, "Bo5"), {
+    roundNumber: 2,
+    homeWins: 1,
+    awayWins: 0,
+    completedGames: 1,
+  });
+  assert.equal(calculateRocketLeagueSeries([
+    { home: "1", away: "0" },
+    { home: "2", away: "1" },
+    { home: "0", away: "9" },
+  ], "Bo3").completedGames, 2);
+  assert.equal(calculateRocketLeagueSeries([{ home: "1oops", away: "0" }], "Bo1").completedGames, 0);
+  assert.deepEqual(calculateValorantSeries([
+    { home: "13", away: "8" },
+    { home: "13", away: "10" },
+    { home: "1", away: "13" },
+  ], "Bo3"), { roundNumber: 2, homeWins: 2, awayWins: 0, completedGames: 2 });
+  assert.equal(calculateValorantSeries([{ home: "-1", away: "0" }], "Bo1").completedGames, 0);
+});
+
+test("does not propose a Rocket League result beyond the selected series clincher", () => {
+  const games = Array.from({ length: 7 }, () => ({ home: "", away: "" }));
+  games[0] = { home: "2", away: "1" };
+  games[1] = { home: "3", away: "2" };
+  const result = proposeRocketLeagueLiveResult({
+    bestOf: "Bo3",
+    games: games.map((game) => ({ ...game })),
+    savedGames: games.map((game) => ({ ...game })),
+    lastLiveResultProposalKey: "",
+  }, { id: "post-clinch", scoreOne: 4, scoreTwo: 1 });
+  assert.equal(result.changed, false);
+  assert.equal(result.gameIndex, -1);
+});
+
+test("protects writer mutations with a local-origin session and exact JSON schemas", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-security-"));
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  try {
+    const noOriginSession = await fetch(`${writer.url}/api/live-json/session`);
+    assert.equal(noOriginSession.status, 403);
+    assert.equal(noOriginSession.headers.get("access-control-allow-origin"), null);
+
+    const evilOriginSession = await fetch(`${writer.url}/api/live-json/session`, { headers: { Origin: "http://localhost.evil.test:3000" } });
+    assert.equal(evilOriginSession.status, 403);
+
+    const files = await productionFileFixtures();
+    const noToken = await fetch(`${writer.url}/api/live-json`, {
+      method: "POST",
+      headers: { Origin: WRITER_TEST_ORIGIN, "Content-Type": "application/json" },
+      body: JSON.stringify({ writerId: "writer-security", revision: 1, files }),
+    });
+    assert.equal(noToken.status, 403);
+
+    const token = await writerToken(writer);
+    const validPreflight = await fetch(`${writer.url}/api/live-json`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: WRITER_TEST_ORIGIN,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type, x-gaming-oasis-writer-token",
+      },
+    });
+    assert.equal(validPreflight.status, 204);
+    const validClaimPreflight = await fetch(`${writer.url}/api/live-json/claim`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: WRITER_TEST_ORIGIN,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type, x-gaming-oasis-writer-token",
+      },
+    });
+    assert.equal(validClaimPreflight.status, 204);
+    const incompleteClaim = await fetch(`${writer.url}/api/live-json/claim`, {
+      method: "POST",
+      headers: {
+        Origin: WRITER_TEST_ORIGIN,
+        "Content-Type": "application/json",
+        "X-Gaming-Oasis-Writer-Token": token,
+      },
+      body: JSON.stringify({ writerId: "writer-security" }),
+    });
+    assert.equal(incompleteClaim.status, 422);
+    const invalidPreflight = await fetch(`${writer.url}/api/live-json`, {
+      method: "OPTIONS",
+      headers: { Origin: WRITER_TEST_ORIGIN, "Access-Control-Request-Method": "DELETE" },
+    });
+    assert.equal(invalidPreflight.status, 403);
+
+    const wrongType = await fetch(`${writer.url}/api/live-json`, {
+      method: "POST",
+      headers: { Origin: WRITER_TEST_ORIGIN, "Content-Type": "text/plain", "X-Gaming-Oasis-Writer-Token": token },
+      body: "{}",
+    });
+    assert.equal(wrongType.status, 415);
+
+    const malformed = await fetch(`${writer.url}/api/live-json`, {
+      method: "POST",
+      headers: { Origin: WRITER_TEST_ORIGIN, "Content-Type": "application/json", "X-Gaming-Oasis-Writer-Token": token },
+      body: "{",
+    });
+    assert.equal(malformed.status, 400);
+
+    const oversized = await fetch(`${writer.url}/api/live-json`, {
+      method: "POST",
+      headers: { Origin: WRITER_TEST_ORIGIN, "Content-Type": "application/json", "X-Gaming-Oasis-Writer-Token": token },
+      body: JSON.stringify({ padding: "x".repeat(2_000_100) }),
+    });
+    assert.equal(oversized.status, 413);
+
+    const invalid = await postWriter(writer, "/api/live-json", {
+      files: files.map((file) => file.filename === "sponsors.json" ? { ...file, data: [{ id: "bad" }] } : file),
+    });
+    assert.equal(invalid.status, 422);
+    assert.deepEqual(await readdir(outputDir), []);
+  } finally {
+    await writer.close();
+  }
+});
+
+test("rolls back a failed package replacement and accepts the next queued revision", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-rollback-"));
+  let failAtFourthFile = false;
+  let verifyAvailability = false;
+  let baseline = null;
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    beforeInstallFile: (_filename, index) => {
+      if (failAtFourthFile && index === 3) {
+        failAtFourthFile = false;
+        throw new Error("injected replacement failure");
+      }
+    },
+    afterBackupFile: async (filename, _index, target) => {
+      if (verifyAvailability) assert.equal(await readFile(target, "utf8"), baseline.get(filename));
+    },
+  });
+  try {
+    const baselineFiles = await productionFileFixtures("BASELINE");
+    assert.equal((await postWriter(writer, "/api/live-json", { files: baselineFiles })).status, 200);
+    baseline = new Map(await Promise.all([...JSON_FILENAMES].map(async (filename) => [filename, await readFile(path.join(outputDir, filename), "utf8")])));
+
+    failAtFourthFile = true;
+    verifyAvailability = true;
+    const failed = await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("FAILED") });
+    verifyAvailability = false;
+    assert.equal(failed.status, 500);
+    for (const filename of JSON_FILENAMES) assert.equal(await readFile(path.join(outputDir, filename), "utf8"), baseline.get(filename));
+    const unhealthy = await fetch(`${writer.url}/api/live-json/status`);
+    assert.equal(unhealthy.status, 503);
+
+    const recovered = await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("RECOVERED") });
+    assert.equal(recovered.status, 200);
+    const saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
+    assert.equal(saved[0].eventname, "RECOVERED");
+    const healthy = await fetch(`${writer.url}/api/live-json/status`);
+    assert.equal(healthy.status, 200);
+    assert.equal((await healthy.json()).service, "gaming-oasis-production-os-writer");
+    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+  } finally {
+    await writer.close();
+  }
+});
+
+test("recovers an interrupted JSON package transaction before listening", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-recovery-"));
+  const stageDirName = ".live-json-stage-test-recovery";
+  const backupDirName = ".live-json-backup-test-recovery";
+  const stageDir = path.join(outputDir, stageDirName);
+  const backupDir = path.join(outputDir, backupDirName);
+  await mkdir(stageDir);
+  await mkdir(backupDir);
+  const filenames = [...JSON_FILENAMES];
+  for (const filename of filenames) await writeFile(path.join(outputDir, filename), `OLD:${filename}`, "utf8");
+  await writeFile(path.join(backupDir, filenames[0]), `OLD:${filenames[0]}`, "utf8");
+  await writeFile(path.join(outputDir, filenames[0]), `NEW:${filenames[0]}`, "utf8");
+  await writeFile(path.join(outputDir, ".live-json-transaction.json"), JSON.stringify({
+    version: 1,
+    phase: "committing",
+    stageDir: stageDirName,
+    backupDir: backupDirName,
+    entries: filenames.map((filename) => ({ filename, existed: true })),
+  }), "utf8");
+
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  try {
+    for (const filename of filenames) {
+      assert.equal(await readFile(path.join(outputDir, filename), "utf8"), `OLD:${filename}`);
+    }
+    assert.deepEqual((await readdir(outputDir)).sort(), filenames.sort());
+  } finally {
+    await writer.close();
+  }
+});
+
+test("preserves live files when interrupted before a staged backup becomes authoritative", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-backup-stage-recovery-"));
+  const stageDirName = ".live-json-stage-backup-stage-recovery";
+  const backupDirName = ".live-json-backup-backup-stage-recovery";
+  const stageDir = path.join(outputDir, stageDirName);
+  const backupDir = path.join(outputDir, backupDirName);
+  const filenames = [...JSON_FILENAMES];
+  await mkdir(stageDir);
+  await mkdir(backupDir);
+  for (const filename of filenames) await writeFile(path.join(outputDir, filename), `LIVE:${filename}`, "utf8");
+  await writeFile(path.join(backupDir, `${filenames[0]}.stage`), `PARTIAL:${filenames[0]}`, "utf8");
+  await writeFile(path.join(outputDir, ".live-json-transaction.json"), JSON.stringify({
+    version: 1,
+    phase: "committing",
+    stageDir: stageDirName,
+    backupDir: backupDirName,
+    entries: filenames.map((filename) => ({ filename, existed: true })),
+  }), "utf8");
+
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  try {
+    for (const filename of filenames) {
+      assert.equal(await readFile(path.join(outputDir, filename), "utf8"), `LIVE:${filename}`);
+    }
+    assert.deepEqual((await readdir(outputDir)).sort(), filenames.sort());
+  } finally {
+    await writer.close();
+  }
+});
+
+test("blocks a new transaction behind an unresolved rollback and recovers on a later write", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-unresolved-rollback-"));
+  const filenames = [...JSON_FILENAMES];
+  const blockedTarget = path.join(outputDir, filenames[0]);
+  let injectRollbackBlocker = false;
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    beforeInstallFile: async (_filename, index) => {
+      if (!injectRollbackBlocker || index !== 3) return;
+      injectRollbackBlocker = false;
+      await rm(blockedTarget, { force: true });
+      await mkdir(blockedTarget);
+      throw new Error("injected replacement and rollback failure");
+    },
+  });
+
+  try {
+    assert.equal((await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("BASELINE") })).status, 200);
+
+    injectRollbackBlocker = true;
+    const failed = await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("FAILED") });
+    assert.equal(failed.status, 500);
+    const journalPath = path.join(outputDir, ".live-json-transaction.json");
+    const unresolvedJournal = await readFile(journalPath, "utf8");
+    const unresolvedArtifacts = (await readdir(outputDir)).filter((name) => name.startsWith(".live-json-stage-") || name.startsWith(".live-json-backup-")).sort();
+    assert.equal(unresolvedArtifacts.length, 2);
+
+    const blocked = await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("BLOCKED") });
+    assert.equal(blocked.status, 500);
+    assert.equal(await readFile(journalPath, "utf8"), unresolvedJournal);
+    assert.deepEqual((await readdir(outputDir)).filter((name) => name.startsWith(".live-json-stage-") || name.startsWith(".live-json-backup-")).sort(), unresolvedArtifacts);
+
+    await rm(blockedTarget, { recursive: true, force: true });
+    const recovered = await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("RECOVERED") });
+    assert.equal(recovered.status, 200);
+    const saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
+    assert.equal(saved[0].eventname, "RECOVERED");
+    assert.deepEqual((await readdir(outputDir)).sort(), filenames.sort());
   } finally {
     await writer.close();
   }
@@ -2596,33 +3306,21 @@ test("serves Google Drive map artwork through the local writer", async () => {
 
 test("continuously writes the complete JSON package to disk", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-json-"));
-  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
-  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: "first" }] }));
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  const files = await productionFileFixtures("FIRST");
   try {
-    const first = await fetch(`${writer.url}/api/live-json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files }),
-    });
+    const first = await postWriter(writer, "/api/live-json", { files });
     assert.equal(first.status, 200);
 
-    files[0].data[0].value = "latest";
-    const second = await fetch(`${writer.url}/api/live-json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files }),
-    });
+    files.find((file) => file.filename === "FinalOutput.json").data[0].eventname = "LATEST";
+    const second = await postWriter(writer, "/api/live-json", { files });
     assert.equal(second.status, 200);
 
     assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
-    const saved = JSON.parse(await readFile(path.join(outputDir, files[0].filename), "utf8"));
-    assert.equal(saved[0].value, "latest");
+    const saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
+    assert.equal(saved[0].eventname, "LATEST");
 
-    const pause = await fetch(`${writer.url}/api/rocket-league/match-paused`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: true }),
-    });
+    const pause = await postWriter(writer, "/api/rocket-league/match-paused", { paused: true });
     assert.equal(pause.status, 503);
     const pauseBody = await pause.json();
     assert.match(String(pauseBody.error || ""), /Stats API/i);
@@ -2633,18 +3331,14 @@ test("continuously writes the complete JSON package to disk", async () => {
 
 test("writes editable VALORANT map artwork beside the unchanged six-file package", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-map-artwork-"));
-  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
-  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  const files = await productionFileFixtures();
   const valorantMapData = {
     maps: [{ name: "Ascent", nextMap: "next.png", pickCard: "pick.png", banCard: "ban.png" }],
   };
 
   try {
-    const response = await fetch(`${writer.url}/api/live-json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files, valorantMapData }),
-    });
+    const response = await postWriter(writer, "/api/live-json", { files, valorantMapData });
     assert.equal(response.status, 200);
     assert.equal(JSON_FILENAMES.size, 6);
     assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, VALORANT_MAP_DATA_FILENAME), "utf8")), valorantMapData);
@@ -2661,8 +3355,8 @@ test("ships the editable VALORANT map artwork defaults in JSONs", async () => {
 
 test("serves the latest non-exported VALORANT overlay state without changing the six JSON files", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-overlay-"));
-  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
-  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  const files = await productionFileFixtures();
   const valorant = {
     version: 1,
     updatedAt: new Date().toISOString(),
@@ -2686,11 +3380,7 @@ test("serves the latest non-exported VALORANT overlay state without changing the
   try {
     const before = await fetch(`${writer.url}/api/overlays/valorant`);
     assert.equal(before.status, 204);
-    const update = await fetch(`${writer.url}/api/live-json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files, overlays: { valorant } }),
-    });
+    const update = await postWriter(writer, "/api/live-json", { files, overlays: { valorant } });
     assert.equal(update.status, 200);
 
     const response = await fetch(`${writer.url}/api/overlays/valorant`);
@@ -2705,8 +3395,8 @@ test("serves the latest non-exported VALORANT overlay state without changing the
 
 test("serves the latest non-exported Rocket League overlay state without changing the six JSON files", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-rl-overlay-"));
-  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false });
-  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  const files = await productionFileFixtures();
   const rocketLeague = {
     version: 1,
     updatedAt: new Date().toISOString(),
@@ -2741,24 +3431,139 @@ test("serves the latest non-exported Rocket League overlay state without changin
     },
     activities: [],
     replayCard: null,
-    finishedGame: null,
-    matchTeamStats: null,
   };
 
   try {
     const before = await fetch(`${writer.url}/api/overlays/rocket-league`);
     assert.equal(before.status, 204);
-  const update = await fetch(`${writer.url}/api/live-json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files, overlays: { rocketLeague } }),
-    });
+    const update = await postWriter(writer, "/api/live-json", { files, overlays: { rocketLeague } });
     assert.equal(update.status, 200);
 
     const response = await fetch(`${writer.url}/api/overlays/rocket-league`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), rocketLeague);
+    assert.deepEqual(await response.json(), { ...rocketLeague, finishedGame: null, matchTeamStats: null });
     assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+  } finally {
+    await writer.close();
+  }
+});
+
+test("rejects stale browser-tab fences and accepts a newer controller", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-fence-"));
+  let failNextInstall = false;
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    beforeInstallFile: () => {
+      if (!failNextInstall) return;
+      failNextInstall = false;
+      throw new Error("injected fenced replacement failure");
+    },
+  });
+  const token = await writerToken(writer);
+  const send = (writerId, fence, revision, files) => fetch(`${writer.url}/api/live-json`, {
+    method: "POST",
+    headers: {
+      Origin: WRITER_TEST_ORIGIN,
+      "Content-Type": "application/json",
+      "X-Gaming-Oasis-Writer-Token": token,
+    },
+    body: JSON.stringify({ writerId, fence, revision, files }),
+  });
+  const claim = (writerId, force = false) => fetch(`${writer.url}/api/live-json/claim`, {
+    method: "POST",
+    headers: {
+      Origin: WRITER_TEST_ORIGIN,
+      "Content-Type": "application/json",
+      "X-Gaming-Oasis-Writer-Token": token,
+    },
+    body: JSON.stringify({ writerId, force }),
+  });
+  const claimFence = async (writerId, force = false) => {
+    const response = await claim(writerId, force);
+    assert.equal(response.status, 200);
+    return (await response.json()).fence;
+  };
+  try {
+    assert.equal((await send("poison-tab", Number.MAX_SAFE_INTEGER, 1, await productionFileFixtures("POISON"))).status, 409);
+    const newerFence = await claimFence("newer-tab");
+    assert.equal(await claimFence("newer-tab"), newerFence);
+    assert.equal((await send("newer-tab", newerFence, 1, await productionFileFixtures("NEWER"))).status, 200);
+    assert.equal((await send("stale-tab", newerFence, 1, await productionFileFixtures("STALE"))).status, 409);
+    assert.equal((await send("newer-tab", newerFence + 1_000, 2, await productionFileFixtures("ARBITRARY-HIGH"))).status, 409);
+    const deniedClaim = await claim("other-browser");
+    assert.equal(deniedClaim.status, 409);
+    assert.equal(deniedClaim.headers.get("retry-after"), "1");
+    const reusedRevisionFence = await claimFence("newer-tab");
+    assert.equal((await send("newer-tab", reusedRevisionFence, 1, await productionFileFixtures("REUSED-REVISION"))).status, 409);
+    let saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
+    assert.equal(saved[0].eventname, "NEWER");
+
+    failNextInstall = true;
+    const failedTakeoverFence = await claimFence("failed-takeover", true);
+    assert.equal((await send("failed-takeover", failedTakeoverFence, 1, await productionFileFixtures("FAILED"))).status, 500);
+    assert.equal((await send("newer-tab", reusedRevisionFence, 2, await productionFileFixtures("STALE-AFTER-FAILURE"))).status, 409);
+    saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
+    assert.equal(saved[0].eventname, "NEWER");
+
+    assert.equal((await claim("takeover-tab")).status, 409);
+    const takeoverFence = await claimFence("takeover-tab", true);
+    assert.equal((await send("takeover-tab", takeoverFence, 1, await productionFileFixtures("TAKEOVER"))).status, 200);
+    saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
+    assert.equal(saved[0].eventname, "TAKEOVER");
+
+    const firstClaim = await claim("claiming-tab", true);
+    const secondClaim = await claim("delayed-losing-tab");
+    assert.equal(firstClaim.status, 200);
+    assert.equal(secondClaim.status, 409);
+    const firstClaimPayload = await firstClaim.json();
+    assert.equal((await send("claiming-tab", firstClaimPayload.fence, 1, await productionFileFixtures("CLAIMED-OWNER"))).status, 200);
+    const secondTakeover = await claim("delayed-losing-tab", true);
+    assert.equal(secondTakeover.status, 200);
+    const secondClaimPayload = await secondTakeover.json();
+    assert.ok(secondClaimPayload.fence > firstClaimPayload.fence);
+    assert.equal((await send("claiming-tab", firstClaimPayload.fence, 2, await productionFileFixtures("FENCED-OWNER"))).status, 409);
+    assert.equal((await claim("claiming-tab")).status, 409);
+    const healedClaim = await claim("claiming-tab", true);
+    const healedClaimPayload = await healedClaim.json();
+    assert.ok(healedClaimPayload.fence > secondClaimPayload.fence);
+    assert.equal((await send("claiming-tab", healedClaimPayload.fence, 2, await productionFileFixtures("HEALED-OWNER"))).status, 200);
+  } finally {
+    await writer.close();
+  }
+});
+
+test("allows a new writer to claim an expired server ownership lease", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-writer-owner-expiry-"));
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    writerOwnerLeaseMs: 30,
+  });
+  const token = await writerToken(writer);
+  const claim = async (writerId) => {
+    const response = await fetch(`${writer.url}/api/live-json/claim`, {
+      method: "POST",
+      headers: {
+        Origin: WRITER_TEST_ORIGIN,
+        "Content-Type": "application/json",
+        "X-Gaming-Oasis-Writer-Token": token,
+      },
+      body: JSON.stringify({ writerId, force: false }),
+    });
+    return { response, payload: await response.json() };
+  };
+  try {
+    const first = await claim("expiring-owner");
+    assert.equal(first.response.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 45));
+    const next = await claim("replacement-owner");
+    assert.equal(next.response.status, 200);
+    assert.ok(next.payload.fence > first.payload.fence);
   } finally {
     await writer.close();
   }
@@ -2767,7 +3572,7 @@ test("serves the latest non-exported Rocket League overlay state without changin
 test("serves normalized League overlay state without changing the six JSON files", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-lol-overlay-"));
   const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
-  const files = [...JSON_FILENAMES].map((filename) => ({ filename, data: [{ value: filename }] }));
+  const files = await productionFileFixtures();
   const leagueOfLegends = buildLeagueOverlayState({
     scoreboardHeader: "SEL Finals", bestOf: "Bo3", currentGame: 1, draftMode: "fearless", blueTeam: "team1",
     playerBoardEnabled: true, debugLiveEnabled: false, draft: createLeagueDraftState(), confirmedGames: [], resultProposal: null, playerOverrides: {},
@@ -2776,11 +3581,7 @@ test("serves normalized League overlay state without changing the six JSON files
   try {
     const before = await fetch(`${writer.url}/api/overlays/league-of-legends`);
     assert.equal(before.status, 204);
-    const update = await fetch(`${writer.url}/api/live-json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files, overlays: { leagueOfLegends } }),
-    });
+    const update = await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } });
     assert.equal(update.status, 200);
     const response = await fetch(`${writer.url}/api/overlays/league-of-legends`);
     assert.equal(response.status, 200);

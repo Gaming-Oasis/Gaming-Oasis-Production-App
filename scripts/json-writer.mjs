@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { access, copyFile, mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -24,21 +25,37 @@ export const JSON_FILENAMES = new Set([
   "VALT1DS.json",
   "VALT2DS.json",
 ]);
+const TRANSACTION_FILENAME = ".live-json-transaction.json";
+const TRUSTED_ORIGINS = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+const MAX_REQUEST_BYTES = 2_000_000;
+const MAX_JSON_RESPONSE_BYTES = 5_000_000;
+const MAX_IMAGE_RESPONSE_BYTES = 10_000_000;
+const UPSTREAM_TIMEOUT_MS = 8_000;
+const MAP_ARTWORK_CACHE_MAX_BYTES = 64_000_000;
+const MAP_ARTWORK_CACHE_TTL_MS = 5 * 60_000;
+const MAP_ARTWORK_CACHE_MAX_STALE_MS = 60 * 60_000;
+const MAP_ARTWORK_MAX_INFLIGHT = 8;
+const HUB_PUBLIC_MAX_INFLIGHT = 8;
+const HUB_LOGO_CACHE_MAX_ENTRIES = 256;
+const HUB_LOGO_CACHE_MAX_BYTES = 32_000_000;
+const HUB_LOGO_CACHE_TTL_MS = 5 * 60_000;
+const HUB_LOGO_CACHE_MAX_STALE_MS = 60 * 60_000;
+const HUB_LOGO_RETRY_CACHE_TTL_MS = 5_000;
+const HUB_LOGO_CACHE_MAX_CONFIGURED_TTL_MS = 24 * 60 * 60_000;
+const HUB_LOGO_RETRY_CACHE_MAX_CONFIGURED_TTL_MS = 60_000;
+const WRITER_OWNER_LEASE_MS = 12_000;
+const WRITER_OWNER_LEASE_MAX_MS = 60_000;
+const LEAGUE_MEMORY_CACHE_MAX_BYTES = 64_000_000;
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-async function writeJsonWithRetry(outputDir, filename, data) {
-  const target = path.join(outputDir, filename);
-  const temporary = path.join(outputDir, `.${filename}.${process.pid}.tmp`);
-  await writeFile(temporary, JSON.stringify(data, null, 2), "utf8");
-
+async function renameWithRetry(source, target) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      await rename(temporary, target);
+      await rename(source, target);
       return;
     } catch (error) {
       if (!["EBUSY", "EPERM", "EACCES"].includes(error.code) || attempt === 4) {
-        await unlink(temporary).catch(() => {});
         throw error;
       }
       await wait(60 * (attempt + 1));
@@ -46,39 +63,300 @@ async function writeJsonWithRetry(outputDir, filename, data) {
   }
 }
 
-function corsHeaders(origin) {
-  const allowed = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin ?? "")
-    ? origin
-    : "http://localhost:3000";
-  return {
-    "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Cache-Control": "no-store",
-  };
+async function unlinkWithRetry(target) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await unlink(target);
+      return;
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      if (!["EBUSY", "EPERM", "EACCES"].includes(error?.code) || attempt === 4) throw error;
+      await wait(60 * (attempt + 1));
+    }
+  }
 }
 
-async function readBody(request, maximumBytes = 2_000_000) {
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+function hasExactKeys(value, keys) {
+  if (!isPlainObject(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function isTrustedOrigin(origin) {
+  return TRUSTED_ORIGINS.has(origin ?? "");
+}
+
+function isTrustedHost(host) {
+  return /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(host ?? "");
+}
+
+function corsHeaders(origin) {
+  const headers = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Gaming-Oasis-Writer-Token",
+    "Cache-Control": "no-store",
+    "Vary": "Origin",
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (isTrustedOrigin(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function readBody(request, maximumBytes = MAX_REQUEST_BYTES) {
+  const contentType = String(request.headers["content-type"] ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== "application/json") throw new HttpError(415, "Content-Type must be application/json");
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > maximumBytes) throw new Error("Payload is too large");
+    if (size > maximumBytes) throw new HttpError(413, "Payload is too large");
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new HttpError(400, "Request body must be valid JSON");
+  }
+}
+
+function tokensMatch(received, expected) {
+  if (typeof received !== "string" || !received) return false;
+  const left = Buffer.from(received);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+async function pathExists(candidate) {
+  try {
+    await access(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function recoverInterruptedTransaction(outputDir) {
+  const journalPath = path.join(outputDir, TRANSACTION_FILENAME);
+  let serialized;
+  try {
+    serialized = await readFile(journalPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  let journal;
+  try {
+    journal = JSON.parse(serialized);
+  } catch {
+    throw new Error("Live JSON recovery journal is malformed");
+  }
+  const stageName = String(journal?.stageDir ?? "");
+  const backupName = String(journal?.backupDir ?? "");
+  const entries = Array.isArray(journal?.entries) ? journal.entries : [];
+  const validStageName = /^\.live-json-stage-[A-Za-z0-9-]+$/.test(stageName);
+  const validBackupName = /^\.live-json-backup-[A-Za-z0-9-]+$/.test(backupName);
+  const seenEntries = new Set();
+  const validEntries = entries.length >= JSON_FILENAMES.size
+    && entries.length <= JSON_FILENAMES.size + 1
+    && entries.every((entry) => {
+      const filename = String(entry?.filename ?? "");
+      if ((!JSON_FILENAMES.has(filename) && filename !== VALORANT_MAP_DATA_FILENAME)
+        || seenEntries.has(filename)
+        || typeof entry?.existed !== "boolean") return false;
+      seenEntries.add(filename);
+      return true;
+    });
+  if (journal?.version !== 1 || journal?.phase !== "committing" || !validStageName || !validBackupName || !validEntries) {
+    throw new Error("Live JSON recovery journal is invalid");
+  }
+  const resolvedOutputDir = path.resolve(outputDir);
+  const stageDir = path.resolve(resolvedOutputDir, stageName);
+  const backupDir = path.resolve(resolvedOutputDir, backupName);
+  if (path.dirname(stageDir) !== resolvedOutputDir || path.dirname(backupDir) !== resolvedOutputDir) {
+    throw new Error("Live JSON recovery journal escapes the output directory");
+  }
+  for (const entry of [...entries].reverse()) {
+    const filename = String(entry?.filename ?? "");
+    if (!JSON_FILENAMES.has(filename) && filename !== VALORANT_MAP_DATA_FILENAME) continue;
+    const target = path.join(outputDir, filename);
+    const backup = path.join(backupDir, filename);
+    if (await pathExists(backup)) {
+      await renameWithRetry(backup, target);
+    } else if (entry?.existed === false) {
+      await unlinkWithRetry(target);
+    }
+  }
+  await rm(stageDir, { recursive: true, force: true });
+  await rm(backupDir, { recursive: true, force: true });
+  await unlinkWithRetry(journalPath);
+}
+
+async function commitJsonPackage(outputDir, files, beforeInstallFile, afterBackupFile) {
+  // Never replace an unresolved recovery plan. If a prior rollback could not
+  // finish, recovery must succeed before a new generation is staged.
+  await recoverInterruptedTransaction(outputDir);
+  const transactionId = `${process.pid}-${Date.now()}-${randomBytes(4).toString("hex")}`;
+  const stageDirName = `.live-json-stage-${transactionId}`;
+  const backupDirName = `.live-json-backup-${transactionId}`;
+  const stageDir = path.join(outputDir, stageDirName);
+  const backupDir = path.join(outputDir, backupDirName);
+  const journalPath = path.join(outputDir, TRANSACTION_FILENAME);
+  const journalStagePath = `${journalPath}.stage-${transactionId}`;
+  const entries = files.map((file) => ({ filename: file.filename, existed: null }));
+  const journal = { version: 1, phase: "committing", stageDir: stageDirName, backupDir: backupDirName, entries };
+  await mkdir(stageDir, { recursive: false });
+  await mkdir(backupDir, { recursive: false });
+  try {
+    await Promise.all(files.map((file) => writeFile(path.join(stageDir, file.filename), JSON.stringify(file.data, null, 2), "utf8")));
+    for (const entry of entries) entry.existed = await pathExists(path.join(outputDir, entry.filename));
+    await writeFile(journalStagePath, JSON.stringify(journal), "utf8");
+    await renameWithRetry(journalStagePath, journalPath);
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      await beforeInstallFile?.(entry.filename, index);
+      const target = path.join(outputDir, entry.filename);
+      if (entry.existed) {
+        const backup = path.join(backupDir, entry.filename);
+        const backupStage = `${backup}.stage`;
+        await copyFile(target, backupStage);
+        await renameWithRetry(backupStage, backup);
+        await afterBackupFile?.(entry.filename, index, target);
+      }
+      await renameWithRetry(path.join(stageDir, entry.filename), target);
+    }
+    // Removing the journal is the commit point. Any crash before it rolls back;
+    // any crash after it leaves the complete new generation in place.
+    await unlinkWithRetry(journalPath);
+  } catch (error) {
+    let recoveryFailure = null;
+    try {
+      await recoverInterruptedTransaction(outputDir);
+    } catch (recoveryError) {
+      recoveryFailure = recoveryError;
+    }
+    if (recoveryFailure) {
+      throw new Error(`JSON package commit failed and rollback could not complete: ${recoveryFailure.message}`, { cause: error });
+    }
+    await rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    await unlink(journalStagePath).catch(() => {});
+    throw error;
+  }
+  await rm(stageDir, { recursive: true, force: true }).catch(() => {});
+  await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+  await unlink(journalStagePath).catch(() => {});
+}
+
+export const FINAL_OUTPUT_KEYS = (() => {
+  const keys = [
+    "eventname", "maincaster", "secondcaster", "guest1", "guest2", "mainsocial", "secondarysocial",
+    "startingtitle", "interviewname", "podcasttitle", "currentsegment", "regionallogo",
+  ];
+  for (let index = 1; index <= 8; index += 1) keys.push(`segment${index}`, `currentseg${index}`);
+  for (let match = 1; match <= 2; match += 1) {
+    for (let team = 1; team <= 2; team += 1) {
+      for (const suffix of ["name", "standing", "logo", "color"]) keys.push(`m${match}t${team}${suffix}`);
+    }
+  }
+  for (let index = 1; index <= 7; index += 1) keys.push(`rlscore${index}`);
+  keys.push("rlheader", "rlformat#", "rlroundnumber", "rlseriesscore1", "rlseriesscore2");
+  keys.push(
+    "valname1", "valname2", "vallogo1", "vallogo2", "valcolor1", "valcolor2", "valcolor1a", "valcolor2a",
+    "valstanding1", "valstanding2", "vallogobg1", "vallogobg2", "valbanteamaname", "valbanteamastanding",
+    "valbanteamalogo", "valbanteamacolor", "valbanteambname", "valbanteambstanding", "valbanteamblogo",
+    "valbanteambcolor", "valorantroundnumber", "valseriesscore1", "valseriesscore2", "valheader", "valformat#",
+  );
+  for (let index = 1; index <= 5; index += 1) keys.push(`valscore${index}`);
+  for (let index = 1; index <= 7; index += 1) keys.push(`valbo3maptext${index}`, `valbo3mapimage${index}`);
+  for (let index = 1; index <= 3; index += 1) keys.push(`valbo3s${index}text`);
+  for (const key of ["b1", "b2", "p1", "s1", "p2", "s2", "b3", "b4", "s3"]) keys.push(`valbo3${key}logo`);
+  for (let index = 1; index <= 3; index += 1) {
+    keys.push(`valbo3map${index}name`, `valbo3map${index}teamlogo`, `valbo3map${index}winnerlogo`, `valbo3nextmap${index}`);
+  }
+  keys.push("valbo3nextmapi");
+  for (let index = 1; index <= 7; index += 1) keys.push(`valbo5maptext${index}`, `valbo5mapimage${index}`);
+  for (let index = 1; index <= 5; index += 1) keys.push(`valbo5s${index}text`);
+  for (const key of ["b1", "b2", "p1", "s1", "p2", "s2", "p3", "s3", "p4", "s4", "s5"]) keys.push(`valbo5${key}logo`);
+  for (let index = 1; index <= 5; index += 1) {
+    keys.push(
+      `valbo5map${index}name`, `valbo5map${index}teamlogo`, `valbo5map${index}winnerlogo`,
+      `valbo5nextmap${index}`, `valbo5widgetlogo${index}`, `valbo5widgetmap${index}`,
+    );
+  }
+  keys.push("valbo5nextmapi");
+  for (let index = 1; index <= 3; index += 1) keys.push(`valwidgetlogo${index}`, `valwidgetmap${index}`);
+  return new Set(keys);
+})();
+
+const DRAW_FILE_SHAPES = new Map([
+  ["RLT1DS.json", { pools: 2, rows: 8 }],
+  ["RLT2DS.json", { pools: 6, rows: 8 }],
+  ["VALT1DS.json", { pools: 2, rows: 4 }],
+  ["VALT2DS.json", { pools: 6, rows: 4 }],
+]);
+
+function validFinalOutput(value) {
+  if (!Array.isArray(value) || value.length !== 1 || !hasExactKeys(value[0], FINAL_OUTPUT_KEYS)) return false;
+  return Object.values(value[0]).every((field) => typeof field === "string");
+}
+
+function validSponsorsFile(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 11) return false;
+  if (value[0]?.id !== "gaming-oasis"
+    || value[0]?.name !== "Gaming Oasis"
+    || value[0]?.logo !== "http://localhost:3000/gaming-oasis-logo-light.png"
+    || value[0]?.enabled !== true) return false;
+  const canonicalIds = new Set(["gaming-oasis", ...Array.from({ length: 10 }, (_, index) => `sponsor${index + 1}`)]);
+  const ids = new Set();
+  return value.every((sponsor) => {
+    if (!hasExactKeys(sponsor, ["id", "name", "logo", "enabled"])) return false;
+    if (typeof sponsor.id !== "string" || !canonicalIds.has(sponsor.id) || ids.has(sponsor.id)) return false;
+    ids.add(sponsor.id);
+    return typeof sponsor.name === "string" && typeof sponsor.logo === "string" && typeof sponsor.enabled === "boolean";
+  });
+}
+
+function validDrawFile(filename, value) {
+  const shape = DRAW_FILE_SHAPES.get(filename);
+  if (!shape || !Array.isArray(value) || value.length !== 1 || !isPlainObject(value[0])) return false;
+  const keys = [];
+  for (let pool = 1; pool <= shape.pools; pool += 1) {
+    for (let row = 1; row <= shape.rows; row += 1) keys.push(`P${pool}${row}`);
+  }
+  return hasExactKeys(value[0], keys) && Object.values(value[0]).every((field) => typeof field === "string");
+}
+
+function validExportFile(file) {
+  if (!isPlainObject(file) || !hasExactKeys(file, ["filename", "data"]) || typeof file.filename !== "string") return false;
+  if (file.filename === "FinalOutput.json") return validFinalOutput(file.data);
+  if (file.filename === "sponsors.json") return validSponsorsFile(file.data);
+  return validDrawFile(file.filename, file.data);
 }
 
 function validOverlayTeam(value) {
-  return value && typeof value === "object"
+  return hasExactKeys(value, ["name", "standing", "logo", "color", "logoBackground", "seriesScore"])
     && ["name", "standing", "logo", "color", "logoBackground", "seriesScore"]
       .every((key) => typeof value[key] === "string");
 }
 
 function validValorantMapWidget(value) {
-  if (!value || typeof value !== "object" || typeof value.visible !== "boolean" || !Array.isArray(value.maps)) return false;
+  if (!hasExactKeys(value, ["visible", "maps"]) || typeof value.visible !== "boolean" || !Array.isArray(value.maps)) return false;
   if (value.visible && value.maps.length !== 3) return false;
-  return value.maps.every((map) => map && typeof map === "object"
+  if (!value.visible && value.maps.length !== 0) return false;
+  return value.maps.every((map) => hasExactKeys(map, ["mapNumber", "name", "background", "status", "scoreOne", "scoreTwo", "picker"])
     && Number.isInteger(map.mapNumber)
     && typeof map.name === "string"
     && typeof map.background === "string"
@@ -90,17 +368,22 @@ function validValorantMapWidget(value) {
 
 function validOverlaySponsors(value) {
   return Array.isArray(value)
-    && value.every((sponsor) => sponsor && typeof sponsor === "object"
+    && value.length <= 11
+    && value.every((sponsor) => hasExactKeys(sponsor, ["id", "name", "logo"])
       && typeof sponsor.id === "string"
       && typeof sponsor.name === "string"
       && typeof sponsor.logo === "string");
 }
 
 function validValorantOverlay(value) {
-  return value && typeof value === "object"
+  return hasExactKeys(value, [
+    "version", "updatedAt", "header", "bestOf", "leaguePrimary", "leagueSecondary", "mapWidget",
+    "sponsorWidgetEnabled", "sponsors", "teamOne", "teamTwo",
+  ])
     && value.version === 1
     && typeof value.updatedAt === "string"
     && typeof value.header === "string"
+    && ["Bo1", "Bo3", "Bo5"].includes(value.bestOf)
     && typeof value.leaguePrimary === "string"
     && typeof value.leagueSecondary === "string"
     && validValorantMapWidget(value.mapWidget)
@@ -111,7 +394,7 @@ function validValorantOverlay(value) {
 }
 
 function validRocketLeagueOverlayPlayer(value) {
-  return value && typeof value === "object"
+  return hasExactKeys(value, ["id", "name", "team", "goals", "shots", "saves", "assists", "boost", "isDead"])
     && typeof value.id === "string"
     && typeof value.name === "string"
     && typeof value.team === "number"
@@ -124,7 +407,7 @@ function validRocketLeagueOverlayPlayer(value) {
 }
 
 function validRocketLeagueOverlayGame(value) {
-  return value && typeof value === "object"
+  return hasExactKeys(value, ["hasGame", "hasWinner", "isOT", "isReplay", "timeSeconds", "target", "scoreOne", "scoreTwo", "targetPlayer"])
     && typeof value.hasGame === "boolean"
     && typeof value.hasWinner === "boolean"
     && typeof value.isOT === "boolean"
@@ -137,7 +420,7 @@ function validRocketLeagueOverlayGame(value) {
 }
 
 function validRocketLeagueOverlayActivity(value) {
-  return value && typeof value === "object"
+  return hasExactKeys(value, ["id", "type", "primaryName", "secondaryName", "team", "createdAt"])
     && typeof value.id === "string"
     && typeof value.type === "string"
     && typeof value.primaryName === "string"
@@ -152,7 +435,7 @@ function validRocketLeagueOverlayActivities(value) {
 
 function validRocketLeagueOverlayReplayCard(value) {
   return value === null
-    || (value && typeof value === "object"
+    || (hasExactKeys(value, ["scorerName", "assisterName", "team", "scorerId", "goals", "assists", "saves", "shots", "score", "ballSpeedMph", "createdAt"])
       && typeof value.scorerName === "string"
       && typeof value.assisterName === "string"
       && typeof value.team === "number"
@@ -168,7 +451,12 @@ function validRocketLeagueOverlayReplayCard(value) {
 
 function validRocketLeagueOverlay(value) {
   const connection = value?.connection;
-  return value && typeof value === "object"
+  return hasExactKeys(value, [
+    "version", "updatedAt", "skin", "header", "bestOf", "flipSides", "playerCardEnabled",
+    "sponsorWidgetEnabled", "broadcastSetupEnabled", "lobbyScene", "statsSceneBackground", "sponsors",
+    "roundNumber", "winsNeeded", "leaguePrimary", "leagueSecondary", "teamOne", "teamTwo",
+    "debugLiveOverride", "connection", "game", "activities", "replayCard",
+  ])
     && value.version === 1
     && typeof value.updatedAt === "string"
     && typeof value.skin === "string"
@@ -178,6 +466,8 @@ function validRocketLeagueOverlay(value) {
     && typeof value.playerCardEnabled === "boolean"
     && typeof value.sponsorWidgetEnabled === "boolean"
     && typeof value.broadcastSetupEnabled === "boolean"
+    && ["vs", "stats"].includes(value.lobbyScene)
+    && ["transparent", "team-split"].includes(value.statsSceneBackground)
     && validOverlaySponsors(value.sponsors)
     && typeof value.roundNumber === "number"
     && typeof value.winsNeeded === "number"
@@ -186,7 +476,7 @@ function validRocketLeagueOverlay(value) {
     && validOverlayTeam(value.teamOne)
     && validOverlayTeam(value.teamTwo)
     && typeof value.debugLiveOverride === "boolean"
-    && connection && typeof connection === "object"
+    && hasExactKeys(connection, ["connected", "lastEventAt"])
     && typeof connection.connected === "boolean"
     && (connection.lastEventAt === null || typeof connection.lastEventAt === "string")
     && validRocketLeagueOverlayGame(value.game)
@@ -229,14 +519,80 @@ function validLeagueOverlay(value) {
 }
 
 function validValorantMapData(value) {
-  return value && typeof value === "object"
+  const names = new Set();
+  return hasExactKeys(value, ["maps"])
     && Array.isArray(value.maps)
-    && value.maps.length > 0
-    && value.maps.every((map) => map && typeof map === "object"
-      && typeof map.name === "string"
-      && typeof map.nextMap === "string"
-      && typeof map.pickCard === "string"
-      && typeof map.banCard === "string");
+    && value.maps.length > 0 && value.maps.length <= 32
+    && value.maps.every((map) => {
+      if (!hasExactKeys(map, ["name", "nextMap", "pickCard", "banCard"]) || typeof map.name !== "string") return false;
+      const name = map.name.trim().toLowerCase();
+      if (!name || names.has(name)) return false;
+      names.add(name);
+      return typeof map.nextMap === "string" && typeof map.pickCard === "string" && typeof map.banCard === "string";
+    });
+}
+
+function getLru(cache, key) {
+  const value = cache.get(key);
+  if (value === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function setLru(cache, key, value, maximumEntries, maximumBytes = Number.POSITIVE_INFINITY) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  let totalBytes = 0;
+  for (const entry of cache.values()) totalBytes += Number(entry?.body?.length ?? 0);
+  while (cache.size > maximumEntries || totalBytes > maximumBytes) {
+    const oldestKey = cache.keys().next().value;
+    const oldest = cache.get(oldestKey);
+    totalBytes -= Number(oldest?.body?.length ?? 0);
+    cache.delete(oldestKey);
+  }
+}
+
+function cacheDuration(value, fallback, maximum) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : fallback;
+}
+
+async function fetchBounded(fetchImpl, url, {
+  headers,
+  maximumBytes,
+  expectedType,
+  timeoutMs = UPSTREAM_TIMEOUT_MS,
+} = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const upstream = await fetchImpl(url, { headers, signal: controller.signal });
+    const contentType = String(upstream.headers.get("content-type") ?? "").toLowerCase();
+    const contentLength = Number.parseInt(upstream.headers.get("content-length") ?? "", 10);
+    if (Number.isFinite(contentLength) && contentLength > maximumBytes) throw new HttpError(502, "Upstream response is too large");
+    if (upstream.ok && expectedType === "json" && !/(?:application|text)\/(?:[a-z0-9.+-]*\+)?json\b/i.test(contentType)) {
+      throw new HttpError(502, "Upstream returned an invalid content type");
+    }
+    if (upstream.ok && expectedType === "image" && !contentType.startsWith("image/")) {
+      throw new HttpError(502, "Upstream returned an invalid content type");
+    }
+    const chunks = [];
+    let size = 0;
+    if (upstream.body) {
+      for await (const chunk of upstream.body) {
+        const buffer = Buffer.from(chunk);
+        size += buffer.length;
+        if (size > maximumBytes) throw new HttpError(502, "Upstream response is too large");
+        chunks.push(buffer);
+      }
+    }
+    return { upstream, body: Buffer.concat(chunks), contentType: contentType || "application/octet-stream" };
+  } catch (error) {
+    if (error?.name === "AbortError") throw new HttpError(504, "Upstream request timed out");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function startJsonWriter({
@@ -245,62 +601,297 @@ export async function startJsonWriter({
   fetchImpl = fetch,
   enableRocketLeagueStatsApi = true,
   enableLeagueLiveClient = true,
+  sessionToken,
+  beforeInstallFile,
+  afterBackupFile,
+  mapArtworkCacheTtlMs = MAP_ARTWORK_CACHE_TTL_MS,
+  hubLogoCacheTtlMs = HUB_LOGO_CACHE_TTL_MS,
+  hubLogoCacheMaxStaleMs = HUB_LOGO_CACHE_MAX_STALE_MS,
+  hubLogoRetryCacheTtlMs = HUB_LOGO_RETRY_CACHE_TTL_MS,
+  writerOwnerLeaseMs = WRITER_OWNER_LEASE_MS,
 } = {}) {
   await mkdir(outputDir, { recursive: true });
+  await recoverInterruptedTransaction(outputDir);
+  const writerSessionToken = typeof sessionToken === "string" && sessionToken.length >= 32
+    ? sessionToken
+    : randomBytes(32).toString("base64url");
+  const effectiveMapArtworkCacheTtlMs = Number.isFinite(mapArtworkCacheTtlMs) && mapArtworkCacheTtlMs >= 0
+    ? mapArtworkCacheTtlMs
+    : MAP_ARTWORK_CACHE_TTL_MS;
+  const effectiveHubLogoCacheTtlMs = cacheDuration(
+    hubLogoCacheTtlMs,
+    HUB_LOGO_CACHE_TTL_MS,
+    HUB_LOGO_CACHE_MAX_CONFIGURED_TTL_MS,
+  );
+  const effectiveHubLogoCacheMaxStaleMs = cacheDuration(
+    hubLogoCacheMaxStaleMs,
+    HUB_LOGO_CACHE_MAX_STALE_MS,
+    HUB_LOGO_CACHE_MAX_CONFIGURED_TTL_MS,
+  );
+  const effectiveHubLogoRetryCacheTtlMs = cacheDuration(
+    hubLogoRetryCacheTtlMs,
+    HUB_LOGO_RETRY_CACHE_TTL_MS,
+    HUB_LOGO_RETRY_CACHE_MAX_CONFIGURED_TTL_MS,
+  );
+  const effectiveWriterOwnerLeaseMs = cacheDuration(
+    writerOwnerLeaseMs,
+    WRITER_OWNER_LEASE_MS,
+    WRITER_OWNER_LEASE_MAX_MS,
+  );
   let writeQueue = Promise.resolve();
   let lastWrite = null;
+  let lastError = null;
+  let pendingWrites = 0;
+  let generation = 0;
+  let activeFence = 0;
+  let activeFenceWriterId = "";
+  let activeFenceExpiresAt = 0;
   let valorantOverlayState = null;
   let rocketLeagueOverlayState = null;
   let leagueOverlayState = null;
   const mapArtworkCache = new Map();
+  const mapArtworkRequests = new Map();
+  const hubPublicRequests = new Map();
+  const hubLogoCache = new Map();
+  const hubLogoRetryCache = new Map();
   const leagueAssetMemoryCache = new Map();
+  const lastRevisionByWriter = new Map();
   const leagueCacheDir = path.join(outputDir, ".league-cache");
   const rocketLeagueStatsApi = enableRocketLeagueStatsApi
     ? startRocketLeagueStatsApiClient()
     : null;
   const leagueLiveClient = enableLeagueLiveClient ? startLeagueLiveClient() : null;
 
+  async function getMapArtwork(artworkId) {
+    const cached = getLru(mapArtworkCache, artworkId);
+    if (cached?.expiresAt > Date.now()) return cached;
+    const pending = mapArtworkRequests.get(artworkId);
+    if (pending) return pending;
+    if (mapArtworkRequests.size >= MAP_ARTWORK_MAX_INFLIGHT) {
+      throw new HttpError(429, "Too many map artwork requests are in progress");
+    }
+
+    const requestPromise = (async () => {
+      try {
+        const { upstream, body, contentType } = await fetchBounded(fetchImpl, `${GOOGLE_DRIVE_THUMBNAIL_URL}?id=${encodeURIComponent(artworkId)}&sz=w1000`, {
+          headers: { Accept: "image/*" },
+          expectedType: "image",
+          maximumBytes: MAX_IMAGE_RESPONSE_BYTES,
+        });
+        if (!upstream.ok) throw new HttpError(upstream.status === 404 ? 404 : 502, "Map artwork is unavailable");
+        const entry = { body, contentType, expiresAt: Date.now() + effectiveMapArtworkCacheTtlMs };
+        setLru(mapArtworkCache, artworkId, entry, 32, MAP_ARTWORK_CACHE_MAX_BYTES);
+        return entry;
+      } catch (error) {
+        if (cached && cached.expiresAt + MAP_ARTWORK_CACHE_MAX_STALE_MS > Date.now()) return cached;
+        if (cached) mapArtworkCache.delete(artworkId);
+        throw error;
+      }
+    })();
+    mapArtworkRequests.set(artworkId, requestPromise);
+    try {
+      return await requestPromise;
+    } finally {
+      if (mapArtworkRequests.get(artworkId) === requestPromise) mapArtworkRequests.delete(artworkId);
+    }
+  }
+
+  async function getHubPublicResource(resourceKey, loader) {
+    const pending = hubPublicRequests.get(resourceKey);
+    if (pending) return pending;
+    if (hubPublicRequests.size >= HUB_PUBLIC_MAX_INFLIGHT) {
+      throw new HttpError(429, "Too many League Hub requests are in progress");
+    }
+    const requestPromise = Promise.resolve().then(loader);
+    hubPublicRequests.set(resourceKey, requestPromise);
+    try {
+      return await requestPromise;
+    } finally {
+      if (hubPublicRequests.get(resourceKey) === requestPromise) hubPublicRequests.delete(resourceKey);
+    }
+  }
+
+  function cachedHubLogoFailure(cacheKey, cached, now) {
+    const failure = getLru(hubLogoRetryCache, cacheKey);
+    if (!failure) return null;
+    if (failure.expiresAt <= now) {
+      hubLogoRetryCache.delete(cacheKey);
+      return null;
+    }
+    if (cached && cached.expiresAt + effectiveHubLogoCacheMaxStaleMs > now) {
+      return { ...cached, stale: true };
+    }
+    if (cached) hubLogoCache.delete(cacheKey);
+    throw new HttpError(failure.status, failure.message);
+  }
+
+  async function getHubLogo(scope, logoId) {
+    const normalizedScope = scope.toLowerCase();
+    const cacheKey = `${normalizedScope}:${logoId.toLowerCase()}`;
+    const now = Date.now();
+    const cached = getLru(hubLogoCache, cacheKey);
+    if (cached?.expiresAt > now) return { ...cached, stale: false };
+    const retryResult = cachedHubLogoFailure(cacheKey, cached, now);
+    if (retryResult) return retryResult;
+
+    return getHubPublicResource(`logo:${cacheKey}`, async () => {
+      try {
+        const { upstream, body, contentType } = await fetchBounded(
+          fetchImpl,
+          `${LEAGUE_HUB_PUBLIC_URL}/logos/${normalizedScope}/${encodeURIComponent(logoId)}`,
+          {
+            headers: { Accept: "image/*" },
+            expectedType: "image",
+            maximumBytes: MAX_IMAGE_RESPONSE_BYTES,
+          },
+        );
+        if (!upstream.ok) {
+          throw new HttpError(
+            upstream.status === 404 ? 404 : 502,
+            upstream.status === 404 ? "Logo was not found" : "League Hub logo is unavailable",
+          );
+        }
+        const entry = {
+          body,
+          contentType,
+          expiresAt: Date.now() + effectiveHubLogoCacheTtlMs,
+        };
+        setLru(hubLogoCache, cacheKey, entry, HUB_LOGO_CACHE_MAX_ENTRIES, HUB_LOGO_CACHE_MAX_BYTES);
+        hubLogoRetryCache.delete(cacheKey);
+        return { ...entry, stale: false };
+      } catch (error) {
+        const failure = error instanceof HttpError
+          ? error
+          : new HttpError(502, "League Hub logo is unavailable");
+        setLru(hubLogoRetryCache, cacheKey, {
+          status: failure.status,
+          message: failure.message,
+          expiresAt: Date.now() + effectiveHubLogoRetryCacheTtlMs,
+        }, HUB_LOGO_CACHE_MAX_ENTRIES);
+        if (cached && cached.expiresAt + effectiveHubLogoCacheMaxStaleMs > Date.now()) {
+          return { ...cached, stale: true };
+        }
+        if (cached) hubLogoCache.delete(cacheKey);
+        throw failure;
+      }
+    });
+  }
+
+  function hubLogoCacheControl(logo) {
+    const maxAgeSeconds = logo.stale
+      ? 0
+      : Math.max(0, Math.ceil((logo.expiresAt - Date.now()) / 1_000));
+    const staleIfErrorSeconds = Math.floor(effectiveHubLogoCacheMaxStaleMs / 1_000);
+    return staleIfErrorSeconds > 0
+      ? `public, max-age=${maxAgeSeconds}, stale-if-error=${staleIfErrorSeconds}`
+      : `public, max-age=${maxAgeSeconds}`;
+  }
+
   async function cachedLeagueResource(cacheKey, upstreamUrl, accept, requireType) {
     const safeKey = cacheKey.replace(/[^A-Za-z0-9._-]/g, "_");
     const diskPath = path.join(leagueCacheDir, safeKey);
-    const memory = leagueAssetMemoryCache.get(safeKey);
+    const memory = getLru(leagueAssetMemoryCache, safeKey);
     if (memory) return memory;
     try {
       const body = await readFile(diskPath);
       const cached = { body, contentType: requireType === "image" ? "image/png" : "application/json" };
-      leagueAssetMemoryCache.set(safeKey, cached);
+      setLru(leagueAssetMemoryCache, safeKey, cached, 256, LEAGUE_MEMORY_CACHE_MAX_BYTES);
       return cached;
     } catch {
       // Populate the last-known cache below.
     }
-    const upstream = await fetchImpl(upstreamUrl, { headers: { Accept: accept } });
-    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
-    if (!upstream.ok || (requireType === "image" && !contentType.toLowerCase().startsWith("image/"))) {
+    const { upstream, body, contentType } = await fetchBounded(fetchImpl, upstreamUrl, {
+      headers: { Accept: accept },
+      expectedType: requireType,
+      maximumBytes: requireType === "image" ? MAX_IMAGE_RESPONSE_BYTES : MAX_JSON_RESPONSE_BYTES,
+    });
+    if (!upstream.ok) {
       throw new Error("League asset is unavailable");
     }
-    const body = Buffer.from(await upstream.arrayBuffer());
     await mkdir(leagueCacheDir, { recursive: true });
     await writeFile(diskPath, body);
     const cached = { body, contentType };
-    leagueAssetMemoryCache.set(safeKey, cached);
+    setLru(leagueAssetMemoryCache, safeKey, cached, 256, LEAGUE_MEMORY_CACHE_MAX_BYTES);
     return cached;
+  }
+
+  function enqueueWrite(job) {
+    pendingWrites += 1;
+    const run = writeQueue.then(job);
+    writeQueue = run.catch(() => {});
+    return run.finally(() => { pendingWrites = Math.max(0, pendingWrites - 1); });
+  }
+
+  function rejectJson(response, status, message) {
+    response.writeHead(status, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: message }));
+  }
+
+  function authorizeMutation(request, response) {
+    if (!isTrustedOrigin(request.headers.origin)) {
+      rejectJson(response, 403, "Mutation requests are only accepted from the local Production OS");
+      return false;
+    }
+    if (!tokensMatch(request.headers["x-gaming-oasis-writer-token"], writerSessionToken)) {
+      rejectJson(response, 403, "Writer session is missing or expired");
+      return false;
+    }
+    return true;
   }
 
   const server = createServer(async (request, response) => {
     const headers = corsHeaders(request.headers.origin);
     Object.entries(headers).forEach(([name, value]) => response.setHeader(name, value));
 
+    if (!isTrustedHost(request.headers.host)) {
+      rejectJson(response, 421, "Writer is available only on this workstation");
+      return;
+    }
+
     if (request.method === "OPTIONS") {
+      const allowedPath = request.url === "/api/live-json"
+        || request.url === "/api/live-json/claim"
+        || request.url === "/api/rocket-league/match-paused"
+        || request.url === "/api/live-json/session";
+      const requestedMethod = String(request.headers["access-control-request-method"] ?? "").toUpperCase();
+      const expectedMethod = request.url === "/api/live-json/session" ? "GET" : "POST";
+      const requestedHeaders = String(request.headers["access-control-request-headers"] ?? "")
+        .split(",")
+        .map((header) => header.trim().toLowerCase())
+        .filter(Boolean);
+      const allowedHeaders = new Set(["content-type", "x-gaming-oasis-writer-token"]);
+      if (!allowedPath || !isTrustedOrigin(request.headers.origin) || requestedMethod !== expectedMethod || requestedHeaders.some((header) => !allowedHeaders.has(header))) {
+        rejectJson(response, 403, "CORS preflight was rejected");
+        return;
+      }
       response.writeHead(204).end();
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/api/live-json/session") {
+      if (!isTrustedOrigin(request.headers.origin)) {
+        rejectJson(response, 403, "Writer sessions are only issued to the local Production OS");
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ token: writerSessionToken }));
       return;
     }
 
     if (request.method === "GET" && request.url === "/api/live-json/status") {
       response.setHeader("Content-Type", "application/json");
+      response.writeHead(lastError ? 503 : 200);
       response.end(JSON.stringify({
-        ok: true,
+        ok: !lastError,
+        service: "gaming-oasis-production-os-writer",
+        protocolVersion: 2,
+        pid: process.pid,
         outputDir,
         lastWrite,
+        generation,
+        activeFence,
+        pendingWrites,
+        lastError,
         rocketLeagueStatsApi: rocketLeagueStatsApi
           ? {
               connected: Boolean(rocketLeagueStatsApi.getFeed().connection?.connected),
@@ -357,8 +948,13 @@ export async function startJsonWriter({
       try {
         let version = "";
         try {
-          const versionsResponse = await fetchImpl(`${DATA_DRAGON_URL}/api/versions.json`, { headers: { Accept: "application/json" } });
-          const versions = await versionsResponse.json();
+          const { upstream: versionsResponse, body: versionsBody } = await fetchBounded(fetchImpl, `${DATA_DRAGON_URL}/api/versions.json`, {
+            headers: { Accept: "application/json" },
+            expectedType: "json",
+            maximumBytes: 128_000,
+          });
+          if (!versionsResponse.ok) throw new Error("Version catalog is unavailable");
+          const versions = JSON.parse(versionsBody.toString("utf8"));
           version = Array.isArray(versions) && typeof versions[0] === "string" ? versions[0] : "";
           if (version) {
             await mkdir(leagueCacheDir, { recursive: true });
@@ -409,15 +1005,24 @@ export async function startJsonWriter({
       : null;
     if (publicMatchRequest) {
       try {
-        const upstream = await fetchImpl(`${LEAGUE_HUB_PUBLIC_URL}/matches/${encodeURIComponent(publicMatchRequest[1])}`, {
-          headers: { Accept: "application/json" },
-        });
-        const body = await upstream.text();
-        response.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
+        const matchId = publicMatchRequest[1];
+        const { upstream, body } = await getHubPublicResource(`match:${matchId.toLowerCase()}`, () => (
+          fetchBounded(fetchImpl, `${LEAGUE_HUB_PUBLIC_URL}/matches/${encodeURIComponent(matchId)}`, {
+            headers: { Accept: "application/json" },
+            expectedType: "json",
+            maximumBytes: 1_000_000,
+          })
+        ));
+        if (!upstream.ok) {
+          rejectJson(response, upstream.status === 404 ? 404 : 502, upstream.status === 404 ? "Match was not found" : "League Hub is unavailable");
+          return;
+        }
+        JSON.parse(body.toString("utf8"));
+        response.writeHead(200, { "Content-Type": "application/json" });
         response.end(body);
-      } catch {
-        response.writeHead(502, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ error: "League Hub is unavailable" }));
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");
+        rejectJson(response, error instanceof HttpError ? error.status : 502, error instanceof HttpError ? error.message : "League Hub is unavailable");
       }
       return;
     }
@@ -428,63 +1033,47 @@ export async function startJsonWriter({
     if (publicLogoRequest) {
       try {
         const [, scope, logoId] = publicLogoRequest;
-        const upstream = await fetchImpl(`${LEAGUE_HUB_PUBLIC_URL}/logos/${scope}/${encodeURIComponent(logoId)}`, {
-          headers: { Accept: "image/*" },
+        const logo = await getHubLogo(scope, logoId);
+        response.writeHead(200, {
+          "Content-Type": logo.contentType,
+          "Content-Length": logo.body.length,
+          "Cache-Control": hubLogoCacheControl(logo),
         });
-        const body = Buffer.from(await upstream.arrayBuffer());
-        response.writeHead(upstream.status, {
-          "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
-          "Content-Length": body.length,
-        });
-        response.end(body);
-      } catch {
-        response.writeHead(502, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ error: "League Hub logo is unavailable" }));
+        response.end(logo.body);
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");
+        rejectJson(response, error instanceof HttpError ? error.status : 502, error instanceof HttpError ? error.message : "League Hub logo is unavailable");
       }
       return;
     }
 
     const mapArtworkRequest = request.method === "GET"
-      ? request.url?.match(/^\/api\/public\/map-artwork\/([A-Za-z0-9_-]{10,})$/)
+      ? request.url?.match(/^\/api\/public\/map-artwork\/([A-Za-z0-9_-]{10,128})$/)
       : null;
     if (mapArtworkRequest) {
       const artworkId = mapArtworkRequest[1];
-      const cached = mapArtworkCache.get(artworkId);
-      if (cached) {
-        response.writeHead(200, {
-          "Content-Type": cached.contentType,
-          "Content-Length": cached.body.length,
-        });
-        response.end(cached.body);
-        return;
-      }
-
       try {
-        const upstream = await fetchImpl(`${GOOGLE_DRIVE_THUMBNAIL_URL}?id=${encodeURIComponent(artworkId)}&sz=w1000`, {
-          headers: { Accept: "image/*" },
-        });
-        const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
-        if (!upstream.ok || !contentType.toLowerCase().startsWith("image/")) {
-          throw new Error("Map artwork is unavailable");
-        }
-        const body = Buffer.from(await upstream.arrayBuffer());
-        mapArtworkCache.set(artworkId, { body, contentType });
+        const { body, contentType } = await getMapArtwork(artworkId);
         response.writeHead(200, {
           "Content-Type": contentType,
           "Content-Length": body.length,
         });
         response.end(body);
-      } catch {
-        response.writeHead(502, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ error: "Map artwork is unavailable" }));
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");
+        rejectJson(response, error instanceof HttpError ? error.status : 502, error instanceof HttpError ? error.message : "Map artwork is unavailable");
       }
       return;
     }
 
     if (request.method === "POST" && request.url === "/api/rocket-league/match-paused") {
+      if (!authorizeMutation(request, response)) return;
       try {
         const payload = await readBody(request);
-        const paused = payload?.paused !== false && payload?.paused !== "false";
+        if (!hasExactKeys(payload, ["paused"]) || typeof payload.paused !== "boolean") {
+          throw new HttpError(422, "Expected exactly one boolean paused field");
+        }
+        const paused = payload.paused;
         if (!rocketLeagueStatsApi) {
           response.writeHead(503, { "Content-Type": "application/json" });
           response.end(JSON.stringify({ error: "Rocket League Stats API client is disabled" }));
@@ -516,8 +1105,44 @@ export async function startJsonWriter({
             : "Command sent, but Rocket League did not confirm. Pause usually requires this client to be match admin/host (not only a spectator).",
         }));
       } catch (error) {
-        response.writeHead(400, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ error: error.message || "Invalid pause request" }));
+        rejectJson(response, error instanceof HttpError ? error.status : 500, error.message || "Pause request failed");
+      }
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/api/live-json/claim") {
+      if (!authorizeMutation(request, response)) return;
+      try {
+        const payload = await readBody(request);
+        if (!hasExactKeys(payload, ["writerId", "force"])
+          || typeof payload.writerId !== "string"
+          || !/^[A-Za-z0-9_-]{8,128}$/.test(payload.writerId)
+          || typeof payload.force !== "boolean") {
+          throw new HttpError(422, "A valid writerId and boolean force flag are required");
+        }
+        let fence = 0;
+        let expiresAt = 0;
+        await enqueueWrite(() => {
+          const now = Date.now();
+          const sameOwner = activeFenceWriterId === payload.writerId;
+          const ownerLeaseActive = Boolean(activeFenceWriterId) && activeFenceExpiresAt > now;
+          if (!sameOwner && ownerLeaseActive && !payload.force) {
+            throw new HttpError(409, "Another browser controls the JSON writer; use explicit takeover to continue");
+          }
+          if (!sameOwner) {
+            if (activeFence >= Number.MAX_SAFE_INTEGER) throw new HttpError(503, "Writer fence space is exhausted");
+            activeFence += 1;
+            activeFenceWriterId = payload.writerId;
+          }
+          activeFenceExpiresAt = now + effectiveWriterOwnerLeaseMs;
+          fence = activeFence;
+          expiresAt = activeFenceExpiresAt;
+        });
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ ok: true, fence, expiresAt }));
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 409) response.setHeader("Retry-After", "1");
+        rejectJson(response, error instanceof HttpError ? error.status : 500, error.message || "Writer claim failed");
       }
       return;
     }
@@ -528,43 +1153,87 @@ export async function startJsonWriter({
       return;
     }
 
+    if (!authorizeMutation(request, response)) return;
+
     try {
       const payload = await readBody(request);
+      if (!isPlainObject(payload)) throw new HttpError(422, "Expected a JSON object");
+      const allowedPayloadKeys = new Set(["writerId", "fence", "revision", "files", "overlays", "valorantMapData"]);
+      if (Object.keys(payload).some((key) => !allowedPayloadKeys.has(key))) {
+        throw new HttpError(422, "Unexpected JSON package field");
+      }
       if (!Array.isArray(payload.files) || payload.files.length !== JSON_FILENAMES.size) {
-        throw new Error("Expected the complete six-file JSON package");
+        throw new HttpError(422, "Expected the complete six-file JSON package");
+      }
+      if (typeof payload.writerId !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(payload.writerId)) {
+        throw new HttpError(422, "A valid writerId is required");
+      }
+      if (!Number.isSafeInteger(payload.fence) || payload.fence < 1) {
+        throw new HttpError(422, "A positive writer fence is required");
+      }
+      if (!Number.isSafeInteger(payload.revision) || payload.revision < 1) {
+        throw new HttpError(422, "A positive integer revision is required");
       }
 
       const seen = new Set();
       for (const file of payload.files) {
         if (!file || !JSON_FILENAMES.has(file.filename) || seen.has(file.filename)) {
-          throw new Error("Invalid or duplicate JSON filename");
+          throw new HttpError(422, "Invalid or duplicate JSON filename");
         }
-        if (file.data === null || typeof file.data !== "object") {
-          throw new Error(`Invalid JSON data for ${file.filename}`);
+        if (!validExportFile(file)) {
+          throw new HttpError(422, `Invalid JSON shape for ${file.filename}`);
         }
         seen.add(file.filename);
       }
 
+      if (payload.overlays !== undefined && (!isPlainObject(payload.overlays)
+        || Object.keys(payload.overlays).some((key) => !["valorant", "rocketLeague", "leagueOfLegends"].includes(key)))) {
+        throw new HttpError(422, "Invalid overlay state container");
+      }
       const nextValorantOverlay = payload.overlays?.valorant;
       if (nextValorantOverlay !== undefined && !validValorantOverlay(nextValorantOverlay)) {
-        throw new Error("Invalid VALORANT overlay state");
+        throw new HttpError(422, "Invalid VALORANT overlay state");
       }
       const nextRocketLeagueOverlay = payload.overlays?.rocketLeague;
       if (nextRocketLeagueOverlay !== undefined && !validRocketLeagueOverlay(nextRocketLeagueOverlay)) {
-        throw new Error("Invalid Rocket League overlay state");
+        throw new HttpError(422, "Invalid Rocket League overlay state");
       }
       const nextLeagueOverlay = payload.overlays?.leagueOfLegends;
       if (nextLeagueOverlay !== undefined && !validLeagueOverlay(nextLeagueOverlay)) {
-        throw new Error("Invalid League of Legends overlay state");
+        throw new HttpError(422, "Invalid League of Legends overlay state");
       }
       const nextValorantMapData = payload.valorantMapData;
       if (nextValorantMapData !== undefined && !validValorantMapData(nextValorantMapData)) {
-        throw new Error("Invalid VALORANT map data");
+        throw new HttpError(422, "Invalid VALORANT map data");
       }
+      const payloadDigest = createHash("sha256").update(JSON.stringify({
+        files: payload.files,
+        overlays: payload.overlays,
+        valorantMapData: payload.valorantMapData,
+      })).digest("hex");
 
-      writeQueue = writeQueue.then(async () => {
-        await Promise.all(payload.files.map((file) => writeJsonWithRetry(outputDir, file.filename, file.data)));
-        if (nextValorantMapData !== undefined) await writeJsonWithRetry(outputDir, VALORANT_MAP_DATA_FILENAME, nextValorantMapData);
+      let duplicate = false;
+      await enqueueWrite(async () => {
+        if (payload.fence !== activeFence
+          || payload.writerId !== activeFenceWriterId
+          || activeFenceExpiresAt <= Date.now()) {
+          throw new HttpError(409, "This browser tab must claim the JSON writer before publishing");
+        }
+        activeFenceExpiresAt = Date.now() + effectiveWriterOwnerLeaseMs;
+        const previousWrite = getLru(lastRevisionByWriter, payload.writerId);
+        const lastRevision = previousWrite?.revision ?? 0;
+        if (payload.revision < lastRevision) throw new HttpError(409, "A newer JSON revision has already been written");
+        if (payload.revision === lastRevision && previousWrite?.digest !== payloadDigest) {
+          throw new HttpError(409, "A JSON revision cannot be reused for different content");
+        }
+        if (payload.revision === lastRevision) {
+          duplicate = true;
+          return;
+        }
+        const transactionFiles = nextValorantMapData === undefined
+          ? payload.files
+          : [...payload.files, { filename: VALORANT_MAP_DATA_FILENAME, data: nextValorantMapData }];
+        await commitJsonPackage(outputDir, transactionFiles, beforeInstallFile, afterBackupFile);
         if (nextValorantOverlay !== undefined) valorantOverlayState = nextValorantOverlay;
         if (nextRocketLeagueOverlay !== undefined) {
           rocketLeagueOverlayState = nextRocketLeagueOverlay;
@@ -572,14 +1241,17 @@ export async function startJsonWriter({
         }
         if (nextLeagueOverlay !== undefined) leagueOverlayState = nextLeagueOverlay;
         lastWrite = new Date().toISOString();
+        generation += 1;
+        setLru(lastRevisionByWriter, payload.writerId, { revision: payload.revision, digest: payloadDigest }, 256);
+        lastError = null;
       });
-      await writeQueue;
 
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ ok: true, files: payload.files.length, outputDir, lastWrite }));
+      response.end(JSON.stringify({ ok: true, files: payload.files.length, outputDir, lastWrite, generation, revision: payload.revision, duplicate }));
     } catch (error) {
-      response.writeHead(400, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ error: error.message }));
+      const status = error instanceof HttpError ? error.status : 500;
+      if (status >= 500) lastError = String(error?.message || "JSON package write failed");
+      rejectJson(response, status, error?.message || "JSON package write failed");
     }
   });
 

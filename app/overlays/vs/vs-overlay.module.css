@@ -88,8 +88,6 @@
   background: linear-gradient(90deg, var(--league-primary), var(--league-secondary));
   background-position: 50% 50%;
   background-size: 115% 100%;
-  animation: mapAccentGradientDrift 20s ease-in-out infinite;
-  will-change: background-position;
 }
 
 .sponsorSlide {
@@ -127,11 +125,6 @@
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
-}
-
-@keyframes mapAccentGradientDrift {
-  0%, 100% { background-position: 48% 50%; }
-  50% { background-position: 52% 50%; }
 }
 
 @keyframes sponsorFadeIn {

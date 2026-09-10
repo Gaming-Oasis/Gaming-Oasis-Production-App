@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { resolveRocketLeagueSideTeams } from "../../../../lib/rocket-league-live.mjs";
+import { usePollingJson } from "../../usePollingJson";
 import {
   isMatchTeamStats,
   isStatsOverlayTeam,
@@ -43,44 +43,27 @@ function isRocketLeagueStatsState(value: unknown): value is RocketLeagueStatsSta
       || isMatchTeamStats(state.matchTeamStats));
 }
 
+function normalizeRocketLeagueStatsState(next: RocketLeagueStatsState): RocketLeagueStatsState {
+  return {
+    version: 1,
+    bestOf: next.bestOf,
+    flipSides: next.flipSides,
+    leaguePrimary: next.leaguePrimary,
+    leagueSecondary: next.leagueSecondary,
+    statsSceneBackground: next.statsSceneBackground === "team-split" ? "team-split" : "transparent",
+    teamOne: next.teamOne,
+    teamTwo: next.teamTwo,
+    matchTeamStats: next.matchTeamStats ?? null,
+  };
+}
+
 export default function RocketLeagueStatsOverlayPage() {
-  const [overlay, setOverlay] = useState<RocketLeagueStatsState | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-
-    async function refresh() {
-      try {
-        const response = await fetch(OVERLAY_ENDPOINT, { cache: "no-store", signal: controller.signal });
-        if (response.status === 204 || !response.ok) return;
-        const next = await response.json();
-        if (active && isRocketLeagueStatsState(next)) {
-          setOverlay({
-            version: 1,
-            bestOf: next.bestOf,
-            flipSides: next.flipSides,
-            leaguePrimary: next.leaguePrimary,
-            leagueSecondary: next.leagueSecondary,
-            statsSceneBackground: next.statsSceneBackground === "team-split" ? "team-split" : "transparent",
-            teamOne: next.teamOne,
-            teamTwo: next.teamTwo,
-            matchTeamStats: next.matchTeamStats ?? null,
-          });
-        }
-      } catch {
-        // Keep the last valid graphic through temporary writer or network failures.
-      }
-    }
-
-    refresh();
-    const timer = window.setInterval(refresh, 250);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      controller.abort();
-    };
-  }, []);
+  const overlay = usePollingJson({
+    endpoint: OVERLAY_ENDPOINT,
+    intervalMs: 1000,
+    validate: isRocketLeagueStatsState,
+    normalize: normalizeRocketLeagueStatsState,
+  });
 
   if (!overlay) {
     return (

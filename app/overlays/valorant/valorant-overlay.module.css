@@ -83,8 +83,6 @@
     color-mix(in srgb, var(--league-primary) 52%, var(--league-secondary)) 50%,
     var(--league-secondary) 66%,
     color-mix(in srgb, var(--league-secondary) 70%, #121212) 100%);
-  animation: railGradientDrift 16s ease-in-out infinite;
-  will-change: transform;
 }
 
 .centerRail::before { z-index: 2; }
@@ -300,8 +298,6 @@
   background: linear-gradient(90deg, var(--league-primary), var(--league-secondary));
   background-position: 50% 50%;
   background-size: 115% 100%;
-  animation: mapAccentGradientDrift 20s ease-in-out infinite;
-  will-change: background-position;
 }
 
 .sponsorCard::before {
@@ -539,12 +535,6 @@
   to { opacity: 1; }
 }
 
-@keyframes railGradientDrift {
-  0%, 50%, 100% { transform: translate3d(0, 0, 0); }
-  25% { transform: translate3d(-4%, 0, 0); }
-  75% { transform: translate3d(4%, 0, 0); }
-}
-
 @keyframes scoreChange {
   0% { opacity: .35; transform: scale(.76); }
   62% { opacity: 1; transform: scale(1.13); }
@@ -564,11 +554,6 @@
 @keyframes mapItemChange {
   from { opacity: .35; transform: translate3d(-5px, 0, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-@keyframes mapAccentGradientDrift {
-  0%, 100% { background-position: 48% 50%; }
-  50% { background-position: 52% 50%; }
 }
 
 @keyframes sponsorFadeIn {

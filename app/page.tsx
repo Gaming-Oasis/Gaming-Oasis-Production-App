@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import {
   IMAGE_PLATE_DARK,
@@ -14,6 +14,7 @@ import {
   formatRocketLeagueScore,
   proposeRocketLeagueLiveResult,
   ROCKET_LEAGUE_GAME_COUNT,
+  rocketLeagueGameLimit,
 } from "../lib/rocket-league.mjs";
 import {
   ROCKET_LEAGUE_ACTIVE_PLAYER_SCENARIOS,
@@ -35,6 +36,7 @@ import {
   getValorantCurrentSides,
   VALORANT_GAME_COUNT,
   VALORANT_MAP_ARTWORK,
+  valorantGameLimit,
 } from "../lib/valorant.mjs";
 import {
   DEFAULT_LEAGUE_CHAMPIONS,
@@ -54,7 +56,7 @@ import {
 
 type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "leagueOfLegends" | "sponsors" | "draw" | "settings";
 type ConnectionState = "idle" | "connected" | "error";
-type LiveSyncState = "starting" | "saving" | "synced" | "error";
+type LiveSyncState = "checking" | "standby" | "saving" | "retrying" | "synced" | "error";
 type ColorSource = "primary" | "alternate" | "backup1" | "backup2";
 type StandingDisplay = "placement" | "standing" | "seed";
 
@@ -139,6 +141,16 @@ type Settings = {
   sponsorsEnabled: boolean;
   drawShowEnabled: boolean;
 };
+
+function sectionEnabled(section: Section, settings: Settings) {
+  if (section === "general") return settings.generalInfoEnabled;
+  if (section === "rocketLeague") return settings.rocketLeagueEnabled;
+  if (section === "valorant") return settings.valorantEnabled;
+  if (section === "leagueOfLegends") return settings.leagueOfLegendsEnabled;
+  if (section === "sponsors") return settings.sponsorsEnabled;
+  if (section === "draw") return settings.drawShowEnabled;
+  return true;
+}
 
 type LeagueDraftState = {
   currentStep: number;
@@ -370,11 +382,123 @@ type ProductionState = {
 };
 
 type ExportFile = { filename: string; data: unknown };
+type PersistedStateEnvelope = {
+  schemaVersion: 2;
+  revision: number;
+  savedAt: string;
+  outputActivated: boolean;
+  state: ProductionState;
+};
+type WriterLease = { ownerId: string; expiresAt: number; fence: number };
+type PendingConfirmation = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+};
+
+function hasOutputRelevantChanges(current: ProductionState, saved: ProductionState) {
+  return current.general !== saved.general
+    || current.rocketLeague !== saved.rocketLeague
+    || current.valorant !== saved.valorant
+    || current.leagueOfLegends !== saved.leagueOfLegends
+    || current.valorantMapData !== saved.valorantMapData
+    || current.sponsors !== saved.sponsors
+    || current.draws !== saved.draws;
+}
+
+function hasProductionContent(state: ProductionState) {
+  const hasText = (value: string) => Boolean(value.trim());
+  const teamHasContent = (team: Team) => [
+    team.sourceName,
+    team.name,
+    team.placement,
+    team.standing,
+    team.seed,
+    team.logo,
+  ].some(hasText);
+  const leagueHasContent = (league: MatchLeague) => [
+    league.name,
+    league.logo,
+    league.eventName,
+    league.overrides.name,
+    league.overrides.logo,
+    league.overrides.primaryColor,
+    league.overrides.secondaryColor,
+    league.overrides.eventName,
+  ].some(hasText);
+  const scoresHaveContent = (games: Array<{ home: string; away: string }>) => games.some((game) => (
+    hasText(game.home) || hasText(game.away)
+  ));
+
+  return [
+    state.general.eventName,
+    state.general.mainCaster,
+    state.general.secondCaster,
+    state.general.guest1,
+    state.general.guest2,
+    state.general.mainCasterSocial,
+    state.general.secondaryCasterSocial,
+    state.general.interviewName,
+    state.general.podcastTitle,
+    state.general.podcastIndicatorLogo,
+    state.general.currentSegment,
+    state.rocketLeague.scoreboardHeader,
+    state.valorant.scoreboardHeader,
+    state.leagueOfLegends.scoreboardHeader,
+  ].some(hasText)
+    || state.general.segments.some(hasText)
+    || state.general.matches.some((match) => (
+      hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2) || leagueHasContent(match.league)
+    ))
+    || scoresHaveContent(state.rocketLeague.games)
+    || scoresHaveContent(state.rocketLeague.savedGames)
+    || scoresHaveContent(state.valorant.games)
+    || scoresHaveContent(state.valorant.savedGames)
+    || state.leagueOfLegends.results.some((game) => hasText(game.winner))
+    || state.leagueOfLegends.draft.selections.some(hasText)
+    || state.leagueOfLegends.confirmedGames.length > 0
+    || Object.values(state.valorant.bo3).some(hasText)
+    || Object.values(state.valorant.bo5).some(hasText)
+    || state.sponsors.some((sponsor) => (
+      sponsor.id !== GAMING_OASIS_SPONSOR.id && (hasText(sponsor.name) || hasText(sponsor.logo))
+    ))
+    || Object.values(state.draws).some((draw) => Object.values(draw).some(hasText));
+}
+
+class HttpResponseError extends Error {
+  status: number;
+  terminal: boolean;
+
+  constructor(status: number, message: string, terminal = false) {
+    super(message);
+    this.status = status;
+    this.terminal = terminal;
+  }
+}
+
+class RequestTimeoutError extends Error {
+  constructor() {
+    super("The local service did not respond before the timeout");
+    this.name = "TimeoutError";
+  }
+}
 
 const STORAGE_KEY = "gaming-oasis-production-v1";
+const STORAGE_SCHEMA_VERSION = 2;
+const WRITER_LEASE_KEY = `${STORAGE_KEY}-writer-lease`;
+const WORKSPACE_HANDOFF_CHANNEL = `${STORAGE_KEY}-handoff`;
+const WRITER_LEASE_DURATION_MS = 6_000;
+const WRITER_LEASE_RENEW_MS = 2_000;
+const WRITER_SERVER_LEASE_RENEW_MS = 4_000;
+const WRITER_SERVER_CONFLICT_RETRY_MS = 1_000;
 const LIVE_JSON_ENDPOINT = "http://127.0.0.1:4877/api/live-json";
+const LIVE_JSON_CLAIM_ENDPOINT = "http://127.0.0.1:4877/api/live-json/claim";
+const LIVE_JSON_SESSION_ENDPOINT = "http://127.0.0.1:4877/api/live-json/session";
+const LIVE_JSON_STATUS_ENDPOINT = "http://127.0.0.1:4877/api/live-json/status";
 const ROCKET_LEAGUE_LIVE_OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/rocket-league";
 const ROCKET_LEAGUE_MATCH_PAUSED_ENDPOINT = "http://127.0.0.1:4877/api/rocket-league/match-paused";
+const VALORANT_MAP_DATA_FILENAME = "VALORANT MAP DATA.json";
 const VALORANT_OVERLAY_URL = "http://localhost:3000/overlays/valorant";
 const VALORANT_VS_OVERLAY_URL = "http://localhost:3000/overlays/valorant/vs";
 const ROCKET_LEAGUE_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league";
@@ -395,6 +519,10 @@ const GAMING_OASIS_SPONSOR: Sponsor = {
 };
 const LOCAL_PUBLIC_ENDPOINT = "http://127.0.0.1:4877/api/public";
 const MATCH_LOOKUP_ENDPOINT = `${LOCAL_PUBLIC_ENDPOINT}/matches`;
+
+function canonicalMapName(value: unknown) {
+  return stringValue(value).replace(/\s+/g, "").toLowerCase();
+}
 
 function displayLogoUrl(value: string) {
   try {
@@ -589,73 +717,170 @@ function createInitialState(): ProductionState {
       valorantEnabled: true,
       leagueOfLegendsEnabled: true,
       sponsorsEnabled: true,
-      drawShowEnabled: true,
+      drawShowEnabled: false,
     },
     draws: createDraws(),
   };
 }
 
-function hasProductionContent(state: ProductionState) {
-  const hasText = (value: string) => Boolean(value.trim());
-  const teamHasContent = (team: Team) => [
-    team.sourceName,
-    team.name,
-    team.placement,
-    team.standing,
-    team.seed,
-    team.logo,
-  ].some(hasText);
-  const leagueHasContent = (league: MatchLeague) => [
-    league.name,
-    league.logo,
-    league.eventName,
-    league.overrides.name,
-    league.overrides.logo,
-    league.overrides.primaryColor,
-    league.overrides.secondaryColor,
-    league.overrides.eventName,
-  ].some(hasText);
-  const scoresHaveContent = (games: Array<{ home: string; away: string }>) => games.some((game) => hasText(game.home) || hasText(game.away));
-
-  return [
-    state.general.eventName,
-    state.general.mainCaster,
-    state.general.secondCaster,
-    state.general.guest1,
-    state.general.guest2,
-    state.general.mainCasterSocial,
-    state.general.secondaryCasterSocial,
-    state.general.interviewName,
-    state.general.podcastTitle,
-    state.general.podcastIndicatorLogo,
-    state.general.currentSegment,
-    state.rocketLeague.scoreboardHeader,
-    state.valorant.scoreboardHeader,
-    state.leagueOfLegends.scoreboardHeader,
-  ].some(hasText)
-    || state.general.segments.some(hasText)
-    || state.general.matches.some((match) => hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2) || leagueHasContent(match.league))
-    || scoresHaveContent(state.rocketLeague.games)
-    || scoresHaveContent(state.rocketLeague.savedGames)
-    || scoresHaveContent(state.valorant.games)
-    || scoresHaveContent(state.valorant.savedGames)
-    || state.leagueOfLegends.results.some((game) => hasText(game.winner))
-    || state.leagueOfLegends.draft.selections.some(hasText)
-    || state.leagueOfLegends.confirmedGames.length > 0
-    || Object.values(state.valorant.bo3).some(hasText)
-    || Object.values(state.valorant.bo5).some(hasText)
-    || state.sponsors.some((sponsor) => sponsor.id !== GAMING_OASIS_SPONSOR.id && (hasText(sponsor.name) || hasText(sponsor.logo)))
-    || Object.values(state.draws).some((draw) => Object.values(draw).some(hasText));
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
-function mergeTeam(saved?: Partial<Team>): Team {
+function stringValue(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function booleanValue(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function createLocalId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createWriterFence(previousFence = 0) {
+  return Math.max(previousFence + 1, (Date.now() * 1_000) + Math.floor(Math.random() * 1_000));
+}
+
+function parseWriterLease(value: string | null): WriterLease | null {
+  if (!value) return null;
+  try {
+    const parsed = asRecord(JSON.parse(value));
+    if (typeof parsed.ownerId !== "string"
+      || !Number.isFinite(parsed.expiresAt)
+      || !Number.isSafeInteger(parsed.fence)
+      || Number(parsed.fence) < 1) return null;
+    return { ownerId: parsed.ownerId, expiresAt: Number(parsed.expiresAt), fence: Number(parsed.fence) };
+  } catch {
+    return null;
+  }
+}
+
+function parsePersistedEnvelope(value: unknown) {
+  const parsed = asRecord(value);
+  const isEnvelope = parsed.schemaVersion === STORAGE_SCHEMA_VERSION && isPlainStoredState(parsed.state);
+  const state = mergeSavedState(isEnvelope ? parsed.state : value);
+  return {
+    state,
+    revision: isEnvelope && Number.isSafeInteger(parsed.revision) && Number(parsed.revision) >= 0 ? Number(parsed.revision) : 0,
+    outputActivated: isEnvelope ? parsed.outputActivated === true : hasProductionContent(state),
+  };
+}
+
+function isPlainStoredState(value: unknown) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeStoredScore(value: unknown) {
+  const raw = stringValue(value).trim();
+  if (!/^\d+$/.test(raw)) return "";
+  return String(Math.min(99, Number.parseInt(raw, 10)));
+}
+
+async function fetchJsonWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 8_000, maximumBytes = 2_000_000) {
+  const controller = new AbortController();
+  const parentSignal = init.signal;
+  let timedOut = false;
+  const relayAbort = () => controller.abort();
+  if (parentSignal?.aborted) controller.abort();
+  else parentSignal?.addEventListener("abort", relayAbort, { once: true });
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const declaredLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+    if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+      controller.abort();
+      throw new Error("Local service response is too large");
+    }
+    const chunks: Uint8Array[] = [];
+    let receivedBytes = 0;
+    if (response.body) {
+      const reader = response.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        receivedBytes += value.byteLength;
+        if (receivedBytes > maximumBytes) {
+          controller.abort();
+          throw new Error("Local service response is too large");
+        }
+        chunks.push(value);
+      }
+    }
+    const bytes = new Uint8Array(receivedBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const text = new TextDecoder().decode(bytes);
+    const payload: unknown = text ? JSON.parse(text) : null;
+    return { response, payload };
+  } catch (error) {
+    if (timedOut && !parentSignal?.aborted) throw new RequestTimeoutError();
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", relayAbort);
+  }
+}
+
+function waitForDelay(milliseconds: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const handleAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", handleAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+function mergeStringRecord<T extends Record<string, string>>(template: T, value: unknown): T {
+  const source = asRecord(value);
+  return Object.fromEntries(
+    Object.keys(template).map((key) => [key, stringValue(source[key], template[key])]),
+  ) as T;
+}
+
+function mergeValorantVeto<T extends Record<string, string>>(template: T, value: unknown, maps: ValorantMapArtwork[]): T {
+  const merged = mergeStringRecord(template, value);
+  const mapByName = new Map(maps.map((map) => [canonicalMapName(map.name), map.name]));
+  const usedMaps = new Set<string>();
+  return Object.fromEntries(Object.entries(merged).map(([key, rawValue]) => {
+    if (key.startsWith("side")) return [key, rawValue === "attack" || rawValue === "defense" ? rawValue : ""];
+    const canonical = canonicalMapName(rawValue);
+    const mapName = mapByName.get(canonical);
+    if (!canonical || !mapName || usedMaps.has(canonical)) return [key, ""];
+    usedMaps.add(canonical);
+    return [key, mapName];
+  })) as T;
+}
+
+function mergeTeam(saved?: unknown): Team {
   const initial = emptyTeam();
-  const detectedBackground = normalizeLogoBackground(saved?.logoBackground) || initial.logoBackground;
-  const overrideBackground = normalizeLogoBackground(saved?.overrides?.logoBackground);
-  const sourceName = saved?.sourceName?.trim() || saved?.name?.trim() || "";
-  let placement = saved?.placement?.trim() || "";
-  let standing = saved?.standing?.trim() || "";
-  const seed = saved?.seed?.trim() || "";
+  const source = asRecord(saved);
+  const savedOverrides = asRecord(source.overrides);
+  const detectedBackground = normalizeLogoBackground(source.logoBackground) || initial.logoBackground;
+  const overrideBackground = normalizeLogoBackground(savedOverrides.logoBackground);
+  const sourceName = stringValue(source.sourceName).trim() || stringValue(source.name).trim();
+  let placement = stringValue(source.placement).trim();
+  let standing = stringValue(source.standing).trim();
+  const seed = stringValue(source.seed).trim();
   if (!placement && standing.includes("/")) {
     const [legacyPlacement, ...legacyStanding] = standing.split(/\s*\/\s*/);
     placement = legacyPlacement.trim();
@@ -664,8 +889,8 @@ function mergeTeam(saved?: Partial<Team>): Team {
     placement = standing;
     standing = "";
   }
-  const requestedDisplay: StandingDisplay = saved?.standingDisplay === "placement" || saved?.standingDisplay === "seed"
-    ? saved.standingDisplay
+  const requestedDisplay: StandingDisplay = source.standingDisplay === "placement" || source.standingDisplay === "seed"
+    ? source.standingDisplay
     : "standing";
   const standingDisplay = requestedDisplay === "standing" && !standing
     ? placement ? "placement" : seed ? "seed" : "standing"
@@ -675,171 +900,213 @@ function mergeTeam(saved?: Partial<Team>): Team {
         ? standing ? "standing" : placement ? "placement" : "seed"
         : requestedDisplay;
   return {
-    ...initial,
-    ...saved,
     sourceName,
     name: shortTeamName(sourceName),
     placement,
     standing,
     seed,
     standingDisplay,
+    logo: stringValue(source.logo),
+    color: stringValue(source.color, initial.color),
+    alternateColor: stringValue(source.alternateColor, initial.alternateColor),
+    backupColor1: stringValue(source.backupColor1, initial.backupColor1),
+    backupColor2: stringValue(source.backupColor2, initial.backupColor2),
+    selectedColor: ["primary", "alternate", "backup1", "backup2"].includes(stringValue(source.selectedColor))
+      ? source.selectedColor as ColorSource
+      : initial.selectedColor,
     logoBackground: detectedBackground,
-    overrides: { ...initial.overrides, ...(saved?.overrides ?? {}), logoBackground: overrideBackground },
+    overrides: {
+      name: stringValue(savedOverrides.name),
+      standing: stringValue(savedOverrides.standing),
+      logo: stringValue(savedOverrides.logo),
+      color: stringValue(savedOverrides.color),
+      logoBackground: overrideBackground,
+    },
   };
 }
 
-function mergeLeague(saved?: Partial<MatchLeague>): MatchLeague {
+function mergeLeague(saved?: unknown): MatchLeague {
   const initial = emptyLeague();
+  const source = asRecord(saved);
   return {
-    ...initial,
-    ...saved,
-    primaryColor: saved?.primaryColor?.trim() || initial.primaryColor,
-    secondaryColor: saved?.secondaryColor?.trim() || initial.secondaryColor,
-    overrides: { ...initial.overrides, ...(saved?.overrides ?? {}) },
+    name: stringValue(source.name),
+    logo: stringValue(source.logo),
+    primaryColor: stringValue(source.primaryColor).trim() || initial.primaryColor,
+    secondaryColor: stringValue(source.secondaryColor).trim() || initial.secondaryColor,
+    eventName: stringValue(source.eventName),
+    overrides: mergeStringRecord(initial.overrides, source.overrides),
   };
 }
 
-function mergeMatch(saved?: Partial<Match>): Match {
+function mergeMatch(saved?: unknown): Match {
+  const source = asRecord(saved);
   return {
-    id: saved?.id ?? "",
-    team1: mergeTeam(saved?.team1),
-    team2: mergeTeam(saved?.team2),
-    league: mergeLeague(saved?.league),
+    id: stringValue(source.id),
+    team1: mergeTeam(source.team1),
+    team2: mergeTeam(source.team2),
+    league: mergeLeague(source.league),
   };
 }
 
-function mergeSavedState(saved: Partial<ProductionState>): ProductionState {
+function mergeSavedState(savedValue: unknown): ProductionState {
   const initial = createInitialState();
-  const savedSponsors = (saved.sponsors ?? []).filter((sponsor) => sponsor.id !== GAMING_OASIS_SPONSOR.id);
-  const savedGeneral = { ...(saved.general ?? {}) } as Partial<GeneralInfo> & { broadcastDate?: unknown; productionNote?: unknown; regionalLogoOverride?: unknown };
-  const legacyPodcastIndicatorLogo = typeof savedGeneral.regionalLogoOverride === "string"
-    ? savedGeneral.regionalLogoOverride
-    : "";
-  delete savedGeneral.broadcastDate;
-  delete savedGeneral.productionNote;
-  delete savedGeneral.regionalLogoOverride;
-  const savedSettings = { ...(saved.settings ?? {}) } as Partial<Settings> & { leagueHubUrl?: unknown; apiKey?: unknown; matchRoute?: unknown };
-  delete savedSettings.leagueHubUrl;
-  delete savedSettings.apiKey;
-  delete savedSettings.matchRoute;
-  delete savedSettings.regionalLogo;
-  const savedRocketLeagueResults = saved.rocketLeague?.savedGames ?? saved.rocketLeague?.games;
-  const savedValorantResults = saved.valorant?.savedGames ?? saved.valorant?.games;
-  const savedMapArtwork = Array.isArray(saved.valorantMapData?.maps) ? saved.valorantMapData.maps : [];
-  const savedLeagueBestOf = ["Bo1", "Bo3", "Bo5"].includes(saved.leagueOfLegends?.bestOf ?? "")
-    ? saved.leagueOfLegends!.bestOf
+  const envelope = asRecord(savedValue);
+  const saved = asRecord(envelope.schemaVersion === 2 ? envelope.state : savedValue);
+  const savedGeneral = asRecord(saved.general);
+  const savedRocketLeague = asRecord(saved.rocketLeague);
+  const savedValorant = asRecord(saved.valorant);
+  const savedLeague = asRecord(saved.leagueOfLegends) as Partial<LeagueOfLegends>;
+  const savedSettings = asRecord(saved.settings);
+  const savedSponsors = (Array.isArray(saved.sponsors) ? saved.sponsors : [])
+    .map(asRecord)
+    .filter((sponsor) => stringValue(sponsor.id) !== GAMING_OASIS_SPONSOR.id)
+    .slice(0, 10);
+  const legacyPodcastIndicatorLogo = stringValue(savedGeneral.regionalLogoOverride);
+  const savedRocketLeagueResults = Array.isArray(savedRocketLeague.savedGames)
+    ? savedRocketLeague.savedGames
+    : savedRocketLeague.games;
+  const savedValorantResults = Array.isArray(savedValorant.savedGames)
+    ? savedValorant.savedGames
+    : savedValorant.games;
+  const savedRocketLeagueBestOf = ["Bo1", "Bo3", "Bo5", "Bo7"].includes(stringValue(savedRocketLeague.bestOf))
+    ? savedRocketLeague.bestOf as RocketLeague["bestOf"]
+    : initial.rocketLeague.bestOf;
+  const savedValorantBestOf = ["Bo1", "Bo3", "Bo5"].includes(stringValue(savedValorant.bestOf))
+    ? savedValorant.bestOf as Valorant["bestOf"]
+    : initial.valorant.bestOf;
+  const mapData = asRecord(saved.valorantMapData);
+  const savedMapArtwork = Array.isArray(mapData.maps) ? mapData.maps : [];
+  const savedLeagueBestOf = ["Bo1", "Bo3", "Bo5"].includes(savedLeague.bestOf ?? "")
+    ? savedLeague.bestOf!
     : initial.leagueOfLegends.bestOf;
-  const savedLeagueConfirmedGames = Array.isArray(saved.leagueOfLegends?.confirmedGames)
-    ? saved.leagueOfLegends.confirmedGames.filter((game) => game?.winner === "team1" || game?.winner === "team2")
+  const savedLeagueConfirmedGames = Array.isArray(savedLeague.confirmedGames)
+    ? savedLeague.confirmedGames.filter((game) => game?.winner === "team1" || game?.winner === "team2")
     : [];
-  const savedLeagueResults = Array.isArray(saved.leagueOfLegends?.results)
-    ? createLeagueResultGames(saved.leagueOfLegends.results)
+  const savedLeagueResults = Array.isArray(savedLeague.results)
+    ? createLeagueResultGames(savedLeague.results)
     : leagueResultsFromConfirmedGames(savedLeagueConfirmedGames);
+  const segments = Array.from({ length: 8 }, (_, index) => stringValue(
+    Array.isArray(savedGeneral.segments) ? savedGeneral.segments[index] : undefined,
+  ));
+  const savedMatches = Array.isArray(savedGeneral.matches) ? savedGeneral.matches : [];
+  const scoreRows = (value: unknown, count: number) => Array.from({ length: count }, (_, index) => {
+    const row = asRecord(Array.isArray(value) ? value[index] : undefined);
+    return { home: normalizeStoredScore(row.home), away: normalizeStoredScore(row.away) };
+  });
+  const uniqueMaps: ValorantMapArtwork[] = [];
+  const seenMapNames = new Set<string>();
+  for (const rawMap of savedMapArtwork.slice(0, 32)) {
+    const map = asRecord(rawMap);
+    const name = stringValue(map.name).trim();
+    const key = name.replace(/\s+/g, "").toLowerCase();
+    if (!key || seenMapNames.has(key)) continue;
+    seenMapNames.add(key);
+    uniqueMaps.push({
+      name,
+      nextMap: stringValue(map.nextMap),
+      pickCard: stringValue(map.pickCard),
+      banCard: stringValue(map.banCard),
+    });
+  }
+  const normalizedMaps = uniqueMaps.length > 0
+    ? uniqueMaps
+    : initial.valorantMapData.maps.map((map) => ({ ...map }));
   return {
     general: {
-      ...initial.general,
-      ...savedGeneral,
-      podcastIndicatorLogo: savedGeneral.podcastIndicatorLogo ?? legacyPodcastIndicatorLogo,
-      segments: saved.general?.segments?.slice(0, 8) ?? initial.general.segments,
-      matches: [mergeMatch(saved.general?.matches?.[0]), mergeMatch(saved.general?.matches?.[1])],
+      eventName: stringValue(savedGeneral.eventName),
+      mainCaster: stringValue(savedGeneral.mainCaster),
+      secondCaster: stringValue(savedGeneral.secondCaster),
+      guest1: stringValue(savedGeneral.guest1),
+      guest2: stringValue(savedGeneral.guest2),
+      mainCasterSocial: stringValue(savedGeneral.mainCasterSocial),
+      secondaryCasterSocial: stringValue(savedGeneral.secondaryCasterSocial),
+      startingSoonTitle: stringValue(savedGeneral.startingSoonTitle, initial.general.startingSoonTitle),
+      interviewName: stringValue(savedGeneral.interviewName),
+      podcastTitle: stringValue(savedGeneral.podcastTitle),
+      podcastIndicatorLogo: stringValue(savedGeneral.podcastIndicatorLogo, legacyPodcastIndicatorLogo),
+      segments,
+      currentSegment: stringValue(savedGeneral.currentSegment),
+      matches: [mergeMatch(savedMatches[0]), mergeMatch(savedMatches[1])],
     },
     rocketLeague: {
       ...initial.rocketLeague,
-      ...(saved.rocketLeague ?? {}),
-      bestOf: ["Bo1", "Bo3", "Bo5", "Bo7"].includes(saved.rocketLeague?.bestOf ?? "")
-        ? saved.rocketLeague!.bestOf
-        : initial.rocketLeague.bestOf,
-      flipSides: Boolean(saved.rocketLeague?.flipSides),
-      playerCardEnabled: saved.rocketLeague?.playerCardEnabled !== false,
-      sponsorWidgetEnabled: saved.rocketLeague?.sponsorWidgetEnabled !== false,
-      broadcastSetupEnabled: saved.rocketLeague?.broadcastSetupEnabled !== false,
-      lobbyScene: saved.rocketLeague?.lobbyScene === "stats" ? "stats" : "vs",
-      statsSceneBackground: saved.rocketLeague?.statsSceneBackground === "team-split" ? "team-split" : "transparent",
-      autoAcceptLiveResults: Boolean(saved.rocketLeague?.autoAcceptLiveResults),
-      lastLiveResultProposalKey: String(saved.rocketLeague?.lastLiveResultProposalKey || ""),
-      debugActivePlayerEnabled: Boolean(saved.rocketLeague?.debugActivePlayerEnabled),
+      bestOf: savedRocketLeagueBestOf,
+      scoreboardHeader: stringValue(savedRocketLeague.scoreboardHeader),
+      flipSides: booleanValue(savedRocketLeague.flipSides, false),
+      playerCardEnabled: booleanValue(savedRocketLeague.playerCardEnabled, true),
+      sponsorWidgetEnabled: booleanValue(savedRocketLeague.sponsorWidgetEnabled, true),
+      broadcastSetupEnabled: booleanValue(savedRocketLeague.broadcastSetupEnabled, true),
+      lobbyScene: savedRocketLeague.lobbyScene === "stats" ? "stats" : "vs",
+      statsSceneBackground: savedRocketLeague.statsSceneBackground === "team-split" ? "team-split" : "transparent",
+      autoAcceptLiveResults: booleanValue(savedRocketLeague.autoAcceptLiveResults, false),
+      lastLiveResultProposalKey: stringValue(savedRocketLeague.lastLiveResultProposalKey),
+      debugActivePlayerEnabled: booleanValue(savedRocketLeague.debugActivePlayerEnabled, false),
       debugActivePlayerScenario: normalizeActivePlayerScenario(
-        saved.rocketLeague?.debugActivePlayerScenario,
+        savedRocketLeague.debugActivePlayerScenario,
       ) as RocketLeagueActivePlayerScenario,
       debugLive: normalizeDebugLive(
-        saved.rocketLeague?.debugLive,
-        saved.rocketLeague?.debugActivePlayerScenario,
+        savedRocketLeague.debugLive,
+        stringValue(savedRocketLeague.debugActivePlayerScenario),
       ) as RocketLeagueDebugLive,
-      games: initial.rocketLeague.games.map((game, index) => ({
-        ...game,
-        ...(saved.rocketLeague?.games?.[index] ?? {}),
-      })),
-      savedGames: initial.rocketLeague.savedGames.map((game, index) => ({
-        ...game,
-        ...(savedRocketLeagueResults?.[index] ?? {}),
-      })),
+      games: scoreRows(savedRocketLeague.games, ROCKET_LEAGUE_GAME_COUNT),
+      savedGames: trimSavedResultRows(scoreRows(savedRocketLeagueResults, ROCKET_LEAGUE_GAME_COUNT), ROCKET_LEAGUE_GAME_COUNT),
     },
     valorant: {
       ...initial.valorant,
-      ...(saved.valorant ?? {}),
-      mapWidgetEnabled: saved.valorant?.mapWidgetEnabled ?? true,
-      sponsorWidgetEnabled: saved.valorant?.sponsorWidgetEnabled ?? true,
-      bestOf: ["Bo1", "Bo3", "Bo5"].includes(saved.valorant?.bestOf ?? "")
-        ? saved.valorant!.bestOf
-        : initial.valorant.bestOf,
-      games: initial.valorant.games.map((game, index) => ({
-        ...game,
-        ...(saved.valorant?.games?.[index] ?? {}),
-      })),
-      savedGames: initial.valorant.savedGames.map((game, index) => ({
-        ...game,
-        ...(savedValorantResults?.[index] ?? {}),
-      })),
-      bo3: { ...initial.valorant.bo3, ...(saved.valorant?.bo3 ?? {}) },
-      bo5: { ...initial.valorant.bo5, ...(saved.valorant?.bo5 ?? {}) },
+      scoreboardHeader: stringValue(savedValorant.scoreboardHeader),
+      flipSides: booleanValue(savedValorant.flipSides, false),
+      banSwap: booleanValue(savedValorant.banSwap, false),
+      mapWidgetEnabled: booleanValue(savedValorant.mapWidgetEnabled, true),
+      sponsorWidgetEnabled: booleanValue(savedValorant.sponsorWidgetEnabled, true),
+      bestOf: savedValorantBestOf,
+      games: scoreRows(savedValorant.games, VALORANT_GAME_COUNT),
+      savedGames: trimSavedResultRows(scoreRows(savedValorantResults, VALORANT_GAME_COUNT), VALORANT_GAME_COUNT),
+      bo3: mergeValorantVeto(initial.valorant.bo3, savedValorant.bo3, normalizedMaps),
+      bo5: mergeValorantVeto(initial.valorant.bo5, savedValorant.bo5, normalizedMaps),
     },
     leagueOfLegends: {
       ...initial.leagueOfLegends,
-      ...(saved.leagueOfLegends ?? {}),
+      ...savedLeague,
       bestOf: savedLeagueBestOf,
-      draftMode: saved.leagueOfLegends?.draftMode === "fearless" ? "fearless" : "standard",
+      draftMode: savedLeague.draftMode === "fearless" ? "fearless" : "standard",
       currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
-      blueTeam: saved.leagueOfLegends?.blueTeam === "team2" ? "team2" : "team1",
-      playerBoardEnabled: saved.leagueOfLegends?.playerBoardEnabled !== false,
-      sponsorWidgetEnabled: saved.leagueOfLegends?.sponsorWidgetEnabled !== false,
-      vsScreenEnabled: Boolean(saved.leagueOfLegends?.vsScreenEnabled),
-      debugLiveEnabled: Boolean(saved.leagueOfLegends?.debugLiveEnabled),
-      debugLiveScenario: ["live", "finished", "stale"].includes(saved.leagueOfLegends?.debugLiveScenario ?? "")
-        ? saved.leagueOfLegends!.debugLiveScenario
+      blueTeam: savedLeague.blueTeam === "team2" ? "team2" : "team1",
+      playerBoardEnabled: savedLeague.playerBoardEnabled !== false,
+      sponsorWidgetEnabled: savedLeague.sponsorWidgetEnabled !== false,
+      vsScreenEnabled: Boolean(savedLeague.vsScreenEnabled),
+      debugLiveEnabled: Boolean(savedLeague.debugLiveEnabled),
+      debugLiveScenario: ["live", "finished", "stale"].includes(savedLeague.debugLiveScenario ?? "")
+        ? savedLeague.debugLiveScenario!
         : "live",
       results: savedLeagueResults,
-      draft: normalizeLeagueDraft(saved.leagueOfLegends?.draft, saved.leagueOfLegends?.draft?.timerSeconds ?? 30) as LeagueDraftState,
+      draft: normalizeLeagueDraft(savedLeague.draft, savedLeague.draft?.timerSeconds ?? 30) as LeagueDraftState,
       confirmedGames: savedLeagueConfirmedGames,
-      resultProposal: saved.leagueOfLegends?.resultProposal?.id ? saved.leagueOfLegends.resultProposal : null,
-      playerOverrides: saved.leagueOfLegends?.playerOverrides && typeof saved.leagueOfLegends.playerOverrides === "object"
-        ? saved.leagueOfLegends.playerOverrides
+      resultProposal: savedLeague.resultProposal?.id ? savedLeague.resultProposal : null,
+      playerOverrides: savedLeague.playerOverrides && typeof savedLeague.playerOverrides === "object"
+        ? savedLeague.playerOverrides
         : {},
     },
     valorantMapData: {
-      maps: savedMapArtwork.length > 0
-        ? savedMapArtwork.map((map) => ({
-          name: String(map?.name ?? ""),
-          nextMap: String(map?.nextMap ?? ""),
-          pickCard: String(map?.pickCard ?? ""),
-          banCard: String(map?.banCard ?? ""),
-        }))
-        : initial.valorantMapData.maps.map((map) => ({ ...map })),
+      maps: normalizedMaps,
     },
     sponsors: initial.sponsors.map((sponsor, index) => index === 0
       ? { ...GAMING_OASIS_SPONSOR }
-      : { ...sponsor, ...(savedSponsors[index - 1] ?? {}) }),
+      : {
+        id: sponsor.id,
+        name: stringValue(savedSponsors[index - 1]?.name),
+        logo: stringValue(savedSponsors[index - 1]?.logo),
+        enabled: booleanValue(savedSponsors[index - 1]?.enabled, true),
+      }),
     settings: {
-      ...initial.settings,
-      ...savedSettings,
-      generalInfoEnabled: savedSettings.generalInfoEnabled ?? true,
-      rocketLeagueEnabled: savedSettings.rocketLeagueEnabled ?? true,
-      valorantEnabled: savedSettings.valorantEnabled ?? true,
-      leagueOfLegendsEnabled: savedSettings.leagueOfLegendsEnabled ?? true,
-      sponsorsEnabled: savedSettings.sponsorsEnabled ?? true,
-      drawShowEnabled: savedSettings.drawShowEnabled ?? true,
+      generalInfoEnabled: booleanValue(savedSettings.generalInfoEnabled, true),
+      rocketLeagueEnabled: booleanValue(savedSettings.rocketLeagueEnabled, true),
+      valorantEnabled: booleanValue(savedSettings.valorantEnabled, true),
+      leagueOfLegendsEnabled: booleanValue(savedSettings.leagueOfLegendsEnabled, true),
+      sponsorsEnabled: booleanValue(savedSettings.sponsorsEnabled, true),
+      drawShowEnabled: booleanValue(savedSettings.drawShowEnabled, false),
     },
     draws: (Object.keys(initial.draws) as DrawKey[]).reduce((all, key) => {
-      all[key] = { ...initial.draws[key], ...(saved.draws?.[key] ?? {}) };
+      all[key] = mergeStringRecord(initial.draws[key], asRecord(saved.draws)[key]);
       return all;
     }, {} as DrawData),
   };
@@ -849,11 +1116,13 @@ const upper = (value: string) => value.trim().toUpperCase();
 
 function selectedTeamColor(team: Team) {
   const custom = team.overrides.color.trim();
-  if (custom && colorToRgb(custom)) return custom;
-  if (team.selectedColor === "alternate") return team.alternateColor;
-  if (team.selectedColor === "backup1") return team.backupColor1;
-  if (team.selectedColor === "backup2") return team.backupColor2;
-  return team.color;
+  const sourceColor = normalizeProductionColor(team.color) || "#F6AC18";
+  const customColor = normalizeHexColor(custom);
+  if (customColor) return customColor;
+  if (team.selectedColor === "alternate") return normalizeProductionColor(team.alternateColor) || sourceColor;
+  if (team.selectedColor === "backup1") return normalizeProductionColor(team.backupColor1) || sourceColor;
+  if (team.selectedColor === "backup2") return normalizeProductionColor(team.backupColor2) || sourceColor;
+  return sourceColor;
 }
 
 function resolveTeam(team: Team) {
@@ -874,11 +1143,13 @@ function resolveTeam(team: Team) {
 }
 
 function resolveLeague(league: MatchLeague) {
+  const sourcePrimaryColor = normalizeProductionColor(league.primaryColor) || "#F6AC18";
+  const sourceSecondaryColor = normalizeProductionColor(league.secondaryColor) || "#47213F";
   return {
     name: league.overrides.name.trim() || league.name.trim(),
     logo: league.overrides.logo.trim() || league.logo.trim(),
-    primaryColor: league.overrides.primaryColor.trim() || league.primaryColor.trim() || "#F6AC18",
-    secondaryColor: league.overrides.secondaryColor.trim() || league.secondaryColor.trim() || "#47213F",
+    primaryColor: normalizeHexColor(league.overrides.primaryColor) || sourcePrimaryColor,
+    secondaryColor: normalizeHexColor(league.overrides.secondaryColor) || sourceSecondaryColor,
     eventName: league.overrides.eventName.trim() || league.eventName.trim(),
   };
 }
@@ -890,8 +1161,25 @@ function applyLeagueColorsToTeams(team1: Team, team2: Team, primaryColor: string
   };
 }
 
+function normalizeHexColor(value: string) {
+  const match = value.trim().match(/^#([0-9a-f]{6})$/i);
+  return match ? `#${match[1]}` : "";
+}
+
+function normalizeProductionColor(value: string) {
+  const trimmed = value.trim();
+  const hex = trimmed.match(/^#?([0-9a-f]{6})$/i);
+  if (hex) return `#${hex[1]}`;
+  const rgb = trimmed.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+  if (!rgb) return "";
+  const channels = rgb.slice(1).map(Number);
+  if (channels.some((channel) => channel < 0 || channel > 255)) return "";
+  return `rgb(${channels.join(", ")})`;
+}
+
 function colorToRgb(value: string) {
-  const hex = value.trim().replace(/^#/, "");
+  const normalized = normalizeProductionColor(value);
+  const hex = normalized.replace(/^#/, "");
   if (/^[0-9a-f]{6}$/i.test(hex)) {
     return {
       r: Number.parseInt(hex.slice(0, 2), 16),
@@ -899,7 +1187,7 @@ function colorToRgb(value: string) {
       b: Number.parseInt(hex.slice(4, 6), 16),
     };
   }
-  const rgb = value.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+  const rgb = normalized.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
   return rgb ? { r: Number(rgb[1]), g: Number(rgb[2]), b: Number(rgb[3]) } : null;
 }
 
@@ -912,7 +1200,17 @@ function colorSimilarity(first: string, second: string) {
 }
 
 function safeColor(value: string, fallback = "#404040") {
-  return colorToRgb(value) ? value : fallback;
+  return normalizeProductionColor(value) || normalizeProductionColor(fallback) || "#404040";
+}
+
+function mergeSyncedTeam(current: Team, synced: Team): Team {
+  return {
+    ...synced,
+    standingDisplay: current.standingDisplay,
+    selectedColor: current.selectedColor,
+    logoBackground: current.logo === synced.logo ? current.logoBackground : synced.logoBackground,
+    overrides: { ...current.overrides },
+  };
 }
 
 function createLeagueResultGames(values: Array<Partial<LeagueResultGame>> = []): LeagueResultGame[] {
@@ -955,25 +1253,79 @@ function resultIsPending(draft: RocketLeagueGame, saved: RocketLeagueGame) {
   return draft.home !== saved.home || draft.away !== saved.away;
 }
 
-function pendingResultCount(draft: RocketLeagueGame[], saved: RocketLeagueGame[]) {
-  return draft.filter((game, index) => resultIsPending(game, saved[index] ?? { home: "", away: "" })).length;
+function pendingResultCount(draft: RocketLeagueGame[], saved: RocketLeagueGame[], gameLimit: number) {
+  return draft.slice(0, gameLimit).filter((game, index) => resultIsPending(game, saved[index] ?? { home: "", away: "" })).length;
 }
 
-type ResultStatus = "blank" | "valid" | "partial" | "tied";
+type ResultStatus = "blank" | "valid" | "partial" | "tied" | "invalid";
+type ResultSequenceIssue = "partial" | "tied" | "invalid" | "out-of-sequence" | "after-clinch" | null;
 
 function resultStatus(game: RocketLeagueGame): ResultStatus {
   const home = game.home.trim();
   const away = game.away.trim();
   if (!home && !away) return "blank";
   if (!home || !away) return "partial";
+  if (!/^\d{1,2}$/.test(home) || !/^\d{1,2}$/.test(away)) return "invalid";
   return Number(home) === Number(away) ? "tied" : "valid";
 }
 
-function invalidResultCount(games: RocketLeagueGame[]) {
-  return games.filter((game) => {
+function resultSequenceIssues(games: RocketLeagueGame[], gameLimit: number): ResultSequenceIssue[] {
+  const winsNeeded = Math.floor(gameLimit / 2) + 1;
+  let homeWins = 0;
+  let awayWins = 0;
+  let sequenceStopped = false;
+  return games.slice(0, gameLimit).map((game) => {
     const status = resultStatus(game);
-    return status === "partial" || status === "tied";
-  }).length;
+    if (status === "blank") {
+      sequenceStopped = true;
+      return null;
+    }
+    if (homeWins >= winsNeeded || awayWins >= winsNeeded) return "after-clinch";
+    if (sequenceStopped) return "out-of-sequence";
+    if (status !== "valid") {
+      sequenceStopped = true;
+      return status;
+    }
+    if (Number(game.home) > Number(game.away)) homeWins += 1;
+    else awayWins += 1;
+    return null;
+  });
+}
+
+function resultIssueMessage(issue: ResultSequenceIssue, itemName: "game" | "map") {
+  if (issue === "partial") return "Enter both scores";
+  if (issue === "tied") return "Tie not allowed";
+  if (issue === "invalid") return "Use a score from 0 to 99";
+  if (issue === "out-of-sequence") return `Complete earlier ${itemName}s or clear this result`;
+  if (issue === "after-clinch") return "Clear this result — the series is already complete";
+  return "";
+}
+
+function trimSavedResultRows(games: RocketLeagueGame[], gameLimit: number) {
+  const winsNeeded = Math.floor(gameLimit / 2) + 1;
+  let homeWins = 0;
+  let awayWins = 0;
+  let sequenceStopped = false;
+  return games.map((game, index) => {
+    if (index >= gameLimit || sequenceStopped || homeWins >= winsNeeded || awayWins >= winsNeeded) {
+      return { home: "", away: "" };
+    }
+    const next = { ...game };
+    if (resultStatus(next) !== "valid") {
+      sequenceStopped = true;
+      return { home: "", away: "" };
+    }
+    if (Number(next.home) > Number(next.away)) homeWins += 1;
+    else awayWins += 1;
+    return next;
+  });
+}
+
+function mergeSavedResultRows(draftGames: RocketLeagueGame[], savedGames: RocketLeagueGame[], gameLimit: number) {
+  const normalizedActiveGames = trimSavedResultRows(draftGames, gameLimit);
+  return savedGames.map((game, index) => (
+    index < gameLimit ? normalizedActiveGames[index] : { ...game }
+  ));
 }
 
 function valorantSideLabel(side: string) {
@@ -991,6 +1343,14 @@ function resolveRegionalLogo(general: GeneralInfo) {
 }
 
 function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valorant: Valorant, mapArtwork: ValorantMapArtwork[]) {
+  const savedRocketLeagueGames = trimSavedResultRows(
+    rocketLeague.savedGames,
+    rocketLeagueGameLimit(rocketLeague.bestOf),
+  );
+  const savedValorantGames = trimSavedResultRows(
+    valorant.savedGames,
+    valorantGameLimit(valorant.bestOf),
+  );
   const output: Record<string, string> = {
     eventname: upper(general.eventName),
     maincaster: upper(general.mainCaster),
@@ -1022,10 +1382,10 @@ function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valo
     });
   });
 
-  rocketLeague.savedGames.forEach((game, index) => {
+  savedRocketLeagueGames.forEach((game, index) => {
     output[`rlscore${index + 1}`] = formatRocketLeagueScore(game);
   });
-  const series = calculateRocketLeagueSeries(rocketLeague.savedGames);
+  const series = calculateRocketLeagueSeries(savedRocketLeagueGames, rocketLeague.bestOf);
   output.rlheader = resolveScoreboardHeader(rocketLeague.scoreboardHeader, general.eventName);
   output["rlformat#"] = rocketLeague.bestOf;
   output.rlroundnumber = String(series.roundNumber);
@@ -1035,7 +1395,7 @@ function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valo
   Object.assign(
     output,
     buildValorantFields(
-      { ...valorant, games: valorant.savedGames },
+      { ...valorant, games: savedValorantGames },
       resolveTeam(general.matches[0].team1),
       resolveTeam(general.matches[0].team2),
       mapArtwork,
@@ -1063,36 +1423,118 @@ function buildExportFiles(state: ProductionState): ExportFile[] {
   ];
 }
 
-function downloadJSON(file: ExportFile) {
-  const blob = new Blob([JSON.stringify(file.data, null, 2)], { type: "application/json" });
+function createLivePayloadSignature(payload: unknown) {
+  return JSON.stringify(payload, (key, value) => (
+    key === "updatedAt" || key === "lastEventAt" ? undefined : value
+  ));
+}
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createJsonPackageArchive(files: ExportFile[]) {
+  const encoder = new TextEncoder();
+  const localParts: BlobPart[] = [];
+  const centralParts: BlobPart[] = [];
+  let localOffset = 0;
+  let centralSize = 0;
+
+  for (const file of files) {
+    const name = encoder.encode(file.filename);
+    const data = encoder.encode(`${JSON.stringify(file.data, null, 2)}\n`);
+    const checksum = crc32(data);
+    const localHeader = new ArrayBuffer(30);
+    const localView = new DataView(localHeader);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0x0800, true);
+    localView.setUint32(14, checksum, true);
+    localView.setUint32(18, data.byteLength, true);
+    localView.setUint32(22, data.byteLength, true);
+    localView.setUint16(26, name.byteLength, true);
+    localParts.push(localHeader, name, data);
+
+    const centralHeader = new ArrayBuffer(46);
+    const centralView = new DataView(centralHeader);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0x0800, true);
+    centralView.setUint32(16, checksum, true);
+    centralView.setUint32(20, data.byteLength, true);
+    centralView.setUint32(24, data.byteLength, true);
+    centralView.setUint16(28, name.byteLength, true);
+    centralView.setUint32(42, localOffset, true);
+    centralParts.push(centralHeader, name);
+
+    localOffset += localHeader.byteLength + name.byteLength + data.byteLength;
+    centralSize += centralHeader.byteLength + name.byteLength;
+  }
+
+  const endRecord = new ArrayBuffer(22);
+  const endView = new DataView(endRecord);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, files.length, true);
+  endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, localOffset, true);
+  return new Blob([...localParts, ...centralParts, endRecord], { type: "application/zip" });
+}
+
+function downloadJsonPackage(files: ExportFile[]) {
+  const blob = createJsonPackageArchive(files);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = file.filename;
+  anchor.download = "gaming-oasis-production-json.zip";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 2_000);
 }
 
 async function writeFilesToFolder(files: ExportFile[]) {
-  const picker = (window as unknown as {
+  const browserWindow = window as unknown as Window & {
     showDirectoryPicker?: () => Promise<{
       getFileHandle: (name: string, options: { create: boolean }) => Promise<{
-        createWritable: () => Promise<{ write: (value: string) => Promise<void>; close: () => Promise<void> }>;
+        createWritable: () => Promise<{
+          write: (value: string) => Promise<void>;
+          close: () => Promise<void>;
+          abort?: (reason?: unknown) => Promise<void>;
+        }>;
       }>;
     }>;
-  }).showDirectoryPicker;
+  };
+  const picker = browserWindow.showDirectoryPicker;
 
-  if (!picker) return false;
-  const directory = await picker();
+  if (!picker) return "unsupported" as const;
+  const directory = await picker.call(browserWindow);
   for (const file of files) {
-    const handle = await directory.getFileHandle(file.filename, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(file.data, null, 2));
-    await writable.close();
+    let writable: {
+      write: (value: string) => Promise<void>;
+      close: () => Promise<void>;
+      abort?: (reason?: unknown) => Promise<void>;
+    } | null = null;
+    try {
+      const handle = await directory.getFileHandle(file.filename, { create: true });
+      writable = await handle.createWritable();
+      await writable.write(JSON.stringify(file.data, null, 2));
+      await writable.close();
+      writable = null;
+    } catch (error) {
+      await writable?.abort?.(error).catch(() => {});
+      throw new Error(`Could not write ${file.filename}: ${(error as Error).message || "file write failed"}`, { cause: error });
+    }
   }
-  return true;
+  return "folder" as const;
 }
 
 function ordinal(rank: number) {
@@ -1202,6 +1644,39 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
   );
 }
 
+function liveSyncLongLabel(state: LiveSyncState) {
+  if (state === "synced") return "Files are current";
+  if (state === "saving") return "Writing changes";
+  if (state === "retrying") return "Retrying writer";
+  if (state === "checking") return "Checking writer";
+  if (state === "standby") return "Standing by — no output changes";
+  return "Writer is offline";
+}
+
+function liveSyncShortLabel(state: LiveSyncState) {
+  if (state === "synced") return "JSON live";
+  if (state === "saving") return "Saving JSON";
+  if (state === "retrying") return "Retrying JSON";
+  if (state === "checking") return "Checking JSON";
+  if (state === "standby") return "JSON standby";
+  return "JSON writer offline";
+}
+
+function handleTabListKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)'));
+  const currentIndex = tabs.indexOf(event.target as HTMLButtonElement);
+  if (currentIndex < 0 || tabs.length === 0) return;
+  event.preventDefault();
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[nextIndex].focus();
+  tabs[nextIndex].click();
+}
+
 export default function Home() {
   const [state, setState] = useState<ProductionState>(() => createInitialState());
   const [activeSection, setActiveSection] = useState<Section>("welcome");
@@ -1218,15 +1693,36 @@ export default function Home() {
   const [drawPasteText, setDrawPasteText] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [syncingMatch, setSyncingMatch] = useState<number | null>(null);
-  const [liveSync, setLiveSync] = useState<LiveSyncState>("starting");
+  const [liveSync, setLiveSync] = useState<LiveSyncState>("checking");
   const [toast, setToast] = useState("");
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
   const [rocketLeagueSeriesResetOpen, setRocketLeagueSeriesResetOpen] = useState(false);
   const [valorantSeriesResetOpen, setValorantSeriesResetOpen] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   const [hydrated, setHydrated] = useState(false);
-  const [liveWriteReady, setLiveWriteReady] = useState(false);
-  const [allowEmptyLiveWrite, setAllowEmptyLiveWrite] = useState(false);
-  const initialStateRef = useRef(state);
+  const [outputActivated, setOutputActivated] = useState(false);
+  const [isPrimaryTab, setIsPrimaryTab] = useState(false);
+  const [takingControl, setTakingControl] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [liveRetryNonce, setLiveRetryNonce] = useState(0);
+  const stateRef = useRef(state);
+  const hydratedStateRef = useRef(state);
+  const outputActivatedRef = useRef(false);
+  const isPrimaryTabRef = useRef(false);
+  const persistenceRevisionRef = useRef(0);
+  const persistenceTimerRef = useRef<number | null>(null);
+  const tabIdRef = useRef("");
+  const writerIdRef = useRef("");
+  const writerFenceRef = useRef(0);
+  const workspaceHandoffChannelRef = useRef<BroadcastChannel | null>(null);
+  const yieldedForHandoffRef = useRef(false);
+  const forceWriterClaimRef = useRef(false);
+  const serverOwnershipBlockedRef = useRef(false);
+  const serverOwnershipRetryAtRef = useRef(0);
+  const writerTokenRef = useRef("");
+  const writerRevisionRef = useRef(0);
+  const liveWriteSequenceRef = useRef(0);
+  const lastSuccessfulPayloadSignatureRef = useRef("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resetModalRef = useRef<HTMLDivElement>(null);
   const resetTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1234,9 +1730,96 @@ export default function Home() {
   const seriesResetTriggerRef = useRef<HTMLButtonElement>(null);
   const valorantSeriesResetModalRef = useRef<HTMLDivElement>(null);
   const valorantSeriesResetTriggerRef = useRef<HTMLButtonElement>(null);
+  const actionConfirmationModalRef = useRef<HTMLDivElement>(null);
+  const actionConfirmationTriggerRef = useRef<HTMLElement | null>(null);
+  const matchRequestRef = useRef<Array<{ sequence: number; controller: AbortController | null }>>([
+    { sequence: 0, controller: null },
+    { sequence: 0, controller: null },
+  ]);
+
+  const notify = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 3200);
+  }, []);
+
+  function requestConfirmation(confirmation: PendingConfirmation) {
+    if (!isPrimaryTabRef.current) return;
+    actionConfirmationTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setPendingConfirmation(confirmation);
+  }
+
+  const enterWriterConflictStandby = useCallback(() => {
+    serverOwnershipBlockedRef.current = true;
+    serverOwnershipRetryAtRef.current = Date.now() + WRITER_SERVER_CONFLICT_RETRY_MS;
+    isPrimaryTabRef.current = false;
+    setIsPrimaryTab(false);
+    setLiveSync("standby");
+    setResetConfirmationOpen(false);
+    setRocketLeagueSeriesResetOpen(false);
+    setValorantSeriesResetOpen(false);
+    setPendingConfirmation(null);
+  }, []);
+
+  const persistCurrentState = useCallback(() => {
+    if (!isPrimaryTabRef.current) return;
+    const revision = persistenceRevisionRef.current + 1;
+    const activated = outputActivatedRef.current || hasOutputRelevantChanges(stateRef.current, hydratedStateRef.current);
+    const envelope: PersistedStateEnvelope = {
+      schemaVersion: STORAGE_SCHEMA_VERSION,
+      revision,
+      savedAt: new Date().toISOString(),
+      outputActivated: activated,
+      state: stateRef.current,
+    };
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
+      persistenceRevisionRef.current = revision;
+      outputActivatedRef.current = activated;
+      hydratedStateRef.current = stateRef.current;
+    } catch {
+      notify("Local draft could not be saved — check browser storage");
+    }
+  }, [notify]);
+
+  const getWriterToken = useCallback(async (signal?: AbortSignal, force = false) => {
+    if (!force && writerTokenRef.current) return writerTokenRef.current;
+    const { response, payload: rawPayload } = await fetchJsonWithTimeout(LIVE_JSON_SESSION_ENDPOINT, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    const payload = asRecord(rawPayload);
+    if (!response.ok || typeof payload?.token !== "string" || payload.token.length < 32) {
+      throw new Error(String(payload?.error || `Writer session failed (HTTP ${response.status})`));
+    }
+    writerTokenRef.current = payload.token;
+    return payload.token;
+  }, []);
+
+  const postWriterMutation = useCallback(async (endpoint: string, body: unknown, signal?: AbortSignal) => {
+    for (let tokenAttempt = 0; tokenAttempt < 2; tokenAttempt += 1) {
+      const token = await getWriterToken(signal, tokenAttempt > 0);
+      const result = await fetchJsonWithTimeout(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "X-Gaming-Oasis-Writer-Token": token,
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (result.response.status !== 403 || tokenAttempt === 1) return result;
+      writerTokenRef.current = "";
+    }
+    throw new Error("Writer session expired");
+  }, [getWriterToken]);
 
   useEffect(() => {
-    if (!hydrated || !state.leagueOfLegends.draft.timerRunning) return;
+    if (!hydrated || !isPrimaryTab || !state.leagueOfLegends.draft.timerRunning) return;
     const timer = window.setInterval(() => {
       setState((current) => {
         const draft = current.leagueOfLegends.draft;
@@ -1252,7 +1835,7 @@ export default function Home() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [hydrated, state.leagueOfLegends.draft.timerRunning]);
+  }, [hydrated, isPrimaryTab, state.leagueOfLegends.draft.timerRunning]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1273,7 +1856,7 @@ export default function Home() {
   }, [hydrated]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !isPrimaryTab) return;
     let active = true;
     const controller = new AbortController();
 
@@ -1292,7 +1875,7 @@ export default function Home() {
           const winnerTeam = payload.live.game.winnerTeam;
           const blueWinner = current.leagueOfLegends.blueTeam === "team1" ? "team1" : "team2";
           const redWinner = blueWinner === "team1" ? "team2" : "team1";
-          const winner = winnerTeam === "ORDER" ? blueWinner : winnerTeam === "CHAOS" ? redWinner : "";
+          const winner: LeagueResultGame["winner"] = winnerTeam === "ORDER" ? blueWinner : winnerTeam === "CHAOS" ? redWinner : "";
           const gameNumber = current.leagueOfLegends.currentGame;
           const slots = draftSlots(current.leagueOfLegends.draft);
           const results = current.leagueOfLegends.results.map((game, index) => index === gameNumber - 1 ? {
@@ -1331,34 +1914,206 @@ export default function Home() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [hydrated]);
+  }, [hydrated, isPrimaryTab]);
 
   useEffect(() => {
+    tabIdRef.current = createLocalId();
+    writerIdRef.current = createLocalId();
+    yieldedForHandoffRef.current = false;
+    forceWriterClaimRef.current = false;
+    serverOwnershipBlockedRef.current = false;
+    serverOwnershipRetryAtRef.current = 0;
+    let handoffChannel: BroadcastChannel | null = null;
+
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        setState(mergeSavedState(JSON.parse(raw)));
-        setLiveWriteReady(true);
+        const restored = parsePersistedEnvelope(JSON.parse(raw));
+        persistenceRevisionRef.current = restored.revision;
+        outputActivatedRef.current = restored.outputActivated;
+        hydratedStateRef.current = restored.state;
+        stateRef.current = restored.state;
+        setState(restored.state);
+        setOutputActivated(restored.outputActivated);
+      } else {
+        hydratedStateRef.current = stateRef.current;
       }
     } catch {
       // Invalid old drafts are ignored so operators can still open the tool.
+      hydratedStateRef.current = stateRef.current;
     }
+
+    function setOwnership(ownsLease: boolean) {
+      const gainedOwnership = ownsLease && !isPrimaryTabRef.current;
+      isPrimaryTabRef.current = ownsLease;
+      setIsPrimaryTab(ownsLease);
+      if (gainedOwnership) lastSuccessfulPayloadSignatureRef.current = "";
+      if (!ownsLease) {
+        setLiveSync("standby");
+        setResetConfirmationOpen(false);
+        setRocketLeagueSeriesResetOpen(false);
+        setValorantSeriesResetOpen(false);
+        setPendingConfirmation(null);
+      }
+    }
+
+    function claimOrRenewLease(force = false) {
+      try {
+        if (serverOwnershipBlockedRef.current && !force) {
+          if (Date.now() < serverOwnershipRetryAtRef.current) {
+            setOwnership(false);
+            return;
+          }
+          serverOwnershipBlockedRef.current = false;
+          serverOwnershipRetryAtRef.current = 0;
+        }
+        if (force) {
+          serverOwnershipBlockedRef.current = false;
+          serverOwnershipRetryAtRef.current = 0;
+        }
+        const now = Date.now();
+        const current = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+        if (yieldedForHandoffRef.current) {
+          if (force || !current || current.expiresAt <= now) {
+            yieldedForHandoffRef.current = false;
+          } else {
+            setOwnership(false);
+            return;
+          }
+        }
+        const mayClaim = force || !current || current.expiresAt <= now || current.ownerId === tabIdRef.current;
+        if (!mayClaim) {
+          setOwnership(false);
+          return;
+        }
+        const fence = current?.ownerId === tabIdRef.current
+          ? current.fence
+          : createWriterFence(current?.fence ?? writerFenceRef.current);
+        const lease: WriterLease = { ownerId: tabIdRef.current, expiresAt: now + WRITER_LEASE_DURATION_MS, fence };
+        window.localStorage.setItem(WRITER_LEASE_KEY, JSON.stringify(lease));
+        const verified = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+        if (verified?.ownerId === tabIdRef.current) writerFenceRef.current = verified.fence;
+        setOwnership(verified?.ownerId === tabIdRef.current);
+      } catch {
+        // If storage is unavailable, keep the tool usable in this tab.
+        writerFenceRef.current = createWriterFence(writerFenceRef.current);
+        setOwnership(true);
+      }
+    }
+
+    function handleHandoffMessage(event: MessageEvent) {
+      const message = asRecord(event.data);
+      if (message.type !== "request-handoff"
+        || typeof message.requestId !== "string"
+        || typeof message.requesterId !== "string"
+        || message.requesterId === tabIdRef.current
+        || !isPrimaryTabRef.current) return;
+
+      // Flush the latest refs before yielding, then stop renewing until the
+      // requester has had time to replace the lease.
+      persistCurrentState();
+      yieldedForHandoffRef.current = true;
+      setOwnership(false);
+      handoffChannel?.postMessage({
+        type: "handoff-ready",
+        requestId: message.requestId,
+        requesterId: message.requesterId,
+      });
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key === WRITER_LEASE_KEY) {
+        const lease = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+        if (lease?.ownerId === tabIdRef.current) writerFenceRef.current = lease.fence;
+        setOwnership(Boolean(
+          !serverOwnershipBlockedRef.current
+          && lease
+          && lease.ownerId === tabIdRef.current
+          && lease.expiresAt > Date.now()
+        ));
+        return;
+      }
+      if (event.key !== STORAGE_KEY || !event.newValue || isPrimaryTabRef.current) return;
+      try {
+        const restored = parsePersistedEnvelope(JSON.parse(event.newValue));
+        if (restored.revision <= persistenceRevisionRef.current) return;
+        persistenceRevisionRef.current = restored.revision;
+        outputActivatedRef.current = restored.outputActivated;
+        hydratedStateRef.current = restored.state;
+        stateRef.current = restored.state;
+        setOutputActivated(restored.outputActivated);
+        setState(restored.state);
+      } catch {
+        // Ignore corrupt cross-tab messages and retain the last valid draft.
+      }
+    }
+
+    function releaseLease() {
+      try {
+        const current = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+        if (current?.ownerId === tabIdRef.current) window.localStorage.removeItem(WRITER_LEASE_KEY);
+      } catch {
+        // Storage cleanup is best effort during navigation.
+      }
+    }
+
+    if (typeof window.BroadcastChannel === "function") {
+      handoffChannel = new window.BroadcastChannel(WORKSPACE_HANDOFF_CHANNEL);
+      workspaceHandoffChannelRef.current = handoffChannel;
+      handoffChannel.addEventListener("message", handleHandoffMessage);
+    }
+
+    claimOrRenewLease();
+    const leaseTimer = window.setInterval(() => claimOrRenewLease(), WRITER_LEASE_RENEW_MS);
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("pagehide", releaseLease);
     setHydrated(true);
-  }, []);
+    return () => {
+      window.clearInterval(leaseTimer);
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("pagehide", releaseLease);
+      handoffChannel?.removeEventListener("message", handleHandoffMessage);
+      handoffChannel?.close();
+      if (workspaceHandoffChannelRef.current === handoffChannel) workspaceHandoffChannelRef.current = null;
+      yieldedForHandoffRef.current = false;
+      releaseLease();
+    };
+  }, [persistCurrentState]);
+
+  useLayoutEffect(() => {
+    stateRef.current = state;
+    outputActivatedRef.current = outputActivated;
+  }, [state, outputActivated]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (!liveWriteReady) {
-      if (state === initialStateRef.current) return;
-      setLiveWriteReady(true);
-      return;
-    }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated, liveWriteReady]);
+    if (!hydrated || outputActivated || !isPrimaryTab || !hasOutputRelevantChanges(state, hydratedStateRef.current)) return;
+    setOutputActivated(true);
+  }, [state, hydrated, outputActivated, isPrimaryTab]);
+
+  useEffect(() => {
+    if (!hydrated || !isPrimaryTab) return;
+    if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
+    persistenceTimerRef.current = window.setTimeout(() => {
+      persistenceTimerRef.current = null;
+      persistCurrentState();
+    }, 250);
+    return () => {
+      if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    };
+  }, [state, outputActivated, hydrated, isPrimaryTab, persistCurrentState]);
+
+  useEffect(() => {
+    if (!hydrated || !isPrimaryTab) return;
+    const flush = () => persistCurrentState();
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [hydrated, isPrimaryTab, persistCurrentState]);
 
   useEffect(() => {
     if (!resetConfirmationOpen) return;
     const modal = resetModalRef.current;
+    const trigger = resetTriggerRef.current;
     const focusable = modal?.querySelectorAll<HTMLElement>("button") ?? [];
     focusable[0]?.focus();
 
@@ -1383,13 +2138,14 @@ export default function Home() {
     document.addEventListener("keydown", handleModalKeyDown);
     return () => {
       document.removeEventListener("keydown", handleModalKeyDown);
-      resetTriggerRef.current?.focus();
+      trigger?.focus();
     };
   }, [resetConfirmationOpen]);
 
   useEffect(() => {
     if (!rocketLeagueSeriesResetOpen) return;
     const modal = seriesResetModalRef.current;
+    const trigger = seriesResetTriggerRef.current;
     const focusable = modal?.querySelectorAll<HTMLElement>("button") ?? [];
     focusable[0]?.focus();
 
@@ -1414,13 +2170,14 @@ export default function Home() {
     document.addEventListener("keydown", handleModalKeyDown);
     return () => {
       document.removeEventListener("keydown", handleModalKeyDown);
-      seriesResetTriggerRef.current?.focus();
+      trigger?.focus();
     };
   }, [rocketLeagueSeriesResetOpen]);
 
   useEffect(() => {
     if (!valorantSeriesResetOpen) return;
     const modal = valorantSeriesResetModalRef.current;
+    const trigger = valorantSeriesResetTriggerRef.current;
     const focusable = modal?.querySelectorAll<HTMLElement>("button") ?? [];
     focusable[0]?.focus();
 
@@ -1445,26 +2202,47 @@ export default function Home() {
     document.addEventListener("keydown", handleModalKeyDown);
     return () => {
       document.removeEventListener("keydown", handleModalKeyDown);
-      valorantSeriesResetTriggerRef.current?.focus();
+      trigger?.focus();
     };
   }, [valorantSeriesResetOpen]);
 
-  const files = useMemo(() => buildExportFiles(state), [
-    state.general,
-    state.rocketLeague.scoreboardHeader,
-    state.rocketLeague.bestOf,
-    state.rocketLeague.savedGames,
-    state.valorant.scoreboardHeader,
-    state.valorant.bestOf,
-    state.valorant.flipSides,
-    state.valorant.banSwap,
-    state.valorant.savedGames,
-    state.valorant.bo3,
-    state.valorant.bo5,
-    state.valorantMapData,
-    state.sponsors,
-    state.draws,
-  ]);
+  useEffect(() => {
+    if (!pendingConfirmation) return;
+    const modal = actionConfirmationModalRef.current;
+    const trigger = actionConfirmationTriggerRef.current;
+    const focusable = modal?.querySelectorAll<HTMLElement>("button") ?? [];
+    focusable[0]?.focus();
+
+    function handleModalKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPendingConfirmation(null);
+        return;
+      }
+      if (event.key !== "Tab" || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleModalKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleModalKeyDown);
+      if (isPrimaryTabRef.current) trigger?.focus();
+    };
+  }, [pendingConfirmation]);
+
+  const files = useMemo(() => buildExportFiles(state), [state]);
+  const manualExportFiles = useMemo(() => [
+    ...files,
+    { filename: VALORANT_MAP_DATA_FILENAME, data: state.valorantMapData },
+  ], [files, state.valorantMapData]);
   const matchOneLeague = resolveLeague(state.general.matches[0].league);
   const valorantOverlay = useMemo(() => buildValorantOverlayState(
     state.valorant,
@@ -1497,19 +2275,32 @@ export default function Home() {
     state.sponsors,
     { eventName: state.general.eventName, assetVersion: leagueCatalogVersion },
   ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, leagueCatalogVersion]);
-  const hasLiveProductionContent = useMemo(() => hasProductionContent(state), [state]);
+  const livePayload = useMemo(() => ({
+    files,
+    overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay },
+    valorantMapData: state.valorantMapData,
+  }), [files, leagueOverlay, rocketLeagueOverlay, state.valorantMapData, valorantOverlay]);
+  const livePayloadSignature = useMemo(() => createLivePayloadSignature(livePayload), [livePayload]);
   const filledSponsors = state.sponsors.filter((sponsor) => sponsor.name.trim() || sponsor.logo.trim()).length;
   const filledMatches = state.general.matches.filter((match) => resolveTeam(match.team1).name && resolveTeam(match.team2).name).length;
-  const rocketLeagueSeries = calculateRocketLeagueSeries(state.rocketLeague.savedGames);
-  const rocketLeaguePendingResults = pendingResultCount(state.rocketLeague.games, state.rocketLeague.savedGames);
-  const rocketLeagueInvalidResults = invalidResultCount(state.rocketLeague.games);
+  const rocketLeagueGameCount = rocketLeagueGameLimit(state.rocketLeague.bestOf);
+  const rocketLeagueSeries = calculateRocketLeagueSeries(state.rocketLeague.savedGames, state.rocketLeague.bestOf);
+  const rocketLeagueDraftSeries = calculateRocketLeagueSeries(state.rocketLeague.games, state.rocketLeague.bestOf);
+  const rocketLeagueDraftComplete = Math.max(rocketLeagueDraftSeries.homeWins, rocketLeagueDraftSeries.awayWins) >= Math.floor(rocketLeagueGameCount / 2) + 1;
+  const rocketLeaguePendingResults = pendingResultCount(state.rocketLeague.games, state.rocketLeague.savedGames, rocketLeagueGameCount);
+  const rocketLeagueResultIssues = resultSequenceIssues(state.rocketLeague.games, rocketLeagueGameCount);
+  const rocketLeagueInvalidResults = rocketLeagueResultIssues.filter(Boolean).length;
   const rocketLeagueHeader = resolveScoreboardHeader(state.rocketLeague.scoreboardHeader, state.general.eventName);
   const rocketLeagueReady = Boolean(rocketLeagueHeader);
-  const valorantSeries = calculateValorantSeries(state.valorant.savedGames);
+  const valorantGameCount = valorantGameLimit(state.valorant.bestOf);
+  const valorantSeries = calculateValorantSeries(state.valorant.savedGames, state.valorant.bestOf);
+  const valorantDraftSeries = calculateValorantSeries(state.valorant.games, state.valorant.bestOf);
+  const valorantDraftComplete = Math.max(valorantDraftSeries.homeWins, valorantDraftSeries.awayWins) >= Math.floor(valorantGameCount / 2) + 1;
   const valorantCurrentMap = getValorantCurrentMap(state.valorant, valorantSeries.roundNumber);
   const valorantCurrentSides = getValorantCurrentSides(state.valorant, valorantSeries.roundNumber);
-  const valorantPendingResults = pendingResultCount(state.valorant.games, state.valorant.savedGames);
-  const valorantInvalidResults = invalidResultCount(state.valorant.games);
+  const valorantPendingResults = pendingResultCount(state.valorant.games, state.valorant.savedGames, valorantGameCount);
+  const valorantResultIssues = resultSequenceIssues(state.valorant.games, valorantGameCount);
+  const valorantInvalidResults = valorantResultIssues.filter(Boolean).length;
   const valorantHeader = resolveScoreboardHeader(state.valorant.scoreboardHeader, state.general.eventName);
   const valorantReady = Boolean(valorantHeader);
   const leagueGameCount = leagueGameLimit(state.leagueOfLegends.bestOf);
@@ -1520,57 +2311,242 @@ export default function Home() {
   const leagueReady = Boolean(leagueHeader);
 
   useEffect(() => {
-    if (!hydrated || !liveWriteReady) return;
-    if (!hasLiveProductionContent && !allowEmptyLiveWrite) return;
+    if (!hydrated) return;
+    if (!isPrimaryTab) {
+      setLiveSync("standby");
+      return;
+    }
+    const sequence = ++liveWriteSequenceRef.current;
     const controller = new AbortController();
-    setLiveSync("saving");
-    const timer = window.setTimeout(async () => {
-      try {
-        const response = await fetch(LIVE_JSON_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            files,
-            overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay },
-            valorantMapData: state.valorantMapData,
-          }),
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        if (allowEmptyLiveWrite) setAllowEmptyLiveWrite(false);
-        setLiveSync("synced");
-      } catch (error) {
-        if ((error as Error).name !== "AbortError") setLiveSync("error");
-      }
+
+    if (!outputActivated) {
+      setLiveSync("checking");
+      void (async () => {
+        try {
+          await getWriterToken(controller.signal);
+          const { response } = await fetchJsonWithTimeout(LIVE_JSON_STATUS_ENDPOINT, {
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error(`Writer status failed (HTTP ${response.status})`);
+          if (sequence === liveWriteSequenceRef.current) setLiveSync("standby");
+        } catch (error) {
+          if ((error as Error).name !== "AbortError" && sequence === liveWriteSequenceRef.current) setLiveSync("error");
+        }
+      })();
+      return () => controller.abort();
+    }
+
+    if (livePayloadSignature === lastSuccessfulPayloadSignatureRef.current) {
+      setLiveSync("synced");
+      return () => controller.abort();
+    }
+
+    const revision = Math.max(writerRevisionRef.current + 1, Date.now());
+    writerRevisionRef.current = revision;
+    const retryDelays = [0, 500, 1_500, 3_500];
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+          try {
+            if (retryDelays[attempt] > 0) {
+              if (sequence === liveWriteSequenceRef.current) setLiveSync("retrying");
+              await waitForDelay(retryDelays[attempt], controller.signal);
+            } else if (sequence === liveWriteSequenceRef.current) {
+              setLiveSync("saving");
+            }
+
+            try {
+              const lease = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+              if (lease && (lease.ownerId !== tabIdRef.current || lease.expiresAt <= Date.now())) {
+                isPrimaryTabRef.current = false;
+                setIsPrimaryTab(false);
+                throw new HttpResponseError(409, "Another tab controls the workspace", true);
+              }
+            } catch (error) {
+              if (error instanceof HttpResponseError) throw error;
+              // Storage-restricted sessions operate as a single tab.
+            }
+
+            const { response: claimResponse, payload: rawClaimPayload } = await postWriterMutation(
+              LIVE_JSON_CLAIM_ENDPOINT,
+              { writerId: writerIdRef.current, force: forceWriterClaimRef.current },
+              controller.signal,
+            );
+            const claimPayload = asRecord(rawClaimPayload);
+            if (claimResponse.status === 409) {
+              enterWriterConflictStandby();
+              return;
+            }
+            if (!claimResponse.ok
+              || claimPayload.ok !== true
+              || !Number.isSafeInteger(claimPayload.fence)
+              || Number(claimPayload.fence) < 1) {
+              const terminal = claimResponse.status >= 400 && claimResponse.status < 500;
+              throw new HttpResponseError(
+                claimResponse.status,
+                String(claimPayload.error || `Writer claim failed (HTTP ${claimResponse.status})`),
+                terminal,
+              );
+            }
+            const claimedFence = Number(claimPayload.fence);
+            forceWriterClaimRef.current = false;
+            serverOwnershipBlockedRef.current = false;
+            serverOwnershipRetryAtRef.current = 0;
+            writerFenceRef.current = claimedFence;
+            try {
+              const lease = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+              if (lease?.ownerId === tabIdRef.current) {
+                window.localStorage.setItem(WRITER_LEASE_KEY, JSON.stringify({ ...lease, fence: claimedFence }));
+              } else if (lease && lease.expiresAt > Date.now()) {
+                isPrimaryTabRef.current = false;
+                setIsPrimaryTab(false);
+                throw new HttpResponseError(409, "Another tab controls the workspace", true);
+              }
+            } catch (error) {
+              if (error instanceof HttpResponseError) throw error;
+              // Storage-restricted sessions operate as a single tab.
+            }
+
+            const body = {
+              writerId: writerIdRef.current,
+              fence: claimedFence,
+              revision,
+              ...livePayload,
+            };
+            const { response, payload: rawPayload } = await postWriterMutation(LIVE_JSON_ENDPOINT, body, controller.signal);
+            const payload = asRecord(rawPayload);
+            if (!response.ok) {
+              if (response.status === 409) {
+                enterWriterConflictStandby();
+                return;
+              }
+              const terminal = response.status >= 400 && response.status < 500;
+              if (terminal) throw new HttpResponseError(response.status, String(payload?.error || `HTTP ${response.status}`), true);
+              throw new HttpResponseError(response.status, String(payload?.error || `HTTP ${response.status}`));
+            }
+            if (payload?.ok !== true || payload?.files !== 6 || payload?.revision !== revision) {
+              throw new Error("Writer returned an invalid acknowledgement");
+            }
+            if (sequence === liveWriteSequenceRef.current) {
+              lastSuccessfulPayloadSignatureRef.current = livePayloadSignature;
+              setLiveSync("synced");
+            }
+            return;
+          } catch (error) {
+            if ((error as Error).name === "AbortError") return;
+            if (error instanceof HttpResponseError && error.terminal) {
+              if (sequence === liveWriteSequenceRef.current) setLiveSync("error");
+              return;
+            }
+            if (attempt === retryDelays.length - 1 && sequence === liveWriteSequenceRef.current) setLiveSync("error");
+          }
+        }
+      })();
     }, 180);
 
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [files, valorantOverlay, rocketLeagueOverlay, leagueOverlay, state.valorantMapData, hydrated, liveWriteReady, hasLiveProductionContent, allowEmptyLiveWrite]);
+  }, [hydrated, outputActivated, isPrimaryTab, livePayload, livePayloadSignature, liveRetryNonce, enterWriterConflictStandby, getWriterToken, postWriterMutation]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !isPrimaryTab) return;
     let active = true;
-    const controller = new AbortController();
+    let timer: number | undefined;
+    let controller: AbortController | null = null;
+
+    async function renewServerOwnership() {
+      controller = new AbortController();
+      const requestController = controller;
+      try {
+        const force = forceWriterClaimRef.current;
+        const { response, payload: rawPayload } = await postWriterMutation(
+          LIVE_JSON_CLAIM_ENDPOINT,
+          { writerId: writerIdRef.current, force },
+          requestController.signal,
+        );
+        const payload = asRecord(rawPayload);
+        if (response.status === 409) {
+          if (active) enterWriterConflictStandby();
+          return;
+        }
+        if (!response.ok || payload.ok !== true || !Number.isSafeInteger(payload.fence) || Number(payload.fence) < 1) return;
+        forceWriterClaimRef.current = false;
+        serverOwnershipBlockedRef.current = false;
+        serverOwnershipRetryAtRef.current = 0;
+        writerFenceRef.current = Number(payload.fence);
+        try {
+          const lease = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+          if (lease?.ownerId === tabIdRef.current) {
+            window.localStorage.setItem(WRITER_LEASE_KEY, JSON.stringify({ ...lease, fence: Number(payload.fence) }));
+          }
+        } catch {
+          // Storage-restricted sessions still renew their server-side owner lease.
+        }
+      } catch {
+        // The live writer effect reports connection failures; the next heartbeat retries.
+      } finally {
+        if (controller === requestController) controller = null;
+        if (active) timer = window.setTimeout(renewServerOwnership, WRITER_SERVER_LEASE_RENEW_MS);
+      }
+    }
+
+    void renewServerOwnership();
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller?.abort();
+    };
+  }, [enterWriterConflictStandby, hydrated, isPrimaryTab, postWriterMutation]);
+
+  useEffect(() => {
+    if (!hydrated || !isPrimaryTab || liveSync !== "error") return;
+    const timer = window.setTimeout(() => setLiveRetryNonce((current) => current + 1), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, isPrimaryTab, liveSync]);
+
+  useEffect(() => {
+    if (!hydrated || !isPrimaryTab) return;
+    let active = true;
+    let controller: AbortController | null = null;
+    let timer: number | undefined;
     let winnerLatchId = "";
+    let awaitingOverlayRestore = false;
 
     async function pollFinishedGame() {
+      controller = new AbortController();
       try {
-        const response = await fetch(ROCKET_LEAGUE_LIVE_OVERLAY_ENDPOINT, {
+        const { response, payload: rawPayload } = await fetchJsonWithTimeout(ROCKET_LEAGUE_LIVE_OVERLAY_ENDPOINT, {
           cache: "no-store",
           signal: controller.signal,
-        });
-        if (!active || response.status === 204 || !response.ok) return;
-        const payload = await response.json();
-        const finished = payload?.finishedGame;
-        const liveGame = payload?.game;
-        let candidate = null;
-        if (finished && typeof finished === "object" && finished.id) {
-          candidate = finished;
-          winnerLatchId = String(finished.id);
-        } else if (liveGame?.hasWinner && liveGame.scoreOne !== liveGame.scoreTwo) {
+        }, 5_000);
+        if (!active) return;
+        if (response.status === 204) {
+          if (outputActivatedRef.current && !awaitingOverlayRestore) {
+            awaitingOverlayRestore = true;
+            lastSuccessfulPayloadSignatureRef.current = "";
+            setLiveRetryNonce((current) => current + 1);
+          }
+          return;
+        }
+        if (!response.ok) return;
+        awaitingOverlayRestore = false;
+        const payload = asRecord(rawPayload);
+        const finished = asRecord(payload.finishedGame);
+        const liveGame = asRecord(payload.game);
+        let candidate: { id: string; scoreOne: number; scoreTwo: number } | null = null;
+        if (stringValue(finished.id)
+          && typeof finished.scoreOne === "number" && Number.isFinite(finished.scoreOne)
+          && typeof finished.scoreTwo === "number" && Number.isFinite(finished.scoreTwo)) {
+          candidate = { id: stringValue(finished.id), scoreOne: finished.scoreOne, scoreTwo: finished.scoreTwo };
+          winnerLatchId = candidate.id;
+        } else if (liveGame.hasWinner === true
+          && typeof liveGame.scoreOne === "number" && Number.isFinite(liveGame.scoreOne)
+          && typeof liveGame.scoreTwo === "number" && Number.isFinite(liveGame.scoreTwo)
+          && liveGame.scoreOne !== liveGame.scoreTwo) {
           if (!winnerLatchId) {
             winnerLatchId = `edge-${Date.now()}-${liveGame.scoreOne}-${liveGame.scoreTwo}`;
           }
@@ -1603,22 +2579,110 @@ export default function Home() {
         }
       } catch {
         // Writer may be restarting; keep last Results board.
+      } finally {
+        controller = null;
+        if (active) timer = window.setTimeout(pollFinishedGame, 500);
       }
     }
 
-    pollFinishedGame();
-    const timer = window.setInterval(pollFinishedGame, 500);
+    void pollFinishedGame();
     return () => {
       active = false;
-      window.clearInterval(timer);
-      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller?.abort();
     };
-  }, [hydrated]);
+  }, [hydrated, isPrimaryTab]);
 
-  function notify(message: string) {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 3200);
+  async function takeControlOfWorkspace() {
+    if (takingControl) return;
+    setTakingControl(true);
+    let handoffTimedOut = false;
+    try {
+      const currentLease = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+      const handoffChannel = workspaceHandoffChannelRef.current;
+      if (handoffChannel
+        && currentLease
+        && currentLease.ownerId !== tabIdRef.current
+        && currentLease.expiresAt > Date.now()) {
+        const requestId = createLocalId();
+        const confirmed = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const finish = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
+            handoffChannel.removeEventListener("message", handleMessage);
+            resolve(value);
+          };
+          const handleMessage = (event: MessageEvent) => {
+            const message = asRecord(event.data);
+            if (message.type === "handoff-ready"
+              && message.requestId === requestId
+              && message.requesterId === tabIdRef.current) finish(true);
+          };
+          const timer = window.setTimeout(() => finish(false), 1_000);
+          handoffChannel.addEventListener("message", handleMessage);
+          try {
+            handoffChannel.postMessage({ type: "request-handoff", requestId, requesterId: tabIdRef.current });
+          } catch {
+            finish(false);
+          }
+        });
+        handoffTimedOut = !confirmed;
+      }
+    } catch {
+      // Storage-restricted sessions cannot coordinate across tabs.
+    }
+
+    try {
+      const persisted = window.localStorage.getItem(STORAGE_KEY);
+      if (persisted) {
+        const restored = parsePersistedEnvelope(JSON.parse(persisted));
+        if (restored.revision > persistenceRevisionRef.current) {
+          persistenceRevisionRef.current = restored.revision;
+          outputActivatedRef.current = restored.outputActivated;
+          hydratedStateRef.current = restored.state;
+          stateRef.current = restored.state;
+          setOutputActivated(restored.outputActivated);
+          setState(restored.state);
+        }
+      }
+    } catch {
+      // Keep the last valid in-memory draft if persisted data is malformed.
+    }
+
+    try {
+      const current = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+      const lease: WriterLease = {
+        ownerId: tabIdRef.current,
+        expiresAt: Date.now() + WRITER_LEASE_DURATION_MS,
+        fence: createWriterFence(current?.fence ?? writerFenceRef.current),
+      };
+      window.localStorage.setItem(WRITER_LEASE_KEY, JSON.stringify(lease));
+      const verified = parseWriterLease(window.localStorage.getItem(WRITER_LEASE_KEY));
+      if (verified?.ownerId !== tabIdRef.current) {
+        notify("Could not take control — another tab still owns the workspace");
+        setTakingControl(false);
+        return;
+      }
+      writerFenceRef.current = verified.fence;
+    } catch {
+      // Storage-restricted browser sessions can still operate as a single tab.
+      writerFenceRef.current = createWriterFence(writerFenceRef.current);
+    }
+    yieldedForHandoffRef.current = false;
+    serverOwnershipBlockedRef.current = false;
+    serverOwnershipRetryAtRef.current = 0;
+    forceWriterClaimRef.current = true;
+    lastSuccessfulPayloadSignatureRef.current = "";
+    isPrimaryTabRef.current = true;
+    setIsPrimaryTab(true);
+    writerTokenRef.current = "";
+    setLiveSync("checking");
+    setTakingControl(false);
+    notify(handoffTimedOut
+      ? "This tab now controls the workspace — verify recent edits from the previous tab"
+      : "This tab now controls the production workspace");
   }
 
   function updateGeneral<K extends keyof GeneralInfo>(key: K, value: GeneralInfo[K]) {
@@ -1850,12 +2914,8 @@ export default function Home() {
 
   async function setRocketLeagueMatchPaused(paused: boolean) {
     try {
-      const response = await fetch(ROCKET_LEAGUE_MATCH_PAUSED_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ paused }),
-      });
-      const payload = await response.json().catch(() => ({}));
+      const { response, payload: rawPayload } = await postWriterMutation(ROCKET_LEAGUE_MATCH_PAUSED_ENDPOINT, { paused });
+      const payload = asRecord(rawPayload);
       if (!response.ok && response.status !== 202) {
         notify(String(payload?.error || (paused ? "Could not pause the match" : "Could not resume the match")));
         return;
@@ -1877,6 +2937,16 @@ export default function Home() {
 
   function updateRocketLeague(patch: Partial<RocketLeague>) {
     setState((current) => ({ ...current, rocketLeague: { ...current.rocketLeague, ...patch } }));
+  }
+
+  function updateRocketLeagueBestOf(bestOf: RocketLeague["bestOf"]) {
+    setState((current) => ({
+      ...current,
+      rocketLeague: {
+        ...current.rocketLeague,
+        bestOf,
+      },
+    }));
   }
 
   function updateDebugLive(patch: Partial<RocketLeagueDebugLive>) {
@@ -1950,10 +3020,14 @@ export default function Home() {
       ...current,
       rocketLeague: {
         ...current.rocketLeague,
-        savedGames: current.rocketLeague.games.map((game) => ({ ...game })),
+        savedGames: mergeSavedResultRows(
+          current.rocketLeague.games,
+          current.rocketLeague.savedGames,
+          rocketLeagueGameLimit(current.rocketLeague.bestOf),
+        ),
       },
     }));
-    notify("Rocket League results updated in JSON");
+    notify("Rocket League results queued for live JSON");
   }
 
   function resetRocketLeagueSeries() {
@@ -1971,6 +3045,16 @@ export default function Home() {
 
   function updateValorant(patch: Partial<Valorant>) {
     setState((current) => ({ ...current, valorant: { ...current.valorant, ...patch } }));
+  }
+
+  function updateValorantBestOf(bestOf: Valorant["bestOf"]) {
+    setState((current) => ({
+      ...current,
+      valorant: {
+        ...current.valorant,
+        bestOf,
+      },
+    }));
   }
 
   function updateValorantScore(gameIndex: number, side: "home" | "away", rawValue: string) {
@@ -1993,10 +3077,14 @@ export default function Home() {
       ...current,
       valorant: {
         ...current.valorant,
-        savedGames: current.valorant.games.map((game) => ({ ...game })),
+        savedGames: mergeSavedResultRows(
+          current.valorant.games,
+          current.valorant.savedGames,
+          valorantGameLimit(current.valorant.bestOf),
+        ),
       },
     }));
-    notify("VALORANT results updated in JSON");
+    notify("VALORANT results queued for live JSON");
   }
 
   function resetValorantSeries() {
@@ -2013,6 +3101,17 @@ export default function Home() {
   }
 
   function updateValorantBo3(key: keyof ValorantBo3, value: string) {
+    if (!String(key).startsWith("side") && value) {
+      const duplicate = Object.entries(state.valorant.bo3).some(([candidateKey, candidateValue]) => (
+        candidateKey !== key
+        && !candidateKey.startsWith("side")
+        && canonicalMapName(candidateValue) === canonicalMapName(value)
+      ));
+      if (duplicate) {
+        notify("Each VALORANT map can only be used once in the veto");
+        return;
+      }
+    }
     setState((current) => ({
       ...current,
       valorant: { ...current.valorant, bo3: { ...current.valorant.bo3, [key]: value } as ValorantBo3 },
@@ -2020,6 +3119,17 @@ export default function Home() {
   }
 
   function updateValorantBo5(key: keyof ValorantBo5, value: string) {
+    if (!String(key).startsWith("side") && value) {
+      const duplicate = Object.entries(state.valorant.bo5).some(([candidateKey, candidateValue]) => (
+        candidateKey !== key
+        && !candidateKey.startsWith("side")
+        && canonicalMapName(candidateValue) === canonicalMapName(value)
+      ));
+      if (duplicate) {
+        notify("Each VALORANT map can only be used once in the veto");
+        return;
+      }
+    }
     setState((current) => ({
       ...current,
       valorant: { ...current.valorant, bo5: { ...current.valorant.bo5, [key]: value } as ValorantBo5 },
@@ -2083,13 +3193,14 @@ export default function Home() {
         overrides: { ...match.league.overrides, ...patch },
       };
       const resolved = resolveLeague(league);
+      const updatesEventName = Object.prototype.hasOwnProperty.call(patch, "eventName");
       const colored = applyLeagueColorsToTeams(match.team1, match.team2, resolved.primaryColor, resolved.secondaryColor);
       matches[matchIndex] = { ...match, ...colored, league };
       return {
         ...current,
         general: {
           ...current.general,
-          eventName: matchIndex === 0 ? resolved.eventName || current.general.eventName : current.general.eventName,
+          eventName: matchIndex === 0 && updatesEventName ? resolved.eventName : current.general.eventName,
           matches,
         },
       };
@@ -2097,23 +3208,34 @@ export default function Home() {
   }
 
   function resetLeagueOverrides(matchIndex: number) {
-    setState((current) => {
-      const matches = [...current.general.matches] as [Match, Match];
-      const match = matches[matchIndex];
-      const league = { ...match.league, overrides: emptyLeagueOverrides() };
-      const resolved = resolveLeague(league);
-      const colored = applyLeagueColorsToTeams(match.team1, match.team2, resolved.primaryColor, resolved.secondaryColor);
-      matches[matchIndex] = { ...match, ...colored, league };
-      return {
-        ...current,
-        general: {
-          ...current.general,
-          eventName: matchIndex === 0 ? resolved.eventName || current.general.eventName : current.general.eventName,
-          matches,
-        },
-      };
+    requestConfirmation({
+      title: `Reset Match ${matchIndex + 1} league overrides?`,
+      description: "This restores the synced league name, event name, colors, region, season, and logo for this match. This cannot be undone.",
+      confirmLabel: "Reset league overrides",
+      onConfirm: () => {
+        setState((current) => {
+          const matches = [...current.general.matches] as [Match, Match];
+          const match = matches[matchIndex];
+          const previousResolved = resolveLeague(match.league);
+          const league = { ...match.league, overrides: emptyLeagueOverrides() };
+          const resolved = resolveLeague(league);
+          const colored = applyLeagueColorsToTeams(match.team1, match.team2, resolved.primaryColor, resolved.secondaryColor);
+          matches[matchIndex] = { ...match, ...colored, league };
+          const shouldRestoreSourceEvent = matchIndex === 0
+            && Boolean(match.league.overrides.eventName.trim())
+            && current.general.eventName === previousResolved.eventName;
+          return {
+            ...current,
+            general: {
+              ...current.general,
+              eventName: shouldRestoreSourceEvent ? resolved.eventName : current.general.eventName,
+              matches,
+            },
+          };
+        });
+        notify(`Match ${matchIndex + 1} league overrides reset`);
+      },
     });
-    notify(`Match ${matchIndex + 1} league overrides reset`);
   }
 
   function selectTeamColor(matchIndex: number, teamKey: "team1" | "team2", selectedColor: ColorSource) {
@@ -2129,8 +3251,16 @@ export default function Home() {
   }
 
   function resetTeamOverrides(matchIndex: number, teamKey: "team1" | "team2") {
-    updateTeam(matchIndex, teamKey, { selectedColor: "primary", overrides: emptyOverrides() });
-    notify(`Match ${matchIndex + 1} ${teamKey === "team1" ? "team 1" : "team 2"} overrides reset`);
+    const teamLabel = teamKey === "team1" ? "team 1" : "team 2";
+    requestConfirmation({
+      title: `Reset Match ${matchIndex + 1} ${teamLabel} overrides?`,
+      description: "This restores the synced team name, shorthand, region, standing, logo, and primary color. This cannot be undone.",
+      confirmLabel: "Reset team overrides",
+      onConfirm: () => {
+        updateTeam(matchIndex, teamKey, { selectedColor: "primary", overrides: emptyOverrides() });
+        notify(`Match ${matchIndex + 1} ${teamLabel} overrides reset`);
+      },
+    });
   }
 
   function parseExcelPool(text: string, maximumRows: number) {
@@ -2161,17 +3291,24 @@ export default function Home() {
 
   function clearDrawPool(poolIndex: number) {
     const definition = DRAW_DEFINITIONS[drawTab];
-    if (!window.confirm(`Clear every entry in Pool ${String.fromCharCode(65 + poolIndex)}?`)) return;
-    setState((current) => {
-      const pool = { ...current.draws[drawTab] };
-      for (let row = 0; row < definition.rows; row += 1) pool[`P${poolIndex + 1}${row + 1}`] = "";
-      return { ...current, draws: { ...current.draws, [drawTab]: pool } };
+    const poolName = String.fromCharCode(65 + poolIndex);
+    requestConfirmation({
+      title: `Clear Pool ${poolName}?`,
+      description: `This removes all ${definition.rows} entries from Pool ${poolName}. This cannot be undone.`,
+      confirmLabel: "Clear pool",
+      onConfirm: () => {
+        setState((current) => {
+          const pool = { ...current.draws[drawTab] };
+          for (let row = 0; row < definition.rows; row += 1) pool[`P${poolIndex + 1}${row + 1}`] = "";
+          return { ...current, draws: { ...current.draws, [drawTab]: pool } };
+        });
+        if (drawPastePool === poolIndex) {
+          setDrawPastePool(null);
+          setDrawPasteText("");
+        }
+        notify(`Pool ${poolName} cleared`);
+      },
     });
-    if (drawPastePool === poolIndex) {
-      setDrawPastePool(null);
-      setDrawPasteText("");
-    }
-    notify(`Pool ${String.fromCharCode(65 + poolIndex)} cleared`);
   }
 
   function updateSponsor(index: number, patch: Partial<Sponsor>) {
@@ -2184,64 +3321,158 @@ export default function Home() {
   }
 
   async function exportAll() {
+    if (exporting) return;
+    if (typeof (window as Window & { showDirectoryPicker?: unknown }).showDirectoryPicker !== "function") {
+      downloadJsonPackage(manualExportFiles);
+      notify("JSON recovery package downloaded — unzip it to access all 7 files");
+      return;
+    }
+    setExporting(true);
     try {
-      if (await writeFilesToFolder(files)) {
-        notify("6 JSON files written to your selected folder");
+      if (await writeFilesToFolder(manualExportFiles) === "folder") {
+        notify("7 JSON files written to your selected folder");
         return;
       }
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
+      notify(`${(error as Error).message}. Check any files already written, then retry.`);
+      return;
+    } finally {
+      setExporting(false);
     }
-
-    files.forEach((file, index) => window.setTimeout(() => downloadJSON(file), index * 120));
-    notify("JSON package downloaded");
   }
 
   function updateValorantMapArtwork(index: number, key: "name" | "nextMap" | "pickCard" | "banCard", value: string) {
-    setState((current) => ({
-      ...current,
-      valorantMapData: {
-        maps: current.valorantMapData.maps.map((map, mapIndex) => mapIndex === index ? { ...map, [key]: value } : map),
-      },
-    }));
+    const oldName = state.valorantMapData.maps[index]?.name ?? "";
+    if (key === "name") {
+      const normalized = canonicalMapName(value);
+      const duplicate = state.valorantMapData.maps.some((map, mapIndex) => mapIndex !== index && canonicalMapName(map.name) === normalized);
+      if (!normalized || duplicate) {
+        notify(!normalized ? "Map names cannot be blank" : "Map names must be unique");
+        return;
+      }
+    }
+    setState((current) => {
+      const rename = (selection: Record<string, string>) => Object.fromEntries(
+        Object.entries(selection).map(([selectionKey, selectionValue]) => [
+          selectionKey,
+          key === "name" && !selectionKey.startsWith("side") && canonicalMapName(selectionValue) === canonicalMapName(oldName) ? value : selectionValue,
+        ]),
+      );
+      return {
+        ...current,
+        valorant: key === "name" ? {
+          ...current.valorant,
+          bo3: rename(current.valorant.bo3) as ValorantBo3,
+          bo5: rename(current.valorant.bo5) as ValorantBo5,
+        } : current.valorant,
+        valorantMapData: {
+          maps: current.valorantMapData.maps.map((map, mapIndex) => mapIndex === index ? { ...map, [key]: value } : map),
+        },
+      };
+    });
+  }
+
+  function applyDetectedLogoBackground(matchIndex: number, teamKey: "team1" | "team2", source: string, logoBackground: string) {
+    setState((current) => {
+      const matches = [...current.general.matches] as [Match, Match];
+      const team = matches[matchIndex][teamKey];
+      if (displayLogoUrl(resolveTeam(team).logo) !== source) return current;
+      matches[matchIndex] = { ...matches[matchIndex], [teamKey]: { ...team, logoBackground } };
+      return { ...current, general: { ...current.general, matches } };
+    });
   }
 
   function addValorantMap() {
+    if (state.valorantMapData.maps.length >= 32) {
+      notify("The VALORANT map pool supports up to 32 maps");
+      return;
+    }
+    let suffix = state.valorantMapData.maps.length + 1;
+    while (state.valorantMapData.maps.some((map) => canonicalMapName(map.name) === canonicalMapName(`Custom Map ${suffix}`))) suffix += 1;
     setState((current) => ({
       ...current,
       valorantMapData: {
-        maps: [
+        maps: current.valorantMapData.maps.length >= 32 ? current.valorantMapData.maps : [
           ...current.valorantMapData.maps,
-          { name: "", nextMap: "", pickCard: "", banCard: "" },
+          { name: `Custom Map ${suffix}`, nextMap: "", pickCard: "", banCard: "" },
         ],
       },
     }));
   }
 
   function removeValorantMap(index: number) {
-    setState((current) => ({
-      ...current,
-      valorantMapData: {
-        maps: current.valorantMapData.maps.filter((_, mapIndex) => mapIndex !== index),
+    const map = state.valorantMapData.maps[index];
+    if (!map) return;
+    if (state.valorantMapData.maps.length <= 1) {
+      notify("The VALORANT map pool must contain at least one map");
+      return;
+    }
+    requestConfirmation({
+      title: `Remove ${map.name}?`,
+      description: "This removes the map from the VALORANT pool and clears any existing veto selections that use it. This cannot be undone.",
+      confirmLabel: "Remove map",
+      onConfirm: () => {
+        setState((current) => {
+          const clearSelection = (selection: Record<string, string>) => Object.fromEntries(
+            Object.entries(selection).map(([selectionKey, selectionValue]) => [
+              selectionKey,
+              !selectionKey.startsWith("side") && canonicalMapName(selectionValue) === canonicalMapName(map.name) ? "" : selectionValue,
+            ]),
+          );
+          return {
+            ...current,
+            valorant: {
+              ...current.valorant,
+              bo3: clearSelection(current.valorant.bo3) as ValorantBo3,
+              bo5: clearSelection(current.valorant.bo5) as ValorantBo5,
+            },
+            valorantMapData: {
+              maps: current.valorantMapData.maps.filter((_, mapIndex) => mapIndex !== index),
+            },
+          };
+        });
       },
-    }));
+    });
   }
 
   function resetValorantMapPool() {
-    setState((current) => ({
-      ...current,
-      valorantMapData: {
-        maps: VALORANT_MAP_ARTWORK.map((map) => ({ ...map })),
+    requestConfirmation({
+      title: "Reset the VALORANT map pool?",
+      description: "This restores the Gaming Oasis defaults, removes custom maps, and clears veto selections for removed maps. This cannot be undone.",
+      confirmLabel: "Reset map pool",
+      onConfirm: () => {
+        const defaultNames = new Set(VALORANT_MAP_ARTWORK.map((map) => canonicalMapName(map.name)));
+        setState((current) => ({
+          ...current,
+          valorant: {
+            ...current.valorant,
+            bo3: Object.fromEntries(Object.entries(current.valorant.bo3).map(([key, value]) => [key, key.startsWith("side") || !value || defaultNames.has(canonicalMapName(value)) ? value : ""])) as ValorantBo3,
+            bo5: Object.fromEntries(Object.entries(current.valorant.bo5).map(([key, value]) => [key, key.startsWith("side") || !value || defaultNames.has(canonicalMapName(value)) ? value : ""])) as ValorantBo5,
+          },
+          valorantMapData: {
+            maps: VALORANT_MAP_ARTWORK.map((map) => ({ ...map })),
+          },
+        }));
+        notify("VALORANT map pool reset to default");
       },
-    }));
-    notify("VALORANT map pool reset to default");
+    });
   }
 
   function resetLocalData() {
+    matchRequestRef.current.forEach((request) => {
+      request.sequence += 1;
+      request.controller?.abort();
+      request.controller = null;
+    });
     const fresh = createInitialState();
-    setAllowEmptyLiveWrite(true);
+    hydratedStateRef.current = fresh;
+    stateRef.current = fresh;
+    outputActivatedRef.current = true;
+    setOutputActivated(true);
     setState(fresh);
     setConnection("idle");
+    setSyncingMatch(null);
     setActiveSection("welcome");
     setResetConfirmationOpen(false);
     notify("Local production draft reset");
@@ -2254,9 +3485,20 @@ export default function Home() {
       return;
     }
 
+    const requestedId = match.id.trim();
+    const requestState = matchRequestRef.current[matchIndex];
+    requestState.controller?.abort();
+    const controller = new AbortController();
+    const sequence = requestState.sequence + 1;
+    requestState.sequence = sequence;
+    requestState.controller = controller;
+    const timeout = window.setTimeout(() => controller.abort("timeout"), 10_000);
     setSyncingMatch(matchIndex);
     try {
-      const response = await fetch(`${MATCH_LOOKUP_ENDPOINT}/${encodeURIComponent(match.id.trim())}`, { headers: { Accept: "application/json" } });
+      const response = await fetch(`${MATCH_LOOKUP_ENDPOINT}/${encodeURIComponent(requestedId)}`, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
       if (!response.ok) {
         const failure = await response.json().catch(() => ({})) as { error?: string | { message?: string } };
         const message = typeof failure.error === "string" ? failure.error : failure.error?.message;
@@ -2266,21 +3508,27 @@ export default function Home() {
       const matchData = (json.match && typeof json.match === "object" ? json.match : {}) as Record<string, unknown>;
       const standings = (json.standings && typeof json.standings === "object" ? json.standings : {}) as Record<string, unknown>;
       const event = (json.event && typeof json.event === "object" ? json.event : {}) as Record<string, unknown>;
+      if (!matchData.team1 || typeof matchData.team1 !== "object" || !matchData.team2 || typeof matchData.team2 !== "object") {
+        throw new Error("League Hub response did not include both teams");
+      }
+      if (matchRequestRef.current[matchIndex].sequence !== sequence) return;
       const gameTitle = typeof event.gameTitle === "string" ? event.gameTitle : "";
       const leagueSource = normalizeLeague(json.league, event);
       setState((current) => {
+        if (matchRequestRef.current[matchIndex].sequence !== sequence || current.general.matches[matchIndex].id.trim() !== requestedId) return current;
         const matches = [...current.general.matches] as [Match, Match];
-        const existingOverrides = current.general.matches[matchIndex].league.overrides;
+        const currentMatch = current.general.matches[matchIndex];
+        const existingOverrides = currentMatch.league.overrides;
         const league = { ...leagueSource, overrides: { ...existingOverrides } };
         const resolved = resolveLeague(league);
-        const team1 = normalizeTeam(matchData.team1, standings.team1, {
+        const team1 = mergeSyncedTeam(currentMatch.team1, normalizeTeam(matchData.team1, standings.team1, {
           primaryColor: resolved.primaryColor,
           secondaryColor: resolved.secondaryColor,
-        }, gameTitle);
-        const team2 = normalizeTeam(matchData.team2, standings.team2, {
+        }, gameTitle));
+        const team2 = mergeSyncedTeam(currentMatch.team2, normalizeTeam(matchData.team2, standings.team2, {
           primaryColor: resolved.primaryColor,
           secondaryColor: resolved.secondaryColor,
-        }, gameTitle);
+        }, gameTitle));
         matches[matchIndex] = { ...matches[matchIndex], team1, team2, league };
         return {
           ...current,
@@ -2293,13 +3541,30 @@ export default function Home() {
           },
         };
       });
-      setConnection("connected");
-      notify(`Match ${matchIndex + 1} synced from League Hub`);
+      if (
+        matchRequestRef.current[matchIndex].sequence === sequence
+        && stateRef.current.general.matches[matchIndex].id.trim() === requestedId
+      ) {
+        setConnection("connected");
+        notify(`Match ${matchIndex + 1} synced from League Hub`);
+      } else if (matchRequestRef.current[matchIndex].sequence === sequence) {
+        setConnection("idle");
+      }
     } catch (error) {
+      if (matchRequestRef.current[matchIndex].sequence !== sequence) return;
+      if (stateRef.current.general.matches[matchIndex].id.trim() !== requestedId) {
+        setConnection("idle");
+        return;
+      }
       setConnection("error");
-      notify((error as Error).message || "Match sync failed - verify the match ID");
+      const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
+      notify(timedOut ? "League Hub sync timed out — try again" : (error as Error).message || "Match sync failed - verify the match ID");
     } finally {
-      setSyncingMatch(null);
+      window.clearTimeout(timeout);
+      if (matchRequestRef.current[matchIndex].sequence === sequence) {
+        matchRequestRef.current[matchIndex].controller = null;
+        setSyncingMatch(null);
+      }
     }
   }
 
@@ -2326,9 +3591,21 @@ export default function Home() {
     ...(state.settings.drawShowEnabled ? [{ key: "draw" as Section, label: "Draw show" }] : []),
     { key: "settings", label: "Settings" },
   ];
+  const visibleSection = sectionEnabled(activeSection, state.settings) ? activeSection : "welcome";
+
+  function goToSection(section: Section) {
+    setActiveSection(sectionEnabled(section, state.settings) ? section : "welcome");
+  }
 
   function renderWelcome() {
-    const readyCount = Number(Boolean(state.general.eventName)) + Number(filledMatches > 0) + Number(rocketLeagueReady) + Number(valorantReady) + Number(filledSponsors > 0);
+    const readiness = [
+      state.settings.generalInfoEnabled ? Boolean(state.general.eventName) : null,
+      filledMatches > 0,
+      state.settings.rocketLeagueEnabled ? rocketLeagueReady : null,
+      state.settings.valorantEnabled ? valorantReady : null,
+      state.settings.sponsorsEnabled ? filledSponsors > 0 : null,
+    ].filter((value): value is boolean => value !== null);
+    const readyCount = readiness.filter(Boolean).length;
     return (
       <div className="page-stack welcome-page">
         <SectionHeading
@@ -2340,19 +3617,19 @@ export default function Home() {
         <section className="welcome-overview panel-card">
           <div className="overview-heading">
             <div><h2>Show setup</h2><p>Complete the items needed for this broadcast.</p></div>
-            <strong>{readyCount} of 5 ready</strong>
+            <strong>{readyCount} of {readiness.length} ready</strong>
           </div>
           <div className="setup-list">
-            <button onClick={() => { setActiveSection("general"); setGeneralTab("talent"); }}><span className={state.general.eventName ? "complete" : ""} aria-hidden="true" /><div><strong>Event details</strong><small>{state.general.eventName || "Not configured"}</small></div><b>Open</b></button>
-            <button onClick={() => setActiveSection("matches")}><span className={filledMatches ? "complete" : ""} aria-hidden="true" /><div><strong>Team Info</strong><small>{filledMatches ? `${filledMatches} match${filledMatches === 1 ? "" : "es"} ready` : "No complete matches"}</small></div><b>Open</b></button>
-            <button onClick={() => setActiveSection("rocketLeague")}><span className={rocketLeagueReady ? "complete" : ""} aria-hidden="true" /><div><strong>Rocket League</strong><small>{rocketLeagueReady ? `${state.rocketLeague.bestOf} · ${rocketLeagueSeries.completedGames} games entered` : "Event name / header not configured"}</small></div><b>Open</b></button>
-            <button onClick={() => setActiveSection("valorant")}><span className={valorantReady ? "complete" : ""} aria-hidden="true" /><div><strong>VALORANT</strong><small>{valorantReady ? `${state.valorant.bestOf} · ${valorantSeries.completedGames} maps entered` : "Event name / header not configured"}</small></div><b>Open</b></button>
-            <button onClick={() => setActiveSection("sponsors")}><span className={filledSponsors ? "complete" : ""} aria-hidden="true" /><div><strong>Sponsors</strong><small>{filledSponsors ? `${filledSponsors} configured` : "No sponsors configured"}</small></div><b>Open</b></button>
+            {state.settings.generalInfoEnabled ? <button onClick={() => { goToSection("general"); setGeneralTab("talent"); }}><span className={state.general.eventName ? "complete" : ""} aria-hidden="true" /><div><strong>Event details</strong><small>{state.general.eventName || "Not configured"}</small></div><b>Open</b></button> : null}
+            <button onClick={() => goToSection("matches")}><span className={filledMatches ? "complete" : ""} aria-hidden="true" /><div><strong>Team Info</strong><small>{filledMatches ? `${filledMatches} match${filledMatches === 1 ? "" : "es"} ready` : "No complete matches"}</small></div><b>Open</b></button>
+            {state.settings.rocketLeagueEnabled ? <button onClick={() => goToSection("rocketLeague")}><span className={rocketLeagueReady ? "complete" : ""} aria-hidden="true" /><div><strong>Rocket League</strong><small>{rocketLeagueReady ? `${state.rocketLeague.bestOf} · ${rocketLeagueSeries.completedGames} games entered` : "Event name / header not configured"}</small></div><b>Open</b></button> : null}
+            {state.settings.valorantEnabled ? <button onClick={() => goToSection("valorant")}><span className={valorantReady ? "complete" : ""} aria-hidden="true" /><div><strong>VALORANT</strong><small>{valorantReady ? `${state.valorant.bestOf} · ${valorantSeries.completedGames} maps entered` : "Event name / header not configured"}</small></div><b>Open</b></button> : null}
+            {state.settings.sponsorsEnabled ? <button onClick={() => goToSection("sponsors")}><span className={filledSponsors ? "complete" : ""} aria-hidden="true" /><div><strong>Sponsors</strong><small>{filledSponsors ? `${filledSponsors} configured` : "No sponsors configured"}</small></div><b>Open</b></button> : null}
           </div>
         </section>
 
         <section className="activity-strip">
-          <div><span className={`status-dot ${liveSync === "synced" ? "live" : ""}`} /><p><strong>Live JSON</strong>{liveSync === "synced" ? "Files are current" : liveSync === "saving" ? "Writing changes" : "Writer is offline"}</p></div>
+          <div><span className={`status-dot ${liveSync === "synced" ? "live" : ""}`} /><p><strong>Live JSON</strong>{liveSyncLongLabel(liveSync)}</p></div>
           <div><span className={`status-dot ${connection === "connected" ? "live" : ""}`} /><p><strong>League Hub</strong>{connection === "connected" ? "Match data synced" : connection === "error" ? "Last sync failed" : "Ready for a match ID"}</p></div>
           <div><span className="status-dot live" /><p><strong>Output folder</strong>Local JSONs directory</p></div>
         </section>
@@ -2369,9 +3646,9 @@ export default function Home() {
           title={activeSection === "matches" ? "Team Info" : "General information"}
           description={activeSection === "matches" ? "Sync match data, verify team outputs, and apply production overrides." : "Manage event details, on-air talent, and rundown copy. Every change updates the local vMix JSON files."}
         />
-        {activeSection === "general" ? <div className="tabs" role="tablist" aria-label="General information views">
+        {activeSection === "general" ? <div className="tabs" role="tablist" aria-label="General information views" onKeyDown={handleTabListKeyDown}>
           {(["talent", "segments"] as const).map((tab) => (
-            <button key={tab} className={generalTab === tab ? "active" : ""} onClick={() => setGeneralTab(tab)}>
+            <button role="tab" aria-selected={generalTab === tab} tabIndex={generalTab === tab ? 0 : -1} key={tab} className={generalTab === tab ? "active" : ""} onClick={() => setGeneralTab(tab)}>
               {tab === "talent" ? "Talent & stream" : "Podcast Run of Show"}
             </button>
           ))}
@@ -2387,18 +3664,22 @@ export default function Home() {
                 const resolvedLeague = resolveLeague(league);
                 const leagueLogoPreview = displayLogoUrl(resolvedLeague.logo);
                 const sourceLogoPreview = displayLogoUrl(league.logo);
+                const leaguePrimaryColorInvalid = Boolean(league.overrides.primaryColor.trim() && !normalizeHexColor(league.overrides.primaryColor));
+                const leagueSecondaryColorInvalid = Boolean(league.overrides.secondaryColor.trim() && !normalizeHexColor(league.overrides.secondaryColor));
+                const leaguePrimaryColorErrorId = `match-${matchIndex + 1}-league-primary-color-error`;
+                const leagueSecondaryColorErrorId = `match-${matchIndex + 1}-league-secondary-color-error`;
                 return (
                 <section className="panel-card match-card" key={matchIndex}>
                   <div className="card-title-row">
                     <div><h2>Match {matchIndex + 1}</h2></div>
                     <div className={`match-sync ${matchIndex === 1 ? "with-copy" : ""}`}>
                       {matchIndex === 1 ? (
-                        <button className="button compact copy-match-button" type="button" onClick={copyMatchTwoToOne}>
+                        <button className="button compact copy-match-button" type="button" onClick={copyMatchTwoToOne} disabled={syncingMatch !== null}>
                           Copy to Match 1
                         </button>
                       ) : null}
-                      <input aria-label={`Match ${matchIndex + 1} ID`} value={match.id} onChange={(event) => { updateMatch(matchIndex, { id: event.target.value }); setConnection("idle"); }} placeholder="League Hub match ID" />
-                      <button className="button compact" onClick={() => syncMatch(matchIndex)} disabled={syncingMatch !== null}>
+                       <input disabled={syncingMatch === matchIndex} aria-label={`Match ${matchIndex + 1} ID`} value={match.id} onChange={(event) => { updateMatch(matchIndex, { id: event.target.value }); setConnection("idle"); }} placeholder="League Hub match ID" />
+                       <button className="button compact" aria-busy={syncingMatch === matchIndex} onClick={() => syncMatch(matchIndex)} disabled={syncingMatch !== null}>
                         {syncingMatch === matchIndex ? "Syncing..." : "Sync from hub"}
                       </button>
                     </div>
@@ -2414,6 +3695,10 @@ export default function Home() {
                         backup2: team.backupColor2,
                       };
                       const previewLogo = displayLogoUrl(resolved.logo);
+                      const customColorInvalid = Boolean(team.overrides.color.trim() && !normalizeHexColor(team.overrides.color));
+                      const customColorActive = Boolean(normalizeHexColor(team.overrides.color));
+                      const customColorErrorId = `match-${matchIndex + 1}-team-${teamIndex + 1}-custom-color-error`;
+                      const outputColorLabelId = `match-${matchIndex + 1}-team-${teamIndex + 1}-output-color-label`;
                       const logoBackgroundOverride = normalizeLogoBackground(team.overrides.logoBackground);
                       const nameNeedsOverride = resolved.name.trim().length > TEAM_NAME_LIMIT;
                       const productionSourceName = shortTeamName(team.sourceName || team.name);
@@ -2421,7 +3706,7 @@ export default function Home() {
                         <div className="team-editor" key={teamKey}>
                           <div className="team-editor-title">
                             <span className="team-logo-preview" style={{ borderColor: safeColor(resolved.color), backgroundColor: resolved.logoBackground }}>
-                              {resolved.logo ? <img src={previewLogo} crossOrigin={previewLogo !== resolved.logo ? "anonymous" : undefined} alt="" onLoad={(event) => { const background = detectLogoBackground(event.currentTarget); if (background) updateTeam(matchIndex, teamKey, { logoBackground: background }); }} /> : resolved.name.slice(0, 2).toUpperCase() || `T${teamIndex + 1}`}
+                              {resolved.logo ? <img src={previewLogo} crossOrigin={previewLogo !== resolved.logo ? "anonymous" : undefined} alt="" onLoad={(event) => { const background = detectLogoBackground(event.currentTarget); if (background) applyDetectedLogoBackground(matchIndex, teamKey, previewLogo, background); }} /> : resolved.name.slice(0, 2).toUpperCase() || `T${teamIndex + 1}`}
                             </span>
                             <div><small>Team {teamIndex + 1} final output</small><strong>{resolved.name || "Awaiting team"}</strong></div>
                             <button className="override-reset" type="button" onClick={() => resetTeamOverrides(matchIndex, teamKey)}>Reset overrides</button>
@@ -2444,13 +3729,16 @@ export default function Home() {
                             <div className="wide-field"><Field label="Logo URL override" value={team.overrides.logo} onChange={(value) => updateTeamOverride(matchIndex, teamKey, { logo: value })} placeholder={team.logo || "https://..."} /></div>
                           </div>
                           <div className="override-field-group">
-                            <span className="field-label">Output color</span>
-                            <div className="color-options">
-                              {COLOR_OPTIONS.map((option) => <button type="button" key={option.key} className={team.selectedColor === option.key && !team.overrides.color ? "selected" : ""} onClick={() => selectTeamColor(matchIndex, teamKey, option.key)}><i style={{ backgroundColor: safeColor(colors[option.key]) }} /><span>{option.label}</span><small>{colors[option.key]}</small></button>)}
+                            <span className="field-label" id={outputColorLabelId}>Output color</span>
+                            <div className="color-options" role="group" aria-labelledby={outputColorLabelId}>
+                              {COLOR_OPTIONS.map((option) => {
+                                const selected = team.selectedColor === option.key && !customColorActive;
+                                return <button type="button" key={option.key} className={selected ? "selected" : ""} aria-pressed={selected} onClick={() => selectTeamColor(matchIndex, teamKey, option.key)}><i style={{ backgroundColor: safeColor(colors[option.key]) }} /><span>{option.label}</span><small>{colors[option.key]}</small></button>;
+                              })}
                             </div>
                           </div>
                           <div className="form-grid two color-override-grid">
-                            <label className="field"><span className="field-label">Custom color override</span><div className="color-field"><input aria-label={`Match ${matchIndex + 1} team ${teamIndex + 1} custom color`} type="color" value={safeColor(team.overrides.color || resolved.color, "#F6AC18")} onChange={(event) => updateTeamOverride(matchIndex, teamKey, { color: event.target.value })} /><input aria-label={`Match ${matchIndex + 1} team ${teamIndex + 1} custom color hex`} value={team.overrides.color} onChange={(event) => updateTeamOverride(matchIndex, teamKey, { color: event.target.value })} placeholder="Optional #RRGGBB" maxLength={7} /></div>{team.overrides.color && !colorToRgb(team.overrides.color) ? <span className="field-error">Use a complete #RRGGBB value</span> : null}</label>
+                            <label className="field"><span className="field-label">Custom color override</span><div className="color-field"><input aria-label={`Match ${matchIndex + 1} team ${teamIndex + 1} custom color`} type="color" value={safeColor(normalizeHexColor(team.overrides.color) || resolved.color, "#F6AC18")} onChange={(event) => updateTeamOverride(matchIndex, teamKey, { color: event.target.value })} /><input aria-label={`Match ${matchIndex + 1} team ${teamIndex + 1} custom color hex`} aria-invalid={customColorInvalid || undefined} aria-describedby={customColorInvalid ? customColorErrorId : undefined} value={team.overrides.color} onChange={(event) => updateTeamOverride(matchIndex, teamKey, { color: event.target.value })} placeholder="Optional #RRGGBB" maxLength={7} /></div>{customColorInvalid ? <span className="field-error" id={customColorErrorId}>Use a complete #RRGGBB value</span> : null}</label>
                             <div className="field"><span className="field-label">Logo background <small>{logoBackgroundOverride ? "Manual" : `Auto · ${resolved.logoBackground === IMAGE_PLATE_DARK ? "Navy" : "White"}`}</small></span><div className="logo-background-options"><button type="button" className={!logoBackgroundOverride ? "selected" : ""} aria-pressed={!logoBackgroundOverride} onClick={() => updateTeamOverride(matchIndex, teamKey, { logoBackground: "" })}>Auto</button><button type="button" className={logoBackgroundOverride === IMAGE_PLATE_LIGHT ? "selected" : ""} aria-pressed={logoBackgroundOverride === IMAGE_PLATE_LIGHT} onClick={() => updateTeamOverride(matchIndex, teamKey, { logoBackground: IMAGE_PLATE_LIGHT })}><i className="white" />White</button><button type="button" className={logoBackgroundOverride === IMAGE_PLATE_DARK ? "selected" : ""} aria-pressed={logoBackgroundOverride === IMAGE_PLATE_DARK} onClick={() => updateTeamOverride(matchIndex, teamKey, { logoBackground: IMAGE_PLATE_DARK })}><i className="navy" />Navy</button></div></div>
                           </div>
                           <div className="final-output-line"><span>Final</span><strong>{resolved.name || "No team"}</strong><small>{resolved.standing || "No standing"}</small><code style={{ borderColor: safeColor(resolved.color) }}>{resolved.color}</code></div>
@@ -2500,18 +3788,18 @@ export default function Home() {
                       <label className="field">
                         <span className="field-label">Primary color override</span>
                         <div className="color-field">
-                          <input aria-label={`Match ${matchIndex + 1} league primary color`} type="color" value={safeColor(league.overrides.primaryColor || resolvedLeague.primaryColor, "#F6AC18")} onChange={(event) => updateLeagueOverride(matchIndex, { primaryColor: event.target.value })} />
-                          <input aria-label={`Match ${matchIndex + 1} league primary color hex`} value={league.overrides.primaryColor} onChange={(event) => updateLeagueOverride(matchIndex, { primaryColor: event.target.value })} placeholder={league.primaryColor || "#RRGGBB"} maxLength={7} />
+                          <input aria-label={`Match ${matchIndex + 1} league primary color`} type="color" value={safeColor(normalizeHexColor(league.overrides.primaryColor) || resolvedLeague.primaryColor, "#F6AC18")} onChange={(event) => updateLeagueOverride(matchIndex, { primaryColor: event.target.value })} />
+                          <input aria-label={`Match ${matchIndex + 1} league primary color hex`} aria-invalid={leaguePrimaryColorInvalid || undefined} aria-describedby={leaguePrimaryColorInvalid ? leaguePrimaryColorErrorId : undefined} value={league.overrides.primaryColor} onChange={(event) => updateLeagueOverride(matchIndex, { primaryColor: event.target.value })} placeholder={league.primaryColor || "#RRGGBB"} maxLength={7} />
                         </div>
-                        {league.overrides.primaryColor && !colorToRgb(league.overrides.primaryColor) ? <span className="field-error">Use a complete #RRGGBB value</span> : null}
+                        {leaguePrimaryColorInvalid ? <span className="field-error" id={leaguePrimaryColorErrorId}>Use a complete #RRGGBB value</span> : null}
                       </label>
                       <label className="field">
                         <span className="field-label">Secondary color override</span>
                         <div className="color-field">
-                          <input aria-label={`Match ${matchIndex + 1} league secondary color`} type="color" value={safeColor(league.overrides.secondaryColor || resolvedLeague.secondaryColor, "#47213F")} onChange={(event) => updateLeagueOverride(matchIndex, { secondaryColor: event.target.value })} />
-                          <input aria-label={`Match ${matchIndex + 1} league secondary color hex`} value={league.overrides.secondaryColor} onChange={(event) => updateLeagueOverride(matchIndex, { secondaryColor: event.target.value })} placeholder={league.secondaryColor || "#RRGGBB"} maxLength={7} />
+                          <input aria-label={`Match ${matchIndex + 1} league secondary color`} type="color" value={safeColor(normalizeHexColor(league.overrides.secondaryColor) || resolvedLeague.secondaryColor, "#47213F")} onChange={(event) => updateLeagueOverride(matchIndex, { secondaryColor: event.target.value })} />
+                          <input aria-label={`Match ${matchIndex + 1} league secondary color hex`} aria-invalid={leagueSecondaryColorInvalid || undefined} aria-describedby={leagueSecondaryColorInvalid ? leagueSecondaryColorErrorId : undefined} value={league.overrides.secondaryColor} onChange={(event) => updateLeagueOverride(matchIndex, { secondaryColor: event.target.value })} placeholder={league.secondaryColor || "#RRGGBB"} maxLength={7} />
                         </div>
-                        {league.overrides.secondaryColor && !colorToRgb(league.overrides.secondaryColor) ? <span className="field-error">Use a complete #RRGGBB value</span> : null}
+                        {leagueSecondaryColorInvalid ? <span className="field-error" id={leagueSecondaryColorErrorId}>Use a complete #RRGGBB value</span> : null}
                       </label>
                     </div>
                     <div className="final-output-line league-final-line">
@@ -2628,11 +3916,11 @@ export default function Home() {
           title="VALORANT"
           description="Manage map results, scoreboard settings, and the complete series pick/ban order. Match 1 supplies team data."
         />
-        <div className="tabs" role="tablist" aria-label="VALORANT views">
-          <button className={valorantTab === "results" ? "active" : ""} onClick={() => setValorantTab("results")}>Results & setup</button>
-          <button className={valorantTab === "pickBans" ? "active" : ""} onClick={() => setValorantTab("pickBans")}>Pick / ban</button>
-          <button className={valorantTab === "mapPool" ? "active" : ""} onClick={() => setValorantTab("mapPool")}>Map pool</button>
-          <button className={valorantTab === "overlay" ? "active" : ""} onClick={() => setValorantTab("overlay")}>Browser overlay</button>
+        <div className="tabs" role="tablist" aria-label="VALORANT views" onKeyDown={handleTabListKeyDown}>
+          <button role="tab" aria-selected={valorantTab === "results"} tabIndex={valorantTab === "results" ? 0 : -1} className={valorantTab === "results" ? "active" : ""} onClick={() => setValorantTab("results")}>Results & setup</button>
+          <button role="tab" aria-selected={valorantTab === "pickBans"} tabIndex={valorantTab === "pickBans" ? 0 : -1} className={valorantTab === "pickBans" ? "active" : ""} onClick={() => setValorantTab("pickBans")}>Pick / ban</button>
+          <button role="tab" aria-selected={valorantTab === "mapPool"} tabIndex={valorantTab === "mapPool" ? 0 : -1} className={valorantTab === "mapPool" ? "active" : ""} onClick={() => setValorantTab("mapPool")}>Map pool</button>
+          <button role="tab" aria-selected={valorantTab === "overlay"} tabIndex={valorantTab === "overlay" ? 0 : -1} className={valorantTab === "overlay" ? "active" : ""} onClick={() => setValorantTab("overlay")}>Browser overlay</button>
         </div>
 
         {valorantTab === "results" ? (
@@ -2641,18 +3929,23 @@ export default function Home() {
               <div className="card-title-row result-card-heading"><div><h2>Map results</h2><p>Enter both scores with a clear winner, then update the live JSON.</p></div><div className="result-update-controls"><span className={valorantInvalidResults ? "invalid" : valorantPendingResults ? "pending" : "current"}>{valorantInvalidResults ? `${valorantInvalidResults} invalid ${valorantInvalidResults === 1 ? "result" : "results"}` : valorantPendingResults ? `${valorantPendingResults} unsaved` : "Results current"}</span><button className={`button ${valorantPendingResults && !valorantInvalidResults ? "primary" : "secondary"}`} type="button" onClick={saveValorantResults} disabled={!valorantPendingResults || Boolean(valorantInvalidResults)}>Update results</button><button ref={valorantSeriesResetTriggerRef} className="button danger" type="button" onClick={() => setValorantSeriesResetOpen(true)}>Reset series</button></div></div>
               <div className="rocket-score-head" aria-hidden="true"><span>Map</span><strong>{homeTeam}</strong><span>vs</span><strong>{awayTeam}</strong></div>
               <div className="rocket-score-list">
-                {Array.from({ length: VALORANT_GAME_COUNT }, (_, gameIndex) => {
+                {Array.from({ length: valorantGameCount }, (_, gameIndex) => {
                   const game = state.valorant.games[gameIndex];
                   const status = resultStatus(game);
-                  const isCompleted = status === "valid";
-                  const isInvalid = status === "partial" || status === "tied";
+                  const issue = valorantResultIssues[gameIndex] ?? null;
+                  const isInvalid = Boolean(issue);
+                  const isCompleted = status === "valid" && !isInvalid;
                   const isPending = resultIsPending(game, state.valorant.savedGames[gameIndex]);
+                  const locked = status === "blank" && (gameIndex > valorantDraftSeries.completedGames || (valorantDraftComplete && gameIndex >= valorantDraftSeries.completedGames));
+                  const helpId = isInvalid
+                    ? `valorant-result-${gameIndex + 1}-error`
+                    : locked ? `valorant-result-${gameIndex + 1}-locked` : undefined;
                   return (
-                    <div className={`rocket-score-row ${isCompleted ? "complete" : ""} ${isPending ? "pending" : ""} ${isInvalid ? "invalid" : ""}`} key={gameIndex}>
-                      <span>Map {gameIndex + 1}{status === "tied" ? <small className="result-error">Tie not allowed</small> : status === "partial" ? <small className="result-error">Enter both scores</small> : isPending ? <small>Unsaved</small> : null}</span>
-                      <input aria-invalid={isInvalid} aria-label={`Map ${gameIndex + 1} ${homeTeam} score`} inputMode="numeric" value={game.home} onChange={(event) => updateValorantScore(gameIndex, "home", event.target.value)} placeholder="0" />
+                    <div className={`rocket-score-row ${isCompleted ? "complete" : ""} ${isPending ? "pending" : ""} ${isInvalid ? "invalid" : ""} ${locked ? "locked" : ""}`} key={gameIndex}>
+                      <span>Map {gameIndex + 1}{locked ? <small id={helpId}>Complete earlier maps first</small> : isInvalid ? <small id={helpId} className="result-error">{resultIssueMessage(issue, "map")}</small> : isPending ? <small>Unsaved</small> : null}</span>
+                      <input disabled={locked} aria-invalid={isInvalid || undefined} aria-describedby={helpId} aria-label={`Map ${gameIndex + 1} ${homeTeam} score`} inputMode="numeric" pattern="[0-9]*" maxLength={2} value={game.home} onChange={(event) => updateValorantScore(gameIndex, "home", event.target.value)} placeholder="0" />
                       <b>–</b>
-                      <input aria-invalid={isInvalid} aria-label={`Map ${gameIndex + 1} ${awayTeam} score`} inputMode="numeric" value={game.away} onChange={(event) => updateValorantScore(gameIndex, "away", event.target.value)} placeholder="0" />
+                      <input disabled={locked} aria-invalid={isInvalid || undefined} aria-describedby={helpId} aria-label={`Map ${gameIndex + 1} ${awayTeam} score`} inputMode="numeric" pattern="[0-9]*" maxLength={2} value={game.away} onChange={(event) => updateValorantScore(gameIndex, "away", event.target.value)} placeholder="0" />
                     </div>
                   );
                 })}
@@ -2670,7 +3963,7 @@ export default function Home() {
                     placeholder={state.general.eventName || "Uses Event name"}
                     hint={state.valorant.scoreboardHeader.trim() ? `On-air: ${valorantHeader}` : "Leave blank to use General Info event name."}
                   />
-                  <label className="field"><span className="field-label">Series format</span><select value={state.valorant.bestOf} onChange={(event) => updateValorant({ bestOf: event.target.value as Valorant["bestOf"] })}><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
+                  <label className="field"><span className="field-label">Series format</span><select value={state.valorant.bestOf} onChange={(event) => updateValorantBestOf(event.target.value as Valorant["bestOf"])}><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
                 </div>
                 <div className="valorant-toggle-list">
                   <div className="valorant-toggle-row"><div><strong>Flip sides</strong><p>Swap team names, colors, logos, and series totals on screen. Entered map scores stay in home/away order.</p></div><label className="switch large"><input aria-label="Flip VALORANT team sides" type="checkbox" checked={state.valorant.flipSides} onChange={(event) => updateValorant({ flipSides: event.target.checked })} /><span /></label></div>
@@ -2712,7 +4005,11 @@ export default function Home() {
                       const mapOptions = selectedMap && !mapPoolNames.includes(selectedMap)
                         ? [selectedMap, ...mapPoolNames]
                         : mapPoolNames;
-                      return <div className="pickban-row-wrap" key={row.key}>{row.phase !== previousPhase ? <span className="pickban-phase">{row.phase}</span> : null}<label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} map selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select map</option>{mapOptions.map((mapName) => <option value={mapName} key={mapName}>{mapName}</option>)}</select></label></div>;
+                      const activeSelection = state.valorant.bestOf === "Bo5" ? state.valorant.bo5 : state.valorant.bo3;
+                      const usedElsewhere = new Set(Object.entries(activeSelection)
+                        .filter(([selectionKey, selectionValue]) => selectionKey !== row.key && !selectionKey.startsWith("side") && Boolean(selectionValue))
+                        .map(([, selectionValue]) => canonicalMapName(selectionValue)));
+                      return <div className="pickban-row-wrap" key={row.key}>{row.phase !== previousPhase ? <span className="pickban-phase">{row.phase}</span> : null}<label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} map selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select map</option>{mapOptions.map((mapName) => <option value={mapName} key={mapName} disabled={usedElsewhere.has(canonicalMapName(mapName))}>{mapName}</option>)}</select></label></div>;
                     })}
                   </div>
                 </section>
@@ -2738,7 +4035,7 @@ export default function Home() {
               </div>
               <div className="result-update-controls">
                 <button className="button secondary" type="button" onClick={resetValorantMapPool}>Reset to Default</button>
-                <button className="button primary" type="button" onClick={addValorantMap}>Add map</button>
+                <button className="button primary" type="button" onClick={addValorantMap} disabled={state.valorantMapData.maps.length >= 32}>Add map</button>
               </div>
             </div>
             <div className="valorant-map-artwork-list">
@@ -2813,11 +4110,11 @@ export default function Home() {
           title="Rocket League"
           description="Enter game results and configure the scoreboard. Match 1 supplies the team names used here."
         />
-        <div className="tabs" role="tablist" aria-label="Rocket League views">
-          <button className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
-          <button className={rocketLeagueTab === "admin" ? "active" : ""} onClick={() => setRocketLeagueTab("admin")}>Admin control</button>
-          <button className={rocketLeagueTab === "debug" ? "active" : ""} onClick={() => setRocketLeagueTab("debug")}>Debug</button>
-          <button className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
+        <div className="tabs" role="tablist" aria-label="Rocket League views" onKeyDown={handleTabListKeyDown}>
+          <button role="tab" aria-selected={rocketLeagueTab === "results"} tabIndex={rocketLeagueTab === "results" ? 0 : -1} className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
+          <button role="tab" aria-selected={rocketLeagueTab === "admin"} tabIndex={rocketLeagueTab === "admin" ? 0 : -1} className={rocketLeagueTab === "admin" ? "active" : ""} onClick={() => setRocketLeagueTab("admin")}>Admin control</button>
+          <button role="tab" aria-selected={rocketLeagueTab === "debug"} tabIndex={rocketLeagueTab === "debug" ? 0 : -1} className={rocketLeagueTab === "debug" ? "active" : ""} onClick={() => setRocketLeagueTab("debug")}>Debug</button>
+          <button role="tab" aria-selected={rocketLeagueTab === "overlay"} tabIndex={rocketLeagueTab === "overlay" ? 0 : -1} className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
         </div>
 
         {rocketLeagueTab === "results" ? (
@@ -2834,18 +4131,23 @@ export default function Home() {
                 <strong>{awayTeam}</strong>
               </div>
               <div className="rocket-score-list">
-                {Array.from({ length: ROCKET_LEAGUE_GAME_COUNT }, (_, gameIndex) => {
+                {Array.from({ length: rocketLeagueGameCount }, (_, gameIndex) => {
                   const game = state.rocketLeague.games[gameIndex];
                   const status = resultStatus(game);
-                  const isCompleted = status === "valid";
-                  const isInvalid = status === "partial" || status === "tied";
+                  const issue = rocketLeagueResultIssues[gameIndex] ?? null;
+                  const isInvalid = Boolean(issue);
+                  const isCompleted = status === "valid" && !isInvalid;
                   const isPending = resultIsPending(game, state.rocketLeague.savedGames[gameIndex]);
+                  const locked = status === "blank" && (gameIndex > rocketLeagueDraftSeries.completedGames || (rocketLeagueDraftComplete && gameIndex >= rocketLeagueDraftSeries.completedGames));
+                  const helpId = isInvalid
+                    ? `rocket-league-result-${gameIndex + 1}-error`
+                    : locked ? `rocket-league-result-${gameIndex + 1}-locked` : undefined;
                   return (
-                    <div className={`rocket-score-row ${isCompleted ? "complete" : ""} ${isPending ? "pending" : ""} ${isInvalid ? "invalid" : ""}`} key={gameIndex}>
-                      <span>Game {gameIndex + 1}{status === "tied" ? <small className="result-error">Tie not allowed</small> : status === "partial" ? <small className="result-error">Enter both scores</small> : isPending ? <small>Unsaved</small> : null}</span>
-                      <input aria-invalid={isInvalid} aria-label={`Game ${gameIndex + 1} ${homeTeam} score`} inputMode="numeric" value={game.home} onChange={(event) => updateRocketLeagueScore(gameIndex, "home", event.target.value)} placeholder="0" />
+                    <div className={`rocket-score-row ${isCompleted ? "complete" : ""} ${isPending ? "pending" : ""} ${isInvalid ? "invalid" : ""} ${locked ? "locked" : ""}`} key={gameIndex}>
+                      <span>Game {gameIndex + 1}{locked ? <small id={helpId}>Complete earlier games first</small> : isInvalid ? <small id={helpId} className="result-error">{resultIssueMessage(issue, "game")}</small> : isPending ? <small>Unsaved</small> : null}</span>
+                      <input disabled={locked} aria-invalid={isInvalid || undefined} aria-describedby={helpId} aria-label={`Game ${gameIndex + 1} ${homeTeam} score`} inputMode="numeric" pattern="[0-9]*" maxLength={2} value={game.home} onChange={(event) => updateRocketLeagueScore(gameIndex, "home", event.target.value)} placeholder="0" />
                       <b>–</b>
-                      <input aria-invalid={isInvalid} aria-label={`Game ${gameIndex + 1} ${awayTeam} score`} inputMode="numeric" value={game.away} onChange={(event) => updateRocketLeagueScore(gameIndex, "away", event.target.value)} placeholder="0" />
+                      <input disabled={locked} aria-invalid={isInvalid || undefined} aria-describedby={helpId} aria-label={`Game ${gameIndex + 1} ${awayTeam} score`} inputMode="numeric" pattern="[0-9]*" maxLength={2} value={game.away} onChange={(event) => updateRocketLeagueScore(gameIndex, "away", event.target.value)} placeholder="0" />
                     </div>
                   );
                 })}
@@ -2865,7 +4167,7 @@ export default function Home() {
                   />
                   <label className="field">
                     <span className="field-label">Series format</span>
-                    <select value={state.rocketLeague.bestOf} onChange={(event) => updateRocketLeague({ bestOf: event.target.value as RocketLeague["bestOf"] })}>
+                    <select value={state.rocketLeague.bestOf} onChange={(event) => updateRocketLeagueBestOf(event.target.value as RocketLeague["bestOf"])}>
                       <option value="Bo1">Best of 1</option>
                       <option value="Bo3">Best of 3</option>
                       <option value="Bo5">Best of 5</option>
@@ -3192,7 +4494,7 @@ export default function Home() {
               <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the canonical tournament draft order. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div><span className={`league-timer ${state.leagueOfLegends.draft.timeRemaining === 0 ? "expired" : ""}`}>{state.leagueOfLegends.draft.timeRemaining}</span></div>
               {activeStep ? (
                 <div className="league-active-step">
-                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {activeStep.slot + 1}</strong></div>
+                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
                   <label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
                   <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button>
                 </div>
@@ -3369,8 +4671,8 @@ export default function Home() {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="Feature preview" title="Draw show" description="Populate the pool order for each division. Every division keeps the legacy key structure expected by the current graphics." />
-        <div className="tabs draw-tabs" role="tablist" aria-label="Draw show divisions">
-          {(Object.keys(DRAW_DEFINITIONS) as DrawKey[]).map((key) => <button key={key} className={drawTab === key ? "active" : ""} onClick={() => { setDrawTab(key); setDrawPastePool(null); setDrawPasteText(""); }}><small>{DRAW_DEFINITIONS[key].game}</small>{DRAW_DEFINITIONS[key].label}</button>)}
+        <div className="tabs draw-tabs" role="tablist" aria-label="Draw show divisions" onKeyDown={handleTabListKeyDown}>
+          {(Object.keys(DRAW_DEFINITIONS) as DrawKey[]).map((key) => <button role="tab" aria-selected={drawTab === key} tabIndex={drawTab === key ? 0 : -1} key={key} className={drawTab === key ? "active" : ""} onClick={() => { setDrawTab(key); setDrawPastePool(null); setDrawPasteText(""); }}><small>{DRAW_DEFINITIONS[key].game}</small>{DRAW_DEFINITIONS[key].label}</button>)}
         </div>
         <div className="pool-grid">
           {Array.from({ length: definition.pools }, (_, poolIndex) => (
@@ -3426,39 +4728,62 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <button className="brand" onClick={() => setActiveSection("welcome")} aria-label="Gaming Oasis home">
+    <main className={`app-shell ${hydrated && !isPrimaryTab ? "read-only-tab" : ""}`}>
+      {hydrated && !isPrimaryTab ? (
+        <div className="tab-ownership-banner" role="alert">
+          <div><strong>Another browser or tab controls this workspace</strong><span>This copy is read-only to prevent conflicting JSON writes.</span></div>
+          <button className="button primary" type="button" disabled={takingControl} aria-busy={takingControl} onClick={takeControlOfWorkspace}>{takingControl ? "Taking control…" : "Take control here"}</button>
+        </div>
+      ) : null}
+      <aside className="sidebar" inert={hydrated && !isPrimaryTab ? true : undefined}>
+        <button className="brand" onClick={() => goToSection("welcome")} aria-label="Gaming Oasis home">
           <img className="brand-wordmark" src="/gaming-oasis-logo-light.png" alt="Gaming Oasis" />
           <span className="brand-product">Production OS</span>
         </button>
         <nav aria-label="Primary navigation">
           <span className="nav-caption">Workspace</span>
-          {navItems.map((item) => <button key={item.key} className={activeSection === item.key ? "active" : ""} onClick={() => setActiveSection(item.key)}>{item.label}{activeSection === item.key ? <i /> : null}</button>)}
+          {navItems.map((item) => <button key={item.key} aria-current={visibleSection === item.key ? "page" : undefined} className={visibleSection === item.key ? "active" : ""} onClick={() => goToSection(item.key)}>{item.label}{visibleSection === item.key ? <i /> : null}</button>)}
         </nav>
         <div className="sidebar-footer">
-          <button className="button export-button" onClick={exportAll}>Export JSON package</button>
-          <button ref={resetTriggerRef} className="button danger sidebar-reset-button" type="button" onClick={() => setResetConfirmationOpen(true)}>Reset local data</button>
+          <button className="button export-button" type="button" aria-label="Export JSON package" aria-busy={exporting} disabled={exporting} onClick={exportAll}><span className="desktop-action-label">{exporting ? "Exporting JSON…" : "Export JSON package"}</span><span className="mobile-action-label">{exporting ? "Exporting…" : "Export JSON"}</span></button>
+          <button ref={resetTriggerRef} className="button danger sidebar-reset-button" type="button" aria-label="Reset local data" onClick={() => setResetConfirmationOpen(true)}><span className="desktop-action-label">Reset local data</span><span className="mobile-action-label">Reset</span></button>
         </div>
       </aside>
 
-      <section className="workspace">
+      <section className="workspace" inert={hydrated && !isPrimaryTab ? true : undefined}>
         <div className="topbar">
           <div className="mobile-brand"><img src="/gaming-oasis-favicon.png" alt="" /><strong>Production OS</strong></div>
-          <div className="breadcrumb">{sectionLabels[activeSection]}</div>
-          <div className="topbar-status"><span className={`status-dot ${connection === "connected" ? "live" : ""}`} /> League Hub {connection === "connected" ? "synced" : connection === "error" ? "sync failed" : "ready"}<span className="topbar-divider" /><span className={`status-dot ${liveSync === "synced" ? "live" : ""}`} /> {liveSync === "synced" ? "JSON live" : liveSync === "saving" ? "Saving JSON" : "JSON writer offline"}</div>
+          <div className="breadcrumb">{sectionLabels[visibleSection]}</div>
+          <div className="topbar-status" role="status" aria-live="polite" aria-atomic="true"><span className={`status-dot ${connection === "connected" ? "live" : ""}`} /> League Hub {connection === "connected" ? "synced" : connection === "error" ? "sync failed" : "ready"}<span className="topbar-divider" /><span className={`status-dot ${liveSync === "synced" ? "live" : ""}`} /> {liveSyncShortLabel(liveSync)}</div>
         </div>
         <div className="content-area">
-          {activeSection === "welcome" ? renderWelcome() : null}
-          {activeSection === "general" || activeSection === "matches" ? renderGeneral() : null}
-          {activeSection === "rocketLeague" ? renderRocketLeague() : null}
-          {activeSection === "valorant" ? renderValorant() : null}
-          {activeSection === "leagueOfLegends" ? renderLeagueOfLegends() : null}
-          {activeSection === "sponsors" ? renderSponsors() : null}
-          {activeSection === "draw" ? renderDraw() : null}
-          {activeSection === "settings" ? renderSettings() : null}
+          {visibleSection === "welcome" ? renderWelcome() : null}
+          {visibleSection === "general" || visibleSection === "matches" ? renderGeneral() : null}
+          {visibleSection === "rocketLeague" ? renderRocketLeague() : null}
+          {visibleSection === "valorant" ? renderValorant() : null}
+          {visibleSection === "leagueOfLegends" ? renderLeagueOfLegends() : null}
+          {visibleSection === "sponsors" ? renderSponsors() : null}
+          {visibleSection === "draw" ? renderDraw() : null}
+          {visibleSection === "settings" ? renderSettings() : null}
         </div>
       </section>
+      {pendingConfirmation ? (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingConfirmation(null); }}>
+          <div ref={actionConfirmationModalRef} className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="action-confirmation-title" aria-describedby="action-confirmation-description">
+            <span className="eyebrow">Confirm action</span>
+            <h2 id="action-confirmation-title">{pendingConfirmation.title}</h2>
+            <p id="action-confirmation-description">{pendingConfirmation.description}</p>
+            <div className="confirmation-modal-actions">
+              <button className="button secondary" type="button" onClick={() => setPendingConfirmation(null)}>Cancel</button>
+              <button className="button danger" type="button" onClick={() => {
+                const confirmation = pendingConfirmation;
+                setPendingConfirmation(null);
+                if (isPrimaryTabRef.current) confirmation.onConfirm();
+              }}>{pendingConfirmation.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {resetConfirmationOpen ? (
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setResetConfirmationOpen(false); }}>
           <div ref={resetModalRef} className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="reset-modal-title" aria-describedby="reset-modal-description">

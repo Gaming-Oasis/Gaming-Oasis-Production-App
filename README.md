@@ -31,11 +31,13 @@ The export package preserves the filenames and array shapes used by the previous
 - `VALT1DS.json`
 - `VALT2DS.json`
 
-While the local app is running, every edit automatically rewrites all six files in the project’s `JSONs` folder after a short debounce. The interface shows **JSON live** when the files on disk are current and warns the operator if the local writer is unavailable.
+While the local app is running, the first output-relevant edit activates live output and subsequent production edits rewrite all six files in the project’s `JSONs` folder after a short debounce. A brand-new untouched workspace only checks writer health, so opening the tool cannot replace existing show files with defaults. Writes use a validated, recoverable six-file transaction with bounded retries. The interface shows **JSON live** only after the writer acknowledges the current revision and warns the operator if the local writer is unavailable.
+
+One browser or profile owns the production writer lease at a time. Other copies follow the saved draft in read-only standby and can explicitly take control, preventing stale workspaces from racing JSON generations.
 
 Rocket League and VALORANT result scores are staged separately: edited rows are marked **Unsaved** and do not change their live graphics fields until the operator selects **Update results**. Entered results require both scores and a clear winner; incomplete or tied rows disable the update action. League of Legends follows the same staged-save workflow with a single winner choice per game. Only saved League winners advance the current game, series score, recap, and global-fearless history. Other show setup fields continue to update automatically.
 
-**Export JSON package** remains available for manual copies. On browsers that support folder access it writes all six files directly to a selected folder; other browsers download them individually. The bottom-left **Reset local data** action requires confirmation in a modal before clearing the workstation draft.
+**Export JSON package** remains available for manual recovery copies. On browsers that support folder access it writes the six legacy files plus `VALORANT MAP DATA.json` directly to a selected folder; other browsers download the same seven files in one ZIP archive. The bottom-left **Reset local data** action requires confirmation in a modal before clearing the workstation draft.
 
 `FinalOutput.json` includes the legacy Rocket League overlay fields (`rlscore1` through `rlscore7`, `rlheader`, `rlformat#`, `rlroundnumber`, `rlseriesscore1`, and `rlseriesscore2`) alongside the shared show and match data. `regionallogo` comes from Match 1's resolved league logo in Team Info, with an optional **Podcast indicator logo** in General Info under **Podcast Run of Show**; if both are empty, it falls back to the Gaming Oasis favicon.
 
@@ -73,7 +75,7 @@ Synced team names are converted to their short production form before output. Fo
 
 ## Local development
 
-For production staff, double-click **`Run Gaming Oasis Production OS.bat`**. It installs anything missing, starts the local app, and opens the browser automatically.
+For production staff, double-click **`Run Gaming Oasis Production OS.bat`**. The launcher verifies Node.js 22.13 or newer, npm, the lockfile-backed dependency set, and both local service ports. It never kills an unknown process using those ports. It performs a clean dependency install when the lockfile changes, builds the app, waits for the identified web and writer services to become healthy, and only then opens the browser.
 
 For development:
 
@@ -93,3 +95,5 @@ The interface uses the official Gaming Oasis master-brand system: Oxanium, Brand
 ```text
 npm test
 ```
+
+For the full local quality gate, including lint and TypeScript checks, run `npm run check`. Dependency audits are available as `npm run audit:prod` and `npm run audit:toolchain`.
