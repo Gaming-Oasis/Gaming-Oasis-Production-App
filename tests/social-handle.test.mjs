@@ -5,7 +5,28 @@ import path from "node:path";
 import test from "node:test";
 import { formatSocialHandle } from "../lib/social-handle.mjs";
 import { buildLeagueScoreFields } from "../lib/league-of-legends.mjs";
-import { JSON_FILENAMES, startJsonWriter } from "../scripts/json-writer.mjs";
+import { FINAL_OUTPUT_KEYS, JSON_FILENAMES, startJsonWriter } from "../scripts/json-writer.mjs";
+
+async function productionFileFixtures() {
+  const files = [];
+  for (const filename of JSON_FILENAMES) {
+    let data;
+    if (filename === "FinalOutput.json") {
+      data = [Object.fromEntries([...FINAL_OUTPUT_KEYS].map((key) => [key, ""]))];
+    } else if (filename === "sponsors.json") {
+      data = [{
+        id: "gaming-oasis",
+        name: "Gaming Oasis",
+        logo: "http://localhost:3000/gaming-oasis-logo-light.png",
+        enabled: true,
+      }];
+    } else {
+      data = JSON.parse(await readFile(new URL(`../JSONs/${filename}`, import.meta.url), "utf8"));
+    }
+    files.push({ filename, data });
+  }
+  return files;
+}
 
 test("prefixes a social handle and keeps a single @", () => {
   assert.equal(formatSocialHandle(""), "");
@@ -29,16 +50,11 @@ test("live JSON output writes social handles with @", async () => {
     const session = await fetch(`${writer.url}/api/live-json/session`, { headers: { Origin: origin } });
     assert.equal(session.status, 200);
     const { token } = await session.json();
-    const files = [];
-    for (const filename of JSON_FILENAMES) {
-      const data = JSON.parse(await readFile(new URL(`../JSONs/${filename}`, import.meta.url), "utf8"));
-      if (filename === "FinalOutput.json") {
-        Object.assign(data[0], buildLeagueScoreFields({ bestOf: "Bo5", confirmedGames: [{ gameNumber: 1, winner: "team1" }, { gameNumber: 2, winner: "team2" }] }));
-        data[0].mainsocial = "BepicCasts";
-        data[0].secondarysocial = "@Infernos1s";
-      }
-      files.push({ filename, data });
-    }
+    const files = await productionFileFixtures();
+    const finalOutput = files.find(({ filename }) => filename === "FinalOutput.json").data[0];
+    Object.assign(finalOutput, buildLeagueScoreFields({ bestOf: "Bo5", confirmedGames: [{ gameNumber: 1, winner: "team1" }, { gameNumber: 2, winner: "team2" }] }));
+    finalOutput.mainsocial = "BepicCasts";
+    finalOutput.secondarysocial = "@Infernos1s";
     const claim = await fetch(`${writer.url}/api/live-json/claim`, {
       method: "POST",
       headers: {
