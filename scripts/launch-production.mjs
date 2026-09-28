@@ -16,6 +16,31 @@ const writerStatusUrl = "http://127.0.0.1:4877/api/live-json/status";
 const workspaceUrl = "http://localhost:3000";
 const minimumNode = [22, 13, 0];
 
+export function ownedRunnerPid(writer, savedPid) {
+  const pid = writer?.payload?.pid;
+  return writer?.identityMatches && Number.isSafeInteger(pid) && pid > 0
+    && pid !== process.pid && String(pid) === String(savedPid).trim() ? pid : null;
+}
+
+async function stopExistingWorkspace(writer) {
+  const pidFile = path.join(root, ".production-os.pid");
+  const pid = ownedRunnerPid(writer, existsSync(pidFile) ? readFileSync(pidFile, "utf8") : "");
+  if (!pid) throw new Error("The existing process could not be verified as this workspace's runner. Close its server window and try again.");
+  console.log("Stopping the existing Production OS instance...");
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "pipe", windowsHide: true, timeout: 10_000 });
+    if (result.error || result.status !== 0) throw new Error("Could not stop the existing Production OS process tree. Close its server window and try again.");
+  } else {
+    process.kill(pid, "SIGTERM");
+  }
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!await portIsOpen(3000) && !await portIsOpen(4877)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("The previous server has not released its ports. Close its server window and try again.");
+}
+
 function fail(message) {
   console.error(`\n${message}`);
   process.exitCode = 1;
@@ -179,21 +204,15 @@ async function main() {
   }
 
   const digest = lockDigest();
-  const [existingWriter, existingWeb, port3000Open, port4877Open] = await Promise.all([
+  let [existingWriter, port3000Open, port4877Open] = await Promise.all([
     probeWriter(),
-    probeWorkspace(),
     portIsOpen(3000),
     portIsOpen(4877),
   ]);
 
-  if (existingWriter.identityMatches && existingWriter.healthy && existingWeb) {
-    if (!dependenciesAreCurrent(digest)) {
-      fail("Production OS is already running, but dependencies changed. Close its server window, then run this launcher again.");
-      return;
-    }
-    console.log("Gaming Oasis Production OS is already running. Opening the workspace...");
-    openWorkspace();
-    return;
+  if (existingWriter.identityMatches) {
+    await stopExistingWorkspace(existingWriter);
+    [port3000Open, port4877Open] = await Promise.all([portIsOpen(3000), portIsOpen(4877)]);
   }
 
   if (port3000Open || port4877Open) {

@@ -1,70 +1,83 @@
-.canvas { width: 100vw; height: 100vh; overflow: hidden; background: transparent; color: #fff; font-family: Arial, Helvetica, sans-serif; }
+@font-face { font-family: "League Oxanium"; src: url("/league-of-legends-overlay/oxanium-variable.ttf") format("truetype"); font-style: normal; font-weight: 200 800; font-display: block; }
+.canvas { position: fixed; inset: 0; overflow: hidden; background: transparent; color: #FFFFFF; font-family: "League Oxanium", system-ui, sans-serif; }
 .canvas *, .canvas *::before, .canvas *::after { box-sizing: border-box; }
-.draftStage, .liveStage, .recapStage { position: relative; width: 1920px; height: 1080px; overflow: hidden; transform-origin: top left; }
-.draftHeader { position: absolute; left: 650px; top: 44px; z-index: 2; width: 620px; height: 72px; padding: 0 18px; display: grid; grid-template-columns: 1fr auto 72px; align-items: center; gap: 18px; border: 2px solid var(--league-primary); background: #171717; }
-.draftHeader span { overflow: hidden; font-size: 18px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.draftHeader strong { color: #bcbcbc; font-size: 13px; }
-.timer { height: 48px; display: grid; place-items: center; border-left: 1px solid #404040; color: var(--league-primary); font-size: 28px; }
-.draftTeam { position: absolute; top: 170px; z-index: 2; width: 785px; padding: 20px; border-top: 4px solid var(--league-primary); background: #171717; }
-.blueTeam { left: 88px; }
-.redTeam { right: 88px; border-top-color: var(--league-secondary); }
-.teamIdentity { height: 86px; display: flex; align-items: center; justify-content: flex-start; gap: 16px; border-bottom: 1px solid #404040; }
-.redTeam .teamIdentity { justify-content: flex-end; text-align: right; }
-.teamIdentity > div { display: flex; flex-direction: column; gap: 4px; }
-.teamIdentity span, .teamIdentity small { color: #999; font-size: 12px; }
-.teamIdentity strong { max-width: 540px; overflow: hidden; font-size: 25px; text-overflow: ellipsis; white-space: nowrap; }
-.logoPlate { width: 60px; height: 60px; display: grid; place-items: center; flex: 0 0 auto; color: #171717; font-size: 14px; }
-.logoPlate img { width: 50px; height: 50px; object-fit: contain; }
-.pickRow { margin-top: 18px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.pickCard { position: relative; height: 380px; overflow: hidden; border: 1px solid #404040; background: #171717; }
-.pickCard img, .pickCard > .imageFallback { width: 100%; height: 100%; object-fit: cover; }
-.pickCard span { position: absolute; inset: auto 0 0; min-height: 54px; padding: 9px 5px; display: grid; place-items: center; background: #171717; font-size: 13px; font-weight: 700; text-align: center; }
-.banRow { margin-top: 12px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.banRow > div { height: 76px; display: grid; grid-template-columns: 54px 1fr; align-items: center; gap: 8px; overflow: hidden; border: 1px solid #404040; background: #171717; }
-.banRow img, .banRow .imageFallback { width: 54px; height: 74px; object-fit: cover; filter: grayscale(1); }
-.banRow span { overflow: hidden; color: #c8c8c8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.imageFallback { display: grid; place-items: center; background: #2d2d2d; color: #999; font-size: 12px; font-weight: 700; }
-.liveHud { position: absolute; left: 346px; top: 28px; width: 1228px; height: 116px; display: grid; grid-template-columns: 1fr 230px 1fr; border: 2px solid var(--league-primary); background: #171717; }
-.hudTeam { min-width: 0; padding: 12px 16px; display: grid; grid-template-columns: 62px 1fr 44px 36px; gap: 12px; align-items: center; }
-.redHud { grid-template-columns: 36px 44px 1fr 62px; text-align: right; border-left: 1px solid #404040; }
-.blueHud { border-right: 1px solid #404040; }
-.hudTeam > div { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.hudTeam strong { overflow: hidden; font-size: 20px; text-overflow: ellipsis; white-space: nowrap; }
-.hudTeam small { color: #aaa; font-size: 11px; }
-.hudTeam > b { font-size: 30px; }
-.hudTeam > span { height: 38px; display: grid; place-items: center; background: var(--league-primary); color: #171717; font-size: 18px; font-weight: 700; }
-.redHud > span { background: var(--league-secondary); color: #fff; }
-.hudCenter { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; text-align: center; }
-.hudCenter small, .hudCenter span { color: #aaa; font-size: 10px; }
-.hudCenter strong { font-size: 27px; }
-.playerBoard { position: absolute; left: 260px; top: 172px; width: 1400px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.playerBoard > div { border-top: 3px solid var(--league-primary); background: #171717; }
-.playerBoard > div:last-child { border-top-color: var(--league-secondary); }
-.playerRow { height: 66px; padding: 7px 10px; display: grid; grid-template-columns: 48px minmax(110px, 1fr) 44px 70px 62px 184px; gap: 9px; align-items: center; border-bottom: 1px solid #404040; }
-.championIcon { width: 46px; height: 46px; object-fit: cover; }
-.playerName { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.playerName strong, .playerName small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.playerName strong { font-size: 13px; }
-.playerName small, .playerRow > span { color: #aaa; font-size: 10px; }
-.playerRow > b { font-size: 12px; }
-.items { display: grid; grid-template-columns: repeat(6, 26px); gap: 3px; justify-content: end; }
-.items img, .items .imageFallback { width: 26px; height: 26px; object-fit: cover; }
-.recapStage { display: grid; place-items: center; }
-.recapCard { position: relative; z-index: 2; width: 1080px; min-height: 600px; border: 3px solid var(--league-primary); background: #171717; }
-.recapCard > header { height: 80px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #404040; }
-.recapCard > header span { font-size: 18px; font-weight: 700; }
-.recapCard > header strong { color: #aaa; font-size: 13px; }
-.winner { min-height: 270px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
-.winner .logoPlate { width: 92px; height: 92px; }
-.winner .logoPlate img { width: 76px; height: 76px; }
-.winner > span, .winner > small { color: #aaa; font-size: 13px; }
-.winner > strong { font-size: 38px; }
-.recapPlayers { padding: 0 28px 28px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.recapPlayers > div { min-height: 150px; padding: 14px; display: grid; grid-template-columns: 68px 1fr; gap: 5px 12px; align-items: center; border: 1px solid #404040; background: #171717; }
-.recapPlayers img, .recapPlayers .imageFallback { width: 68px; height: 68px; grid-row: 1 / 4; object-fit: cover; }
-.recapPlayers span { overflow: hidden; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.recapPlayers strong { font-size: 18px; }
-.recapPlayers small { color: #aaa; font-size: 11px; }
-.waiting { min-height: 500px; display: grid; place-items: center; color: #999; font-size: 18px; }
-@media (max-aspect-ratio: 16/9) { .draftStage, .liveStage, .recapStage { transform: scale(calc(100vw / 1920)); } }
-@media (prefers-reduced-motion: reduce) { .canvas * { animation: none !important; transition: none !important; } }
+.frame { position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; transform-origin: top left; }
+.liveSponsorAnchor { position: fixed; left: 0; bottom: 0; width: 307px; height: 120px; transform-origin: bottom left; pointer-events: none; }
+.liveSponsorAnchor .liveSponsor { left: 0; bottom: 0; width: 100%; height: 100%; transform: none; overflow: visible; }
+.liveSponsorAnchor .liveSponsor::after { content: ""; position: absolute; left: calc(100% - 1px); bottom: 0; width: 12px; height: 16px; pointer-events: none; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 16'%3E%3Cpath fill='%23171717' d='M0 0C1 7 4 12 12 16H0Z'/%3E%3C/svg%3E") center / 100% 100% no-repeat; }
+.liveSponsorAnchor .liveSponsor img { width: 275px; height: 96px; object-fit: contain; }
+.liveSponsorAnchor .liveSponsor span { max-width: 275px; }
+.draftStage, .liveStage { position: relative; width: 1920px; height: 1080px; overflow: hidden; color: #FFFFFF; }
+.artwork { display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; }
+.artwork img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.fallback { max-width: 100%; padding: 4px; font-size: 12px; font-weight: 700; text-align: center; overflow-wrap: anywhere; }
+.icon { display: block; width: 100%; height: 100%; background: currentColor; mask-size: 100% 100%; mask-position: center; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; -webkit-mask-position: center; -webkit-mask-repeat: no-repeat; }
+.scoreArt .placedIcon { display: block; padding: 1px; overflow: visible; }
+.scoreArt .placedIcon .icon { mask-size: contain; -webkit-mask-size: contain; }
+.logoPlate { display: block; width: 100%; height: 100%; }
+.draftTeamLogo .logoPlate { padding: 8px; overflow: hidden;  }
+.draftTeamLogo .fallback { font-size: 20px; font-weight: 700; }
+/* The draft identities use their team colors; the scoreboard keeps the league trim. */
+.draftTeamLogo::after, .scoreLogo::after { content: ""; position: absolute; inset: 0; pointer-events: none; }
+.draftTeamLogo::after { border: 2px solid var(--draft-team-accent); }
+.scoreLogo::after { border: 2px solid transparent; border-image: linear-gradient(90deg, var(--league-primary), var(--league-secondary)) 1; }
+.sourceText { display: block; pointer-events: none; }
+.sourceText svg { display: block; overflow: visible; }
+.sourceText text { fill: currentColor; font-family: "League Oxanium", system-ui, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: normal; }
+.seriesPill { display: block; border: 3px solid currentColor; border-radius: 999px; }
+.seriesPillEmpty { background: transparent; opacity: .45; }
+.seriesPillFilled { background: currentColor; opacity: 1; }
+
+/* Every placed element uses the PSD bounds generated in league-overlay-layout.json. */
+.draftBase { z-index: 1; background: #171717; }
+.draftSide, .draftCenter { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.pickSlot { position: absolute; inset: 0; }
+.pick { overflow: hidden; background: #171717; }
+.pick .artwork img { object-fit: cover; }
+.pick .fallback { padding-left: 34px; }
+.upcomingPick { position: absolute; inset: 12px 10px 64px 41px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; color: rgb(255 255 255 / 45%); }
+.upcomingPickIcon { display: block; width: 44px; height: 44px; opacity: .5; }
+.upcomingPickIcon .icon { mask-size: contain; -webkit-mask-size: contain; }
+.upcomingPick strong { font-size: 10px; font-weight: 600; letter-spacing: .08em; }
+.upcomingPickNumber { font-size: 30px; line-height: 1; font-weight: 600; font-variant-numeric: tabular-nums; }
+.upcomingPickAccent { width: 30px; height: 3px; background: var(--pick-accent); opacity: .55; }
+.upcomingPick[data-selecting="true"] { color: #FFFFFF; }
+.upcomingPick[data-selecting="true"] .upcomingPickIcon, .upcomingPick[data-selecting="true"] .upcomingPickAccent { opacity: 1; }
+.namePlate, .rolePlate { background: rgb(23 23 23 / 0.8); }
+.pick[data-active="true"]::after, .ban[data-active="true"]::after { content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border: 4px solid var(--pick-accent); animation: draftActiveSelectionBorder 3s ease-in-out infinite; }
+@keyframes draftActiveSelectionBorder {
+  0%, 100% { opacity: .45; }
+  50% { opacity: 1; }
+}
+.banPlate, .fearlessStrip { background: #171717; }
+.ban { display: grid; place-items: center; font-size: 24px; }
+.ban > span:not(.artwork) { opacity: .4; }
+.ban img, .fearlessSlot img { filter: grayscale(1); object-fit: cover; }
+.ban .fallback, .fearlessSlot .fallback { font-size: 10px; }
+.draftHeader { position: absolute; top: 964px; left: 806px; width: 308px; display: flex; flex-direction: column; gap: 3px; text-align: center; }
+.draftHeader strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 15px; line-height: 18px; }
+.draftHeader > span { font-size: 12px; line-height: 14px; }
+.draftTeamName strong { display: block; width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.draftCenter .draftSponsor { left: 0; top: 0; bottom: auto; width: 100%; height: 100%; padding: 0; transform: none; }
+.draftCenter .draftSponsor > div { inset: 3px 10px 0; }
+.draftCenter .draftSponsor img { width: 296px; height: 55px; object-fit: contain; }
+.draftCenter .draftSponsor span { max-width: 296px; font-size: 16px; font-weight: 700; letter-spacing: .035em; }
+.fearlessStrip { z-index: 2; }
+.pageNumber { position: absolute; right: 3px; bottom: 2px; font-size: 10px; color: #FFFFFF; }
+
+/* Uniform scale of the complete 1225 x 713 PSD; positions remain source coordinates. */
+.scoreArt { position: absolute; top: 0; left: 0; width: 1225px; height: 713px; transform: scale(calc(1920 / 1225)); transform-origin: top left; }
+.plate, .translucentPlate { background: #171717; }
+.translucentPlate { background: rgb(23 23 23 / 0.8); }
+.scoreLogo { display: grid; place-items: center; padding: 6px; overflow: hidden; background: #171717;  }
+.scoreLogo .fallback { padding: 0; font-size: 10px; line-height: 1.1; }
+.buffTab { background: #171717; color: #FFFFFF; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px)); animation: buffTabEnter 280ms cubic-bezier(.2, .7, .2, 1) both; }
+@keyframes buffTabEnter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.buffTab::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--buff-accent); }
+.baronActive { color: #713060; }
+.baronTab { --buff-accent: #713060; }
+.soulDragon { display: block; color: #FFFFFF; }
+@media (prefers-reduced-motion: reduce) { .canvas *, .canvas *::after, .buffTab { animation: none !important; transition: none !important; } }

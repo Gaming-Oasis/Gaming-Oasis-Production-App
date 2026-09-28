@@ -26,4 +26,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo Gaming Oasis Production OS has stopped. You can close this window.
+pause
 endlocal

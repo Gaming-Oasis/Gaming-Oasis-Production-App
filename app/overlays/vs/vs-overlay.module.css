@@ -98,21 +98,20 @@
 }
 
 .sponsorSlideEntering {
-  animation: sponsorFadeIn 400ms ease-out both;
+  animation: sponsorFadeIn 400ms ease-out;
 }
 
 .sponsorSlideLeaving {
-  animation: sponsorFadeOut 400ms ease-out both;
+  animation: sponsorFadeOut 400ms ease-out forwards;
 }
 
 .sponsorSlide img {
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 348px;
-  max-height: 128px;
+  width: 348px;
+  height: 128px;
   object-fit: contain;
   object-position: center;
+  background: #171717;
 }
 
 .sponsorSlide span {

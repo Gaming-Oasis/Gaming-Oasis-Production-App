@@ -38,6 +38,7 @@ yarn-error.log*
 # Local live JSON writer outputs (workstation production data)
 /JSONs/FinalOutput.json
 /JSONs/sponsors.json
+/JSONs/sponsor-logos/
 /JSONs/.league-cache/
 
 # typescript

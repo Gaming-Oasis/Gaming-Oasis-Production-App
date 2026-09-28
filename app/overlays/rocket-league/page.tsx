@@ -9,6 +9,7 @@ import {
   readableText,
   resolveImagePlate,
 } from "../../../lib/readable-text.mjs";
+import { sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import { VsMatchupStage } from "../vs/VsMatchupOverlay";
 import {
   isMatchTeamStats,
@@ -419,7 +420,8 @@ function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
           scheduleRetry(sponsor);
         }
       };
-      image.src = localLogoUrl(sponsor.logo);
+      image.referrerPolicy = "no-referrer";
+      image.src = sponsorLogoSrc(sponsor.logo);
     }
 
     stableSponsors.forEach((sponsor) => {
@@ -443,7 +445,7 @@ function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
   const displayableSponsors = useMemo(() => stableSponsors.filter((sponsor) => {
     if (!sponsor.logo) return Boolean(sponsor.name);
     const status = assetState[sponsorAssetKey(sponsor)];
-    return status === "loaded" || (status === "failed" && Boolean(sponsor.name));
+    return status !== "failed" || Boolean(sponsor.name);
   }), [assetState, stableSponsors]);
 
   useEffect(() => {
@@ -471,22 +473,28 @@ function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
   const sponsor = displayableSponsors.find((entry) => entry.id === rotation.currentId) || displayableSponsors[0];
   if (!sponsor) return null;
   const previousSponsor = displayableSponsors.find((entry) => entry.id === rotation.previousId && entry.id !== sponsor.id);
-  const logoLoaded = sponsor.logo && assetState[sponsorAssetKey(sponsor)] === "loaded";
-  const slideKey = `${sponsorAssetKey(sponsor)}\u0000${logoLoaded ? "logo" : "name"}`;
+  const slideKey = sponsorAssetKey(sponsor);
 
   function slideContent(entry: OverlaySponsor) {
-    const entryLogoLoaded = entry.logo && assetState[sponsorAssetKey(entry)] === "loaded";
-    return entryLogoLoaded ? (
-      <img
-        src={localLogoUrl(entry.logo)}
-        alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
-        onError={() => {
-          const key = sponsorAssetKey(entry);
-          setAssetState((current) => current[key] === "failed" ? current : { ...current, [key]: "failed" });
-          retryAssetRef.current(entry);
-        }}
-      />
-    ) : <span>{entry.name}</span>;
+    const failed = assetState[sponsorAssetKey(entry)] === "failed";
+    if (entry.logo && !failed) {
+      return (
+        <img
+          src={sponsorLogoSrc(entry.logo)}
+          alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
+          width={348}
+          height={128}
+          draggable={false}
+          referrerPolicy="no-referrer"
+          onError={() => {
+            const key = sponsorAssetKey(entry);
+            setAssetState((current) => current[key] === "failed" ? current : { ...current, [key]: "failed" });
+            retryAssetRef.current(entry);
+          }}
+        />
+      );
+    }
+    return <span>{entry.name}</span>;
   }
 
   return (

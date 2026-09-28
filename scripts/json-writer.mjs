@@ -1,8 +1,13 @@
 import { createServer } from "node:http";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { access, copyFile, mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { lookup as defaultDnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { access, copyFile, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { formatSocialHandle } from "../lib/social-handle.mjs";
+import { isLeagueScoreboard } from "../lib/league-scoreboard.mjs";
+import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
 import {
   mergeRocketLeagueOverlayLive,
   startRocketLeagueStatsApiClient,
@@ -272,6 +277,7 @@ export const FINAL_OUTPUT_KEYS = (() => {
     }
   }
   for (let index = 1; index <= 7; index += 1) keys.push(`rlscore${index}`);
+  for (let index = 1; index <= 5; index += 1) keys.push(`lolscore${index}`);
   keys.push("rlheader", "rlformat#", "rlroundnumber", "rlseriesscore1", "rlseriesscore2");
   keys.push(
     "valname1", "valname2", "vallogo1", "vallogo2", "valcolor1", "valcolor2", "valcolor1a", "valcolor2a",
@@ -313,11 +319,45 @@ function validFinalOutput(value) {
   return Object.values(value[0]).every((field) => typeof field === "string");
 }
 
+const GAMING_OASIS_LOGO_URL = "http://localhost:3000/gaming-oasis-logo-light.png";
+const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+const VMIX_IMAGE_EXTENSIONS = new Map([
+  ["image/png", ".png"],
+  ["image/jpeg", ".jpg"],
+  ["image/gif", ".gif"],
+  ["image/bmp", ".bmp"],
+  ["image/x-ms-bmp", ".bmp"],
+]);
+
+function vmixImageExtension(contentType) {
+  return VMIX_IMAGE_EXTENSIONS.get(String(contentType || "").split(";", 1)[0].trim().toLowerCase()) ?? "";
+}
+
+function sniffVmixExtension(body) {
+  if (!body || body.length < 2) return "";
+  if (body.length >= 4 && body[0] === 0x89 && body[1] === 0x50 && body[2] === 0x4e && body[3] === 0x47) return ".png";
+  if (body.length >= 3 && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff) return ".jpg";
+  if (body.length >= 3 && body[0] === 0x47 && body[1] === 0x49 && body[2] === 0x46) return ".gif";
+  if (body[0] === 0x42 && body[1] === 0x4d) return ".bmp";
+  return "";
+}
+
+function extensionFromPath(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".jpeg") return ".jpg";
+  return [".png", ".jpg", ".gif", ".bmp"].includes(extension) ? extension : "";
+}
+
+function validGamingOasisLogo(logo) {
+  if (logo === GAMING_OASIS_LOGO_URL) return true;
+  return typeof logo === "string" && /\/sponsor-logos\/gaming-oasis-[a-f0-9]{8}\.png$/i.test(logo.replaceAll("\\", "/"));
+}
+
 function validSponsorsFile(value) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 11) return false;
   if (value[0]?.id !== "gaming-oasis"
     || value[0]?.name !== "Gaming Oasis"
-    || value[0]?.logo !== "http://localhost:3000/gaming-oasis-logo-light.png"
+    || !validGamingOasisLogo(value[0]?.logo)
     || value[0]?.enabled !== true) return false;
   const canonicalIds = new Set(["gaming-oasis", ...Array.from({ length: 10 }, (_, index) => `sponsor${index + 1}`)]);
   const ids = new Set();
@@ -337,6 +377,23 @@ function validDrawFile(filename, value) {
     for (let row = 1; row <= shape.rows; row += 1) keys.push(`P${pool}${row}`);
   }
   return hasExactKeys(value[0], keys) && Object.values(value[0]).every((field) => typeof field === "string");
+}
+
+function withSocialHandles(files) {
+  return files.map((file) => {
+    if (file.filename !== "FinalOutput.json" || !Array.isArray(file.data) || file.data.length !== 1 || !isPlainObject(file.data[0])) {
+      return file;
+    }
+    const row = file.data[0];
+    return {
+      ...file,
+      data: [{
+        ...row,
+        mainsocial: formatSocialHandle(row.mainsocial),
+        secondarysocial: formatSocialHandle(row.secondarysocial),
+      }],
+    };
+  });
 }
 
 function validExportFile(file) {
@@ -494,13 +551,15 @@ function validLeagueDraft(value) {
 
 function validLeagueOverlay(value) {
   return value && typeof value === "object"
+    && (value.scoreboard === undefined || isLeagueScoreboard(value.scoreboard))
+    && (value.blueTeamKey === undefined || ["team1", "team2"].includes(value.blueTeamKey))
     && value.version === 1
     && typeof value.updatedAt === "string"
     && typeof value.assetVersion === "string"
     && typeof value.header === "string"
     && ["Bo1", "Bo3", "Bo5"].includes(value.bestOf)
     && Number.isInteger(value.currentGame)
-    && ["standard", "fearless"].includes(value.draftMode)
+    && ["standard", "online", "fearless"].includes(value.draftMode)
     && typeof value.playerBoardEnabled === "boolean"
     && typeof value.sponsorWidgetEnabled === "boolean"
     && typeof value.vsScreenEnabled === "boolean"
@@ -557,16 +616,53 @@ function cacheDuration(value, fallback, maximum) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : fallback;
 }
 
+function isPrivateAddress(address) {
+  const version = isIP(address);
+  if (version === 4) {
+    const [a, b] = address.split(".").map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  if (version === 6) {
+    const normalized = address.toLowerCase();
+    if (normalized === "::" || normalized === "::1") return true;
+    if (normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:")) return true;
+    if (normalized.startsWith("::ffff:")) return isPrivateAddress(normalized.slice("::ffff:".length));
+    return false;
+  }
+  return true;
+}
+
+function sponsorLogoUpstreamUrl(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return null;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (!host.includes(".") || host.endsWith(".local") || host.endsWith(".localhost") || host.endsWith(".internal")) return null;
+  if (isIP(host)) return null;
+  return url;
+}
+
 async function fetchBounded(fetchImpl, url, {
   headers,
   maximumBytes,
   expectedType,
   timeoutMs = UPSTREAM_TIMEOUT_MS,
+  redirect = "follow",
 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const upstream = await fetchImpl(url, { headers, signal: controller.signal });
+    const upstream = await fetchImpl(url, { headers, redirect, signal: controller.signal });
     const contentType = String(upstream.headers.get("content-type") ?? "").toLowerCase();
     const contentLength = Number.parseInt(upstream.headers.get("content-length") ?? "", 10);
     if (Number.isFinite(contentLength) && contentLength > maximumBytes) throw new HttpError(502, "Upstream response is too large");
@@ -609,6 +705,7 @@ export async function startJsonWriter({
   hubLogoCacheMaxStaleMs = HUB_LOGO_CACHE_MAX_STALE_MS,
   hubLogoRetryCacheTtlMs = HUB_LOGO_RETRY_CACHE_TTL_MS,
   writerOwnerLeaseMs = WRITER_OWNER_LEASE_MS,
+  dnsLookup = defaultDnsLookup,
 } = {}) {
   await mkdir(outputDir, { recursive: true });
   await recoverInterruptedTransaction(outputDir);
@@ -654,6 +751,8 @@ export async function startJsonWriter({
   const hubPublicRequests = new Map();
   const hubLogoCache = new Map();
   const hubLogoRetryCache = new Map();
+  const sponsorLogoCache = new Map();
+  const sponsorLogoRequests = new Map();
   const leagueAssetMemoryCache = new Map();
   const lastRevisionByWriter = new Map();
   const leagueCacheDir = path.join(outputDir, ".league-cache");
@@ -777,6 +876,135 @@ export async function startJsonWriter({
     });
   }
 
+  async function fetchSponsorLogo(urlString, hops = 0) {
+    const driveId = googleDriveFileId(urlString);
+    if (driveId) {
+      const artwork = await getMapArtwork(driveId);
+      return {
+        body: artwork.body,
+        contentType: String(artwork.contentType || "").split(";", 1)[0] || "application/octet-stream",
+      };
+    }
+    const url = sponsorLogoUpstreamUrl(urlString);
+    if (!url) throw new HttpError(400, "Sponsor logo URL is not allowed");
+    let records;
+    try {
+      records = await dnsLookup(url.hostname, { all: true, verbatim: true });
+    } catch {
+      throw new HttpError(502, "Sponsor logo is unavailable");
+    }
+    if (!Array.isArray(records) || records.length === 0 || records.some((record) => isPrivateAddress(record?.address))) {
+      throw new HttpError(400, "Sponsor logo URL is not allowed");
+    }
+    const { upstream, body, contentType } = await fetchBounded(fetchImpl, url.toString(), {
+      headers: { Accept: "image/*" },
+      expectedType: "image",
+      maximumBytes: MAX_IMAGE_RESPONSE_BYTES,
+      redirect: "manual",
+    });
+    if ([301, 302, 303, 307, 308].includes(upstream.status)) {
+      const location = upstream.headers.get("location");
+      if (!location || hops >= 3) throw new HttpError(502, "Sponsor logo is unavailable");
+      return fetchSponsorLogo(new URL(location, url).toString(), hops + 1);
+    }
+    if (!upstream.ok) throw new HttpError(upstream.status === 404 ? 404 : 502, "Sponsor logo is unavailable");
+    return { body, contentType: contentType.split(";", 1)[0] || "application/octet-stream" };
+  }
+
+  async function getSponsorLogo(src) {
+    const cached = getLru(sponsorLogoCache, src);
+    if (cached?.expiresAt > Date.now()) return cached;
+    const pending = sponsorLogoRequests.get(src);
+    if (pending) return pending;
+    if (sponsorLogoRequests.size >= HUB_PUBLIC_MAX_INFLIGHT) {
+      throw new HttpError(429, "Too many sponsor logo requests are in progress");
+    }
+    const requestPromise = fetchSponsorLogo(src).then((entry) => {
+      const stored = { ...entry, expiresAt: Date.now() + HUB_LOGO_CACHE_TTL_MS };
+      setLru(sponsorLogoCache, src, stored, HUB_LOGO_CACHE_MAX_ENTRIES, HUB_LOGO_CACHE_MAX_BYTES);
+      return stored;
+    });
+    sponsorLogoRequests.set(src, requestPromise);
+    try {
+      return await requestPromise;
+    } finally {
+      if (sponsorLogoRequests.get(src) === requestPromise) sponsorLogoRequests.delete(src);
+    }
+  }
+
+  async function readExistingVmixImage(logo) {
+    const normalized = String(logo || "").replaceAll("\\", "/");
+    if (!/^[A-Za-z]:\//.test(normalized)) return null;
+    const extension = extensionFromPath(normalized);
+    if (!extension) return null;
+    try {
+      return { body: await readFile(normalized), extension };
+    } catch {
+      return null;
+    }
+  }
+
+  async function readPublicVmixImage(pathname) {
+    const extension = extensionFromPath(pathname);
+    if (!extension || pathname.includes("..")) return null;
+    const file = path.resolve(PUBLIC_DIR, pathname.replace(/^\/+/, ""));
+    const relative = path.relative(PUBLIC_DIR, file);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    try {
+      return { body: await readFile(file), extension };
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadVmixSponsorImage(logo) {
+    const trimmed = String(logo || "").trim();
+    if (!trimmed) return null;
+    const existing = await readExistingVmixImage(trimmed);
+    if (existing) return existing;
+    let url;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    const host = url.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1") return readPublicVmixImage(url.pathname);
+    try {
+      const fetched = await fetchSponsorLogo(trimmed);
+      const extension = vmixImageExtension(fetched.contentType) || sniffVmixExtension(fetched.body);
+      if (!extension) return null;
+      return { body: fetched.body, extension };
+    } catch {
+      return null;
+    }
+  }
+
+  async function withVmixSponsorLogos(files) {
+    const sponsors = files.find((file) => file.filename === "sponsors.json");
+    if (!Array.isArray(sponsors?.data)) return files;
+    const dir = path.join(outputDir, "sponsor-logos");
+    const next = [];
+    for (const sponsor of sponsors.data) {
+      const image = await loadVmixSponsorImage(sponsor?.logo);
+      if (!image || !/^[A-Za-z0-9-]+$/.test(String(sponsor?.id || ""))) {
+        next.push(sponsor);
+        continue;
+      }
+      const hash = createHash("sha256").update(image.body).digest("hex").slice(0, 8);
+      const filename = `${sponsor.id}-${hash}${image.extension}`;
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, filename), image.body);
+      const names = await readdir(dir).catch(() => []);
+      await Promise.all(names
+        .filter((name) => name.startsWith(`${sponsor.id}-`) && name !== filename)
+        .map((name) => unlink(path.join(dir, name)).catch(() => {})));
+      next.push({ ...sponsor, logo: path.resolve(dir, filename).replaceAll("\\", "/") });
+    }
+    return files.map((file) => file.filename === "sponsors.json" ? { ...file, data: next } : file);
+  }
+
   function hubLogoCacheControl(logo) {
     const maxAgeSeconds = logo.stale
       ? 0
@@ -794,7 +1022,7 @@ export async function startJsonWriter({
     if (memory) return memory;
     try {
       const body = await readFile(diskPath);
-      const cached = { body, contentType: requireType === "image" ? "image/png" : "application/json" };
+      const cached = { body, contentType: requireType === "image" ? (safeKey.endsWith(".jpg") ? "image/jpeg" : "image/png") : "application/json" };
       setLru(leagueAssetMemoryCache, safeKey, cached, 256, LEAGUE_MEMORY_CACHE_MAX_BYTES);
       return cached;
     } catch {
@@ -980,14 +1208,20 @@ export async function startJsonWriter({
     }
 
     const leagueAssetRequest = request.method === "GET"
-      ? request.url?.match(/^\/api\/public\/league-of-legends\/assets\/([0-9.]+)\/(champion|item|spell)\/([A-Za-z0-9_.-]+)$/)
+      ? request.url?.match(/^\/api\/public\/league-of-legends\/assets\/(\d+\.\d+\.\d+)\/(champion|item|spell|portrait)\/([A-Za-z0-9_]+\.(?:png|jpg))$/)
       : null;
     if (leagueAssetRequest) {
       try {
         const [, version, kind, filename] = leagueAssetRequest;
+        if (kind === "portrait" && !/^[A-Za-z0-9]+_0\.jpg$/.test(filename)) {
+          response.writeHead(404).end();
+          return;
+        }
         const asset = await cachedLeagueResource(
           `${version}-${kind}-${filename}`,
-          `${DATA_DRAGON_URL}/cdn/${encodeURIComponent(version)}/img/${kind}/${encodeURIComponent(filename)}`,
+          kind === "portrait"
+            ? `${DATA_DRAGON_URL}/cdn/img/champion/loading/${encodeURIComponent(filename)}`
+            : `${DATA_DRAGON_URL}/cdn/${encodeURIComponent(version)}/img/${kind}/${encodeURIComponent(filename)}`,
           "image/*",
           "image",
         );
@@ -996,6 +1230,33 @@ export async function startJsonWriter({
       } catch {
         response.writeHead(404, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ error: "League asset is unavailable" }));
+      }
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/api/sponsor-logos?")) {
+      if (request.url.length > 4096) {
+        rejectJson(response, 414, "Sponsor logo URL is too long");
+        return;
+      }
+      let src = "";
+      try {
+        src = new URL(request.url, "http://127.0.0.1").searchParams.get("src") ?? "";
+      } catch {
+        rejectJson(response, 400, "Sponsor logo URL is not allowed");
+        return;
+      }
+      try {
+        const logo = await getSponsorLogo(src);
+        response.writeHead(200, {
+          "Content-Type": logo.contentType,
+          "Content-Length": logo.body.length,
+          "Cache-Control": "public, max-age=300",
+        });
+        response.end(logo.body);
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");
+        rejectJson(response, error instanceof HttpError ? error.status : 502, error instanceof HttpError ? error.message : "Sponsor logo is unavailable");
       }
       return;
     }
@@ -1230,9 +1491,9 @@ export async function startJsonWriter({
           duplicate = true;
           return;
         }
-        const transactionFiles = nextValorantMapData === undefined
+        const transactionFiles = await withVmixSponsorLogos(withSocialHandles(nextValorantMapData === undefined
           ? payload.files
-          : [...payload.files, { filename: VALORANT_MAP_DATA_FILENAME, data: nextValorantMapData }];
+          : [...payload.files, { filename: VALORANT_MAP_DATA_FILENAME, data: nextValorantMapData }]));
         await commitJsonPackage(outputDir, transactionFiles, beforeInstallFile, afterBackupFile);
         if (nextValorantOverlay !== undefined) valorantOverlayState = nextValorantOverlay;
         if (nextRocketLeagueOverlay !== undefined) {

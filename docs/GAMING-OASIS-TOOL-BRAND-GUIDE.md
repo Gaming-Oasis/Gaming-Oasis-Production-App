@@ -30,7 +30,7 @@ Functional success and error colors may be used for system state. Do not use bra
 
 ## Browser overlays color scheme
 
-Applies to `/overlays/rocket-league`, `/overlays/rocket-league/vs`, `/overlays/rocket-league/stats`, `/overlays/valorant`, and `/overlays/valorant/vs` (browser sources for OBS). Operator chrome uses the core tokens above; overlays use this tighter fixed set plus live Match 1 / league colors.
+Applies to `/overlays/rocket-league`, `/overlays/rocket-league/vs`, `/overlays/rocket-league/stats`, `/overlays/valorant`, `/overlays/valorant/vs`, and the League Pick/Ban, Scoreboard, and VS routes under `/overlays/league-of-legends` (browser sources for OBS). Operator chrome uses the core tokens above; overlays use this tighter fixed set plus live Match 1 / league colors.
 
 ### Fixed colors
 
@@ -39,6 +39,9 @@ Applies to `/overlays/rocket-league`, `/overlays/rocket-league/vs`, `/overlays/r
 | `#171717` | Plate fill — score panels, RL active-player card body (`active-border-fill.png` + CSS plates), sponsor boxes, series pills (default), VALORANT map-widget bases and decider slot, and readable contrast text when white fails on a light fill |
 | `#FFFFFF` | Primary overlay text; series pills when `readableText` picks white on the team fill |
 | `#fefe13` | Rocket League boost bar fill only |
+| `#713060` | League active Baron icon and buff-tab accent (approved Accent Purple); tab plate remains `#171717` |
+
+League follows the Rocket League stats palette: flat `#171717` backgrounds, `rgb(23 23 23 / 0.8)` translucent plates, white objective icons, and live league-primary outer trim. Source icon silhouettes and placement are retained through alpha masks; fixed source purple, cyan, gold, and background texture are not rendered. Its source typography includes Oxanium ExtraBold (800) for scoreboard statistics and Oxanium Regular (400) for champion names.
 
 ### Live colors (from production data)
 

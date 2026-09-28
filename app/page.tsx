@@ -1,7 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { LeagueRoleOrder } from "./LeagueRoleOrder";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
+import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
+import {
+  applyTierSeedOffset,
+  buildByGroupExport,
+  drawOrderNote,
+  filterSeedTeams,
+  groupSeedTeamsByHat,
+  parseSeedingCsv,
+  placedSeedTeamIds,
+  seedHatLabel,
+  serializeByGroupCsv,
+  shortDrawNames,
+  sortSeedTeams,
+  unplacedSeedTeams,
+} from "../lib/draw-seeding.mjs";
 import {
   IMAGE_PLATE_DARK,
   IMAGE_PLATE_LIGHT,
@@ -27,6 +43,7 @@ import {
   normalizeDebugLive,
 } from "../lib/rocket-league-live.mjs";
 import { resolveScoreboardHeader } from "../lib/scoreboard-header.mjs";
+import { formatSocialHandle } from "../lib/social-handle.mjs";
 import {
   buildValorantOverlayState,
   buildValorantFields,
@@ -40,8 +57,10 @@ import {
 } from "../lib/valorant.mjs";
 import {
   DEFAULT_LEAGUE_CHAMPIONS,
-  LEAGUE_DRAFT_STEPS,
+  leagueDraftSteps,
+  buildLeagueScoreFields,
   LEAGUE_GAME_COUNT,
+  assignLeaguePickRole,
   buildLeagueOverlayState,
   calculateLeagueCurrentGame,
   calculateLeagueSeries,
@@ -53,6 +72,8 @@ import {
   normalizeLeagueDraft,
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
+import LeagueScoreboardControls, { type LeagueScoreboardSettings } from "./LeagueScoreboardControls";
+import { normalizeLeagueScoreboard, resetLeagueScoreboardCounts } from "../lib/league-scoreboard.mjs";
 
 type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "leagueOfLegends" | "sponsors" | "draw" | "settings";
 type ConnectionState = "idle" | "connected" | "error";
@@ -153,6 +174,8 @@ function sectionEnabled(section: Section, settings: Settings) {
 }
 
 type LeagueDraftState = {
+  bluePickOrder: number[];
+  redPickOrder: number[];
   currentStep: number;
   selections: string[];
   timerSeconds: number;
@@ -222,11 +245,12 @@ type LeagueLivePreview = {
 
 type LeagueOfLegends = {
   scoreboardHeader: string;
+  scoreboard: LeagueScoreboardSettings;
   bestOf: "Bo1" | "Bo3" | "Bo5";
-  draftMode: "standard" | "fearless";
+  draftMode: "standard" | "online" | "fearless";
   currentGame: number;
   blueTeam: "team1" | "team2";
-  playerBoardEnabled: boolean;
+  autoAcceptLiveResults: boolean;
   sponsorWidgetEnabled: boolean;
   vsScreenEnabled: boolean;
   debugLiveEnabled: boolean;
@@ -239,7 +263,20 @@ type LeagueOfLegends = {
 };
 
 type DrawKey = "RLT1" | "RLT2" | "VALT1" | "VALT2";
+type DrawTab = "import" | DrawKey;
 type DrawData = Record<DrawKey, Record<string, string>>;
+type SeededTeam = {
+  id: string;
+  teamId: string;
+  name: string;
+  seed: number;
+  group: number | null;
+};
+type DivisionSeeding = {
+  teams: SeededTeam[];
+  slots: Record<string, string>;
+};
+type DrawSeeding = Record<DrawKey, DivisionSeeding>;
 
 type RocketLeagueGame = {
   home: string;
@@ -379,6 +416,7 @@ type ProductionState = {
   sponsors: Sponsor[];
   settings: Settings;
   draws: DrawData;
+  drawSeeding: DrawSeeding;
 };
 
 type ExportFile = { filename: string; data: unknown };
@@ -506,7 +544,6 @@ const ROCKET_LEAGUE_VS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-leag
 const ROCKET_LEAGUE_STATS_OVERLAY_URL = "http://localhost:3000/overlays/rocket-league/stats";
 const LEAGUE_DRAFT_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/draft";
 const LEAGUE_LIVE_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/live";
-const LEAGUE_RECAP_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/recap";
 const LEAGUE_VS_OVERLAY_URL = "http://localhost:3000/overlays/league-of-legends/vs";
 const LEAGUE_OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/league-of-legends";
 const LEAGUE_CATALOG_ENDPOINT = "http://127.0.0.1:4877/api/public/league-of-legends/catalog";
@@ -525,6 +562,8 @@ function canonicalMapName(value: unknown) {
 }
 
 function displayLogoUrl(value: string) {
+  const driveId = googleDriveFileId(value);
+  if (driveId) return `http://127.0.0.1:4877/api/public/map-artwork/${encodeURIComponent(driveId)}`;
   try {
     const url = new URL(value);
     if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) {
@@ -637,6 +676,48 @@ function createDraws(): DrawData {
   }, {} as DrawData);
 }
 
+function createDrawSeeding(): DrawSeeding {
+  return (Object.keys(DRAW_DEFINITIONS) as DrawKey[]).reduce((all, key) => {
+    all[key] = { teams: [], slots: {} };
+    return all;
+  }, {} as DrawSeeding);
+}
+
+function mergeDrawSeeding(saved: unknown): DrawSeeding {
+  const initial = createDrawSeeding();
+  const source = asRecord(saved);
+  return (Object.keys(initial) as DrawKey[]).reduce((all, key) => {
+    const entry = asRecord(source[key]);
+    const teams = Array.isArray(entry.teams)
+      ? entry.teams.flatMap((value) => {
+        const team = asRecord(value);
+        const name = stringValue(team.name).trim();
+        const id = stringValue(team.id).trim();
+        const seed = Number(team.seed);
+        if (!name || !id || !Number.isInteger(seed) || seed < 1) return [];
+        const group = team.group === null || team.group === undefined || team.group === ""
+          ? null
+          : Number(team.group);
+        return [{
+          id,
+          teamId: stringValue(team.teamId).trim(),
+          name,
+          seed,
+          group: Number.isInteger(group) && Number(group) > 0 ? Number(group) : null,
+        }];
+      })
+      : [];
+    const knownSlots = new Set(Object.keys(createDraws()[key]));
+    const slots: Record<string, string> = {};
+    for (const [slotKey, slotValue] of Object.entries(asRecord(entry.slots))) {
+      const teamId = stringValue(slotValue).trim();
+      if (knownSlots.has(slotKey) && teamId && teams.some((team) => team.id === teamId)) slots[slotKey] = teamId;
+    }
+    all[key] = { teams, slots };
+    return all;
+  }, {} as DrawSeeding);
+}
+
 function createInitialState(): ProductionState {
   return {
     general: {
@@ -686,11 +767,12 @@ function createInitialState(): ProductionState {
     },
     leagueOfLegends: {
       scoreboardHeader: "",
+      scoreboard: normalizeLeagueScoreboard() as LeagueScoreboardSettings,
       bestOf: "Bo3",
       draftMode: "standard",
       currentGame: 1,
       blueTeam: "team1",
-      playerBoardEnabled: true,
+      autoAcceptLiveResults: false,
       sponsorWidgetEnabled: true,
       vsScreenEnabled: false,
       debugLiveEnabled: false,
@@ -720,6 +802,7 @@ function createInitialState(): ProductionState {
       drawShowEnabled: false,
     },
     draws: createDraws(),
+    drawSeeding: createDrawSeeding(),
   };
 }
 
@@ -1067,11 +1150,12 @@ function mergeSavedState(savedValue: unknown): ProductionState {
     leagueOfLegends: {
       ...initial.leagueOfLegends,
       ...savedLeague,
+      scoreboard: normalizeLeagueScoreboard(savedLeague.scoreboard) as LeagueScoreboardSettings,
       bestOf: savedLeagueBestOf,
-      draftMode: savedLeague.draftMode === "fearless" ? "fearless" : "standard",
+      draftMode: savedLeague.draftMode === "fearless" ? "fearless" : savedLeague.draftMode === "online" ? "online" : "standard",
       currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
       blueTeam: savedLeague.blueTeam === "team2" ? "team2" : "team1",
-      playerBoardEnabled: savedLeague.playerBoardEnabled !== false,
+      autoAcceptLiveResults: booleanValue(savedLeague.autoAcceptLiveResults, false),
       sponsorWidgetEnabled: savedLeague.sponsorWidgetEnabled !== false,
       vsScreenEnabled: Boolean(savedLeague.vsScreenEnabled),
       debugLiveEnabled: Boolean(savedLeague.debugLiveEnabled),
@@ -1109,6 +1193,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       all[key] = mergeStringRecord(initial.draws[key], asRecord(saved.draws)[key]);
       return all;
     }, {} as DrawData),
+    drawSeeding: mergeDrawSeeding(saved.drawSeeding),
   };
 }
 
@@ -1342,7 +1427,7 @@ function resolveRegionalLogo(general: GeneralInfo) {
   return GAMING_OASIS_FAVICON_URL;
 }
 
-function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valorant: Valorant, mapArtwork: ValorantMapArtwork[]) {
+function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valorant: Valorant, mapArtwork: ValorantMapArtwork[], league: LeagueOfLegends) {
   const savedRocketLeagueGames = trimSavedResultRows(
     rocketLeague.savedGames,
     rocketLeagueGameLimit(rocketLeague.bestOf),
@@ -1352,13 +1437,14 @@ function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valo
     valorantGameLimit(valorant.bestOf),
   );
   const output: Record<string, string> = {
+    ...buildLeagueScoreFields(league),
     eventname: upper(general.eventName),
     maincaster: upper(general.mainCaster),
     secondcaster: upper(general.secondCaster),
     guest1: upper(general.guest1),
     guest2: upper(general.guest2),
-    mainsocial: general.mainCasterSocial.replace(/^@/, "").trim(),
-    secondarysocial: general.secondaryCasterSocial.replace(/^@/, "").trim(),
+    mainsocial: formatSocialHandle(general.mainCasterSocial),
+    secondarysocial: formatSocialHandle(general.secondaryCasterSocial),
     startingtitle: upper(general.startingSoonTitle),
     interviewname: upper(general.interviewName),
     podcasttitle: upper(general.podcastTitle),
@@ -1413,11 +1499,11 @@ function buildExportFiles(state: ProductionState): ExportFile[] {
 
   const drawFiles = (Object.keys(DRAW_DEFINITIONS) as DrawKey[]).map((key) => ({
     filename: DRAW_DEFINITIONS[key].filename,
-    data: [state.draws[key]],
+    data: [shortDrawNames(state.draws[key], DRAW_DEFINITIONS[key].game)],
   }));
 
   return [
-    { filename: "FinalOutput.json", data: buildFinalOutput(state.general, state.rocketLeague, state.valorant, state.valorantMapData.maps) },
+    { filename: "FinalOutput.json", data: buildFinalOutput(state.general, state.rocketLeague, state.valorant, state.valorantMapData.maps, state.leagueOfLegends) },
     { filename: "sponsors.json", data: sponsors },
     ...drawFiles,
   ];
@@ -1440,7 +1526,13 @@ function crc32(bytes: Uint8Array) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function createJsonPackageArchive(files: ExportFile[]) {
+function packageFileBytes(file: { data?: unknown; text?: string }) {
+  const encoder = new TextEncoder();
+  if (typeof file.text === "string") return encoder.encode(file.text);
+  return encoder.encode(`${JSON.stringify(file.data, null, 2)}\n`);
+}
+
+function createJsonPackageArchive(files: { filename: string; data?: unknown; text?: string }[]) {
   const encoder = new TextEncoder();
   const localParts: BlobPart[] = [];
   const centralParts: BlobPart[] = [];
@@ -1449,7 +1541,7 @@ function createJsonPackageArchive(files: ExportFile[]) {
 
   for (const file of files) {
     const name = encoder.encode(file.filename);
-    const data = encoder.encode(`${JSON.stringify(file.data, null, 2)}\n`);
+    const data = packageFileBytes(file);
     const checksum = crc32(data);
     const localHeader = new ArrayBuffer(30);
     const localView = new DataView(localHeader);
@@ -1489,16 +1581,27 @@ function createJsonPackageArchive(files: ExportFile[]) {
   return new Blob([...localParts, ...centralParts, endRecord], { type: "application/zip" });
 }
 
-function downloadJsonPackage(files: ExportFile[]) {
-  const blob = createJsonPackageArchive(files);
+function downloadBlob(blob: Blob, downloadName: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "gaming-oasis-production-json.zip";
+  anchor.download = downloadName;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 2_000);
+}
+
+function downloadStoredPackage(files: { filename: string; data?: unknown; text?: string }[], downloadName: string) {
+  downloadBlob(createJsonPackageArchive(files), downloadName);
+}
+
+function downloadTextFile(filename: string, text: string) {
+  downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), filename);
+}
+
+function downloadJsonPackage(files: ExportFile[]) {
+  downloadStoredPackage(files, "gaming-oasis-production-json.zip");
 }
 
 async function writeFilesToFolder(files: ExportFile[]) {
@@ -1631,6 +1734,79 @@ function Field({
   );
 }
 
+function GameFlipSidesControl({
+  gameName,
+  checked,
+  onChange,
+}: {
+  gameName: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="valorant-toggle-row">
+      <div>
+        <strong>Flip Sides</strong>
+        <p>Swap Team 1 and Team 2 across the scoreboard and live graphics. Saved results stay in Team 1/Team 2 order.</p>
+      </div>
+      <label className="switch large">
+        <input aria-label={`Flip ${gameName} team sides`} type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+        <span />
+      </label>
+    </div>
+  );
+}
+
+function GameAutoAcceptControl({
+  gameName,
+  checked,
+  onChange,
+  locked = false,
+}: {
+  gameName: string;
+  checked: boolean;
+  onChange?: (checked: boolean) => void;
+  locked?: boolean;
+}) {
+  return (
+    <div className="valorant-toggle-row">
+      <div>
+        <strong>Auto Accept Live Results</strong>
+        <p>{locked ? "Live results are accepted automatically for this game." : "When live data detects a winner, save the next result automatically. Leave off to review it before updating results."}</p>
+      </div>
+      <label className="switch large">
+        <input aria-label={`Auto Accept Live ${gameName} Results`} type="checkbox" checked={checked} disabled={locked} onChange={(event) => onChange?.(event.target.checked)} />
+        <span />
+      </label>
+    </div>
+  );
+}
+
+type GameIndicator = {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  detail: React.ReactNode;
+  valueClassName?: string;
+  detailClassName?: string;
+};
+
+function GameLiveMatchIndicators({ gameName, indicators }: { gameName: string; indicators: GameIndicator[] }) {
+  return (
+    <section className="panel-card rocket-indicator-card" aria-label={`${gameName} live match indicators`}>
+      <div className="card-title-row"><div><h2>Live Match Indicators</h2><p>Calculated from the results currently saved to JSON.</p></div></div>
+      <dl className="rocket-indicators">
+        {indicators.map((indicator, index) => (
+          <div key={index}>
+            <dt>{indicator.label}</dt>
+            <dd className={indicator.valueClassName}>{indicator.value}</dd>
+            <small className={indicator.detailClassName}>{indicator.detail}</small>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
 function SectionHeading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
   return (
     <header className="section-heading">
@@ -1683,14 +1859,20 @@ export default function Home() {
   const [generalTab, setGeneralTab] = useState<"talent" | "segments">("talent");
   const [valorantTab, setValorantTab] = useState<"results" | "pickBans" | "mapPool" | "overlay">("results");
   const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "overlay" | "admin" | "debug">("results");
-  const [leagueTab, setLeagueTab] = useState<"results" | "draft" | "live" | "overlay">("results");
+  const [leagueTab, setLeagueTab] = useState<"results" | "draft" | "controls" | "live" | "overlay">("results");
   const [leagueChampion, setLeagueChampion] = useState("");
   const [leagueCatalog, setLeagueCatalog] = useState<Array<{ id: string; name: string }>>(() => [...DEFAULT_LEAGUE_CHAMPIONS]);
   const [leagueCatalogVersion, setLeagueCatalogVersion] = useState("latest");
   const [leagueLivePreview, setLeagueLivePreview] = useState<LeagueLivePreview | null>(null);
-  const [drawTab, setDrawTab] = useState<DrawKey>("RLT1");
+  const [drawTab, setDrawTab] = useState<DrawTab>("import");
   const [drawPastePool, setDrawPastePool] = useState<number | null>(null);
   const [drawPasteText, setDrawPasteText] = useState("");
+  const [drawDropSlot, setDrawDropSlot] = useState<string | null>(null);
+  const [drawPicker, setDrawPicker] = useState<string | null>(null);
+  const [drawPickerDraft, setDrawPickerDraft] = useState("");
+  const [drawPickerQuery, setDrawPickerQuery] = useState("");
+  const [drawPickerIndex, setDrawPickerIndex] = useState(-1);
+  const seedingDragRef = useRef<{ division: DrawKey; id: string } | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [syncingMatch, setSyncingMatch] = useState<number | null>(null);
   const [liveSync, setLiveSync] = useState<LiveSyncState>("checking");
@@ -1761,7 +1943,7 @@ export default function Home() {
     setRocketLeagueSeriesResetOpen(false);
     setValorantSeriesResetOpen(false);
     setPendingConfirmation(null);
-  }, []);
+  }, [setResetConfirmationOpen, setRocketLeagueSeriesResetOpen, setValorantSeriesResetOpen, setPendingConfirmation]);
 
   const persistCurrentState = useCallback(() => {
     if (!isPrimaryTabRef.current) return;
@@ -1819,25 +2001,6 @@ export default function Home() {
   }, [getWriterToken]);
 
   useEffect(() => {
-    if (!hydrated || !isPrimaryTab || !state.leagueOfLegends.draft.timerRunning) return;
-    const timer = window.setInterval(() => {
-      setState((current) => {
-        const draft = current.leagueOfLegends.draft;
-        if (!draft.timerRunning) return current;
-        const timeRemaining = Math.max(0, draft.timeRemaining - 1);
-        return {
-          ...current,
-          leagueOfLegends: {
-            ...current.leagueOfLegends,
-            draft: { ...draft, timeRemaining, timerRunning: timeRemaining > 0 },
-          },
-        };
-      });
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [hydrated, isPrimaryTab, state.leagueOfLegends.draft.timerRunning]);
-
-  useEffect(() => {
     if (!hydrated) return;
     const controller = new AbortController();
     fetch(LEAGUE_CATALOG_ENDPOINT, { cache: "no-store", signal: controller.signal })
@@ -1877,7 +2040,7 @@ export default function Home() {
           const redWinner = blueWinner === "team1" ? "team2" : "team1";
           const winner: LeagueResultGame["winner"] = winnerTeam === "ORDER" ? blueWinner : winnerTeam === "CHAOS" ? redWinner : "";
           const gameNumber = current.leagueOfLegends.currentGame;
-          const slots = draftSlots(current.leagueOfLegends.draft);
+          const slots = draftSlots(current.leagueOfLegends.draft, current.leagueOfLegends.draftMode);
           const results = current.leagueOfLegends.results.map((game, index) => index === gameNumber - 1 ? {
             ...game,
             winner,
@@ -2271,10 +2434,10 @@ export default function Home() {
     state.leagueOfLegends,
     resolveTeam(state.general.matches[0].team1),
     resolveTeam(state.general.matches[0].team2),
-    { primaryColor: matchOneLeague.primaryColor, secondaryColor: matchOneLeague.secondaryColor },
+    { primaryColor: matchOneLeague.primaryColor, secondaryColor: matchOneLeague.secondaryColor, logo: matchOneLeague.logo },
     state.sponsors,
     { eventName: state.general.eventName, assetVersion: leagueCatalogVersion },
-  ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, leagueCatalogVersion]);
+  ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, matchOneLeague.logo, leagueCatalogVersion]);
   const livePayload = useMemo(() => ({
     files,
     overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay },
@@ -2306,9 +2469,26 @@ export default function Home() {
   const leagueGameCount = leagueGameLimit(state.leagueOfLegends.bestOf);
   const leagueConfirmedGames = state.leagueOfLegends.confirmedGames.filter((game) => game.gameNumber <= leagueGameCount);
   const leagueSeries = calculateLeagueSeries(leagueConfirmedGames);
+  const leagueDraftProgress = (() => {
+    const winsNeeded = Math.floor(leagueGameCount / 2) + 1;
+    let teamOne = 0;
+    let teamTwo = 0;
+    let completedGames = 0;
+    for (const result of state.leagueOfLegends.results.slice(0, leagueGameCount)) {
+      if (!result.winner || teamOne >= winsNeeded || teamTwo >= winsNeeded) break;
+      if (result.winner === "team1") teamOne += 1;
+      else teamTwo += 1;
+      completedGames += 1;
+    }
+    return { completedGames, complete: teamOne >= winsNeeded || teamTwo >= winsNeeded };
+  })();
   const leaguePendingResults = leagueResultPendingCount(state.leagueOfLegends.results, leagueConfirmedGames, state.leagueOfLegends.bestOf);
   const leagueHeader = resolveScoreboardHeader(state.leagueOfLegends.scoreboardHeader, state.general.eventName);
-  const leagueReady = Boolean(leagueHeader);
+
+  useEffect(() => {
+    if (!hydrated || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
+    saveLeagueResults();
+  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2788,7 +2968,7 @@ export default function Home() {
       const unavailable = current.leagueOfLegends.draftMode === "fearless"
         ? fearlessChampionSet(current.leagueOfLegends.confirmedGames)
         : new Set();
-      const result = lockLeagueDraftSelection(current.leagueOfLegends.draft, leagueChampion, unavailable);
+      const result = lockLeagueDraftSelection(current.leagueOfLegends.draft, leagueChampion, unavailable, current.leagueOfLegends.draftMode);
       if (!result.changed) {
         failure = result.reason || "Could not lock champion";
         return current;
@@ -2808,6 +2988,16 @@ export default function Home() {
       leagueOfLegends: {
         ...current.leagueOfLegends,
         draft: undoLeagueDraftSelection(current.leagueOfLegends.draft) as LeagueDraftState,
+      },
+    }));
+  }
+
+  function updateLeaguePickRole(side: "blue" | "red", role: number, pick: number) {
+    setState((current) => ({
+      ...current,
+      leagueOfLegends: {
+        ...current.leagueOfLegends,
+        draft: assignLeaguePickRole(current.leagueOfLegends.draft, side, role, pick) as LeagueDraftState,
       },
     }));
   }
@@ -2856,7 +3046,7 @@ export default function Home() {
   function saveLeagueResults() {
     if (!leaguePendingResults) return;
     setState((current) => {
-      const slots = draftSlots(current.leagueOfLegends.draft);
+      const slots = draftSlots(current.leagueOfLegends.draft, current.leagueOfLegends.draftMode);
       const currentDraftHasPicks = [...slots.bluePicks, ...slots.redPicks].some(Boolean);
       const previousByGame = new Map(current.leagueOfLegends.confirmedGames.map((game) => [game.gameNumber, game]));
       const gameLimit = leagueGameLimit(current.leagueOfLegends.bestOf);
@@ -2886,6 +3076,9 @@ export default function Home() {
           confirmedGames,
           results: leagueResultsFromConfirmedGames(confirmedGames),
           currentGame,
+          scoreboard: currentGame !== current.leagueOfLegends.currentGame
+            ? resetLeagueScoreboardCounts(current.leagueOfLegends.scoreboard) as LeagueScoreboardSettings
+            : current.leagueOfLegends.scoreboard,
           draft: currentResultChanged || currentGame !== current.leagueOfLegends.currentGame
             ? createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds) as LeagueDraftState
             : current.leagueOfLegends.draft,
@@ -2903,6 +3096,7 @@ export default function Home() {
       leagueOfLegends: {
         ...current.leagueOfLegends,
         currentGame: 1,
+        scoreboard: resetLeagueScoreboardCounts(current.leagueOfLegends.scoreboard) as LeagueScoreboardSettings,
         results: createLeagueResultGames(),
         draft: createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds) as LeagueDraftState,
         confirmedGames: [],
@@ -3272,25 +3466,34 @@ export default function Home() {
     return cells.slice(0, maximumRows).map((cell) => cell.trim());
   }
 
-  function applyExcelPool(poolIndex: number) {
-    const definition = DRAW_DEFINITIONS[drawTab];
+  function applyExcelPool(division: DrawKey, poolIndex: number) {
+    const definition = DRAW_DEFINITIONS[division];
     const entries = parseExcelPool(drawPasteText, definition.rows);
     if (!entries.some(Boolean)) {
       notify("Paste at least one team from Excel");
       return;
     }
     setState((current) => {
-      const pool = { ...current.draws[drawTab] };
-      for (let row = 0; row < definition.rows; row += 1) pool[`P${poolIndex + 1}${row + 1}`] = entries[row] ?? "";
-      return { ...current, draws: { ...current.draws, [drawTab]: pool } };
+      const pool = { ...current.draws[division] };
+      const slots = { ...current.drawSeeding[division].slots };
+      for (let row = 0; row < definition.rows; row += 1) {
+        const fieldKey = `P${poolIndex + 1}${row + 1}`;
+        pool[fieldKey] = entries[row] ?? "";
+        delete slots[fieldKey];
+      }
+      return {
+        ...current,
+        draws: { ...current.draws, [division]: pool },
+        drawSeeding: { ...current.drawSeeding, [division]: { ...current.drawSeeding[division], slots } },
+      };
     });
     setDrawPastePool(null);
     setDrawPasteText("");
     notify(`Pool ${String.fromCharCode(65 + poolIndex)} updated from Excel`);
   }
 
-  function clearDrawPool(poolIndex: number) {
-    const definition = DRAW_DEFINITIONS[drawTab];
+  function clearDrawPool(division: DrawKey, poolIndex: number) {
+    const definition = DRAW_DEFINITIONS[division];
     const poolName = String.fromCharCode(65 + poolIndex);
     requestConfirmation({
       title: `Clear Pool ${poolName}?`,
@@ -3298,9 +3501,18 @@ export default function Home() {
       confirmLabel: "Clear pool",
       onConfirm: () => {
         setState((current) => {
-          const pool = { ...current.draws[drawTab] };
-          for (let row = 0; row < definition.rows; row += 1) pool[`P${poolIndex + 1}${row + 1}`] = "";
-          return { ...current, draws: { ...current.draws, [drawTab]: pool } };
+          const pool = { ...current.draws[division] };
+          const slots = { ...current.drawSeeding[division].slots };
+          for (let row = 0; row < definition.rows; row += 1) {
+            const fieldKey = `P${poolIndex + 1}${row + 1}`;
+            pool[fieldKey] = "";
+            delete slots[fieldKey];
+          }
+          return {
+            ...current,
+            draws: { ...current.draws, [division]: pool },
+            drawSeeding: { ...current.drawSeeding, [division]: { ...current.drawSeeding[division], slots } },
+          };
         });
         if (drawPastePool === poolIndex) {
           setDrawPastePool(null);
@@ -3309,6 +3521,113 @@ export default function Home() {
         notify(`Pool ${poolName} cleared`);
       },
     });
+  }
+
+  function updateDrawSlot(division: DrawKey, fieldKey: string, value: string) {
+    setState((current) => {
+      const seeding = current.drawSeeding[division];
+      const slots = { ...seeding.slots };
+      const assigned = seeding.teams.find((team) => team.id === slots[fieldKey]);
+      if (!assigned || assigned.name !== value) delete slots[fieldKey];
+      return {
+        ...current,
+        draws: { ...current.draws, [division]: { ...current.draws[division], [fieldKey]: value } },
+        drawSeeding: { ...current.drawSeeding, [division]: { ...seeding, slots } },
+      };
+    });
+  }
+
+  function placeSeededTeam(division: DrawKey, fieldKey: string, teamId: string) {
+    setState((current) => {
+      const seeding = current.drawSeeding[division];
+      const team = seeding.teams.find((entry) => entry.id === teamId);
+      if (!team) return current;
+      const pool = { ...current.draws[division] };
+      const slots = { ...seeding.slots };
+      for (const key of Object.keys(pool)) {
+        if (key !== fieldKey && (slots[key] === team.id || pool[key].trim() === team.name.trim())) {
+          pool[key] = "";
+          delete slots[key];
+        }
+      }
+      pool[fieldKey] = team.name;
+      slots[fieldKey] = team.id;
+      return {
+        ...current,
+        draws: { ...current.draws, [division]: pool },
+        drawSeeding: { ...current.drawSeeding, [division]: { ...seeding, slots } },
+      };
+    });
+  }
+
+  async function importSeedingFile(division: DrawKey, file: File) {
+    const parsed = parseSeedingCsv(await file.text());
+    if (parsed.error) {
+      notify(parsed.error);
+      return;
+    }
+    const label = DRAW_DEFINITIONS[division].label;
+    const teams = applyTierSeedOffset(division, parsed.teams);
+    setState((current) => {
+      const previous = current.drawSeeding[division];
+      const slots: Record<string, string> = {};
+      for (const [key, id] of Object.entries(previous.slots)) {
+        const team = teams.find((entry: SeededTeam) => entry.id === id);
+        if (team && current.draws[division][key]?.trim() === team.name.trim()) slots[key] = id;
+      }
+      return {
+        ...current,
+        drawSeeding: {
+          ...current.drawSeeding,
+          [division]: { teams, slots },
+        },
+      };
+    });
+    notify(`${label} teams are in Imported teams. Draw files update when a team is placed.`);
+  }
+
+  function clearSeedingFile(division: DrawKey) {
+    const label = DRAW_DEFINITIONS[division].label;
+    requestConfirmation({
+      title: `Clear the ${label} CSV?`,
+      description: `This removes the imported seed list for ${label}. Names already placed in pools stay, without their team IDs.`,
+      confirmLabel: "Clear CSV",
+      onConfirm: () => {
+        setState((current) => ({
+          ...current,
+          drawSeeding: {
+            ...current.drawSeeding,
+            [division]: { teams: [], slots: {} },
+          },
+        }));
+        notify(`${label} seed list cleared`);
+      },
+    });
+  }
+
+  function divisionGroupCsv(division: DrawKey) {
+    const definition = DRAW_DEFINITIONS[division];
+    return serializeByGroupCsv(buildByGroupExport(
+      definition.pools,
+      definition.rows,
+      state.draws[division],
+      state.drawSeeding[division].teams,
+      state.drawSeeding[division].slots,
+    ));
+  }
+
+  function exportDivisionSeeding(division: DrawKey) {
+    downloadTextFile(`seeding-${division}.csv`, divisionGroupCsv(division));
+    notify(`${DRAW_DEFINITIONS[division].label} group list downloaded`);
+  }
+
+  function exportSeeding() {
+    const files = (Object.keys(DRAW_DEFINITIONS) as DrawKey[]).map((key) => ({
+      filename: `seeding-${key}.csv`,
+      text: divisionGroupCsv(key),
+    }));
+    downloadStoredPackage(files, "draw-seeding.zip");
+    notify("Group lists downloaded");
   }
 
   function updateSponsor(index: number, patch: Partial<Sponsor>) {
@@ -3832,7 +4151,13 @@ export default function Home() {
             <section className="panel-card">
               <div className="card-title-row"><div><h2>Stream copy</h2></div></div>
               <div className="form-grid">
-                <Field label="Event name" value={state.general.eventName} onChange={(value) => updateGeneral("eventName", value)} placeholder="Spring Invitational" />
+                <Field
+                  label="Event name"
+                  value={state.general.eventName}
+                  onChange={(value) => updateGeneral("eventName", value)}
+                  placeholder="Spring Invitational"
+                  hint="Pulled from Match 1 in Team Info and used by Rocket League, VALORANT, and League of Legends."
+                />
                 <Field label="Starting soon title" value={state.general.startingSoonTitle} onChange={(value) => updateGeneral("startingSoonTitle", value)} placeholder="THE STREAM IS" />
                 <Field label="Interview name" value={state.general.interviewName} onChange={(value) => updateGeneral("interviewName", value)} maxLength={12} placeholder="Guest name" />
                 <Field label="Podcast title" value={state.general.podcastTitle} onChange={(value) => updateGeneral("podcastTitle", value)} placeholder="Episode / segment title" />
@@ -3966,17 +4291,15 @@ export default function Home() {
                   <label className="field"><span className="field-label">Series format</span><select value={state.valorant.bestOf} onChange={(event) => updateValorantBestOf(event.target.value as Valorant["bestOf"])}><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
                 </div>
                 <div className="valorant-toggle-list">
-                  <div className="valorant-toggle-row"><div><strong>Flip sides</strong><p>Swap team names, colors, logos, and series totals on screen. Entered map scores stay in home/away order.</p></div><label className="switch large"><input aria-label="Flip VALORANT team sides" type="checkbox" checked={state.valorant.flipSides} onChange={(event) => updateValorant({ flipSides: event.target.checked })} /><span /></label></div>
+                  <GameAutoAcceptControl gameName="VALORANT" checked locked />
+                  <GameFlipSidesControl gameName="VALORANT" checked={state.valorant.flipSides} onChange={(checked) => updateValorant({ flipSides: checked })} />
                 </div>
               </section>
-              <section className="panel-card rocket-indicator-card valorant-live-card" aria-label="VALORANT live match indicators">
-                <div className="card-title-row"><div><h2>Live match indicators</h2><p>Calculated from the results currently saved to JSON.</p></div></div>
-                <dl className="rocket-indicators valorant-live-indicators">
-                  <div><dt>Current map</dt><dd className="map-indicator-value">Map {valorantCurrentMap.number}</dd><small className="map-name">{valorantCurrentMap.name || "Map not selected"}</small></div>
-                  <div><dt>{displayTeamOne}</dt><dd>{displayWinsOne}</dd><small>Series wins</small><span className="valorant-live-side">{valorantSideLabel(valorantCurrentSides.one)}</span></div>
-                  <div><dt>{displayTeamTwo}</dt><dd>{displayWinsTwo}</dd><small>Series wins</small><span className="valorant-live-side">{valorantSideLabel(valorantCurrentSides.two)}</span></div>
-                </dl>
-              </section>
+              <GameLiveMatchIndicators gameName="VALORANT" indicators={[
+                { label: "Current map", value: `Map ${valorantCurrentMap.number}`, detail: valorantCurrentMap.name || "Map not selected", valueClassName: "map-indicator-value", detailClassName: "map-name" },
+                { label: displayTeamOne, value: displayWinsOne, detail: `${valorantSideLabel(valorantCurrentSides.one)} · Series wins` },
+                { label: displayTeamTwo, value: displayWinsTwo, detail: `${valorantSideLabel(valorantCurrentSides.two)} · Series wins` },
+              ]} />
             </div>
           </div>
         ) : valorantTab === "pickBans" ? (
@@ -4176,21 +4499,16 @@ export default function Home() {
                   </label>
                 </div>
                 <div className="valorant-toggle-list">
-                  <div className="valorant-toggle-row">
-                    <div><strong>Auto-accept live results</strong><p>When a live round ends, save the next game result automatically. Leave off to review it before updating results.</p></div>
-                    <label className="switch large"><input aria-label="Auto-accept live Rocket League results" type="checkbox" checked={state.rocketLeague.autoAcceptLiveResults} onChange={(event) => updateRocketLeague({ autoAcceptLiveResults: event.target.checked })} /><span /></label>
-                  </div>
+                  <GameAutoAcceptControl gameName="Rocket League" checked={state.rocketLeague.autoAcceptLiveResults} onChange={(checked) => updateRocketLeague({ autoAcceptLiveResults: checked })} />
+                  <GameFlipSidesControl gameName="Rocket League" checked={state.rocketLeague.flipSides} onChange={(checked) => updateRocketLeague({ flipSides: checked })} />
                 </div>
               </section>
 
-              <section className="panel-card rocket-indicator-card">
-                <div className="card-title-row"><div><h2>Live match indicators</h2><p>Calculated from the results currently saved to JSON.</p></div></div>
-                <dl className="rocket-indicators">
-                  <div><dt>Round</dt><dd>{rocketLeagueSeries.roundNumber}</dd><small>Current game</small></div>
-                  <div><dt>{homeTeam}</dt><dd>{rocketLeagueSeries.homeWins}</dd><small>Series wins</small></div>
-                  <div><dt>{awayTeam}</dt><dd>{rocketLeagueSeries.awayWins}</dd><small>Series wins</small></div>
-                </dl>
-              </section>
+              <GameLiveMatchIndicators gameName="Rocket League" indicators={[
+                { label: "Current game", value: rocketLeagueSeries.roundNumber, detail: state.rocketLeague.bestOf },
+                { label: homeTeam, value: rocketLeagueSeries.homeWins, detail: "Series wins" },
+                { label: awayTeam, value: rocketLeagueSeries.awayWins, detail: "Series wins" },
+              ]} />
 
             </div>
           </div>
@@ -4434,11 +4752,13 @@ export default function Home() {
     const teamTwo = resolveTeam(state.general.matches[0].team2);
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
     const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
-    const activeStep = LEAGUE_DRAFT_STEPS[state.leagueOfLegends.draft.currentStep];
+    const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode);
+    const activeStep = draftSteps[state.leagueOfLegends.draft.currentStep];
+    const picks = draftSlots(state.leagueOfLegends.draft, state.leagueOfLegends.draftMode);
     const unavailable = state.leagueOfLegends.draftMode === "fearless"
       ? fearlessChampionSet(leagueConfirmedGames)
       : new Set<string>();
-    const used = new Set(state.leagueOfLegends.draft.selections.filter(Boolean));
+    const used = new Set(state.leagueOfLegends.draft.selections.filter((champion, index) => champion && !(state.leagueOfLegends.draftMode === "online" && activeStep?.action === "ban" && draftSteps[index].side !== activeStep.side)));
     const livePlayers = Array.isArray(leagueLivePreview?.players) ? leagueLivePreview.players : [];
     const liveEvents = Array.isArray(leagueLivePreview?.events) ? leagueLivePreview.events : [];
     const activeLeaguePlayer = leagueLivePreview?.activePlayer ?? null;
@@ -4456,24 +4776,34 @@ export default function Home() {
         <div className="tabs" role="tablist" aria-label="League of Legends views">
           <button className={leagueTab === "results" ? "active" : ""} onClick={() => setLeagueTab("results")}>Results & setup</button>
           <button className={leagueTab === "draft" ? "active" : ""} onClick={() => setLeagueTab("draft")}>Draft</button>
+          <button className={leagueTab === "controls" ? "active" : ""} onClick={() => setLeagueTab("controls")}>Overlay controls</button>
           <button className={leagueTab === "live" ? "active" : ""} onClick={() => setLeagueTab("live")}>Debug</button>
           <button className={leagueTab === "overlay" ? "active" : ""} onClick={() => setLeagueTab("overlay")}>Browser overlay</button>
         </div>
 
-        {leagueTab === "overlay" ? (
-          <section className="panel-card browser-overlay-card browser-overlay-workspace league-overlay-links" aria-label="Browser overlay">
-            <div className="card-title-row"><div><h2>League browser overlay</h2><p>Add each transparent 1920×1080 URL to its matching OBS or vMix scene.</p></div></div>
+        {leagueTab === "controls" ? (
+          <>
+          <LeagueScoreboardControls value={state.leagueOfLegends.scoreboard} blueTeamKey={state.leagueOfLegends.blueTeam} teamOne={teamOne.name} teamTwo={teamTwo.name} onChange={scoreboard => updateLeagueOfLegends({ scoreboard })} />
+          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="League overlay visibility">
+            <div className="card-title-row"><h2>Overlay visibility</h2></div>
             <div className="browser-overlay-widget-controls" aria-label="Overlay widget visibility">
               <div className="browser-overlay-widget-toggle">
-                <div><strong>VS screen background</strong><small>Place the team-split VS treatment behind the Draft and Post-game recap scenes.</small></div>
+                <div><strong>VS screen background</strong><small>Place the team-split VS treatment behind the Pick/Ban scene.</small></div>
                 <label className="switch large"><input aria-label="Show League of Legends VS screen background" type="checkbox" checked={state.leagueOfLegends.vsScreenEnabled} onChange={(event) => updateLeagueOfLegends({ vsScreenEnabled: event.target.checked })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
-                <div><strong>Sponsor widget</strong><small>Show the rotating included sponsors on the VS screen.</small></div>
+                <div><strong>Sponsor widget</strong><small>Show the rotating included sponsors on Pick/Ban, Scoreboard, and VS.</small></div>
                 <label className="switch large"><input aria-label="Enable League of Legends sponsor widget" type="checkbox" checked={state.leagueOfLegends.sponsorWidgetEnabled} onChange={(event) => updateLeagueOfLegends({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
             </div>
-            {[["Draft", LEAGUE_DRAFT_OVERLAY_URL], ["Live HUD", LEAGUE_LIVE_OVERLAY_URL], ["Post-game recap", LEAGUE_RECAP_OVERLAY_URL]].map(([label, url]) => (
+          </section>
+          </>
+        ) : null}
+
+        {leagueTab === "overlay" ? (
+          <section className="panel-card browser-overlay-card browser-overlay-workspace league-overlay-links" aria-label="Browser overlay">
+            <div className="card-title-row"><div><h2>League browser overlay</h2><p>Add each transparent 1920×1080 URL to its matching OBS or vMix scene. Manage visibility and live statistics in Overlay controls.</p></div></div>
+            {[["Pick/Ban", LEAGUE_DRAFT_OVERLAY_URL], ["Scoreboard", LEAGUE_LIVE_OVERLAY_URL]].map(([label, url]) => (
               <div className="league-overlay-link" key={url}>
                 <label className="field"><span className="field-label">{label}</span><input readOnly value={url} /></label>
                 <button className="button secondary" type="button" onClick={() => copyLeagueOverlayLink(label, url)}>Copy</button>
@@ -4491,25 +4821,32 @@ export default function Home() {
         {leagueTab === "draft" ? (
           <div className="league-draft-layout">
             <section className="panel-card league-draft-control">
-              <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the canonical tournament draft order. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div><span className={`league-timer ${state.leagueOfLegends.draft.timeRemaining === 0 ? "expired" : ""}`}>{state.leagueOfLegends.draft.timeRemaining}</span></div>
+              <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the selected draft format. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div></div>
               {activeStep ? (
                 <div className="league-active-step">
                   <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
                   <label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
                   <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button>
                 </div>
-              ) : <div className="league-draft-complete"><strong>Draft complete</strong><span>Review the picks, then move to the Live tab.</span></div>}
+              ) : <div className="league-draft-complete"><strong>Draft complete</strong><span>Review the role order below, then verify the spectator feed in Debug.</span></div>}
               <div className="league-draft-actions">
-                <button className="button secondary" type="button" onClick={() => updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, timerRunning: !state.leagueOfLegends.draft.timerRunning && Boolean(activeStep) } })}>{state.leagueOfLegends.draft.timerRunning ? "Pause timer" : "Start timer"}</button>
-                <button className="button secondary" type="button" onClick={() => updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, timeRemaining: state.leagueOfLegends.draft.timerSeconds, timerRunning: false } })}>Reset timer</button>
-                <label className="compact-select"><span>Seconds</span><select value={state.leagueOfLegends.draft.timerSeconds} onChange={(event) => { const timerSeconds = Number(event.target.value); updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, timerSeconds, timeRemaining: timerSeconds, timerRunning: false } }); }}><option value="20">20</option><option value="25">25</option><option value="30">30</option><option value="45">45</option><option value="60">60</option></select></label>
                 <button className="button secondary" type="button" onClick={undoLeagueDraft} disabled={state.leagueOfLegends.draft.currentStep === 0}>Undo</button>
                 <button className="button danger" type="button" onClick={resetLeagueDraft}>Reset draft</button>
               </div>
+              <div className="league-role-order">
+                <h3>Pick/Ban role assignments</h3>
+                <p>Drag a role onto another pick to swap role assignments. You can also select a role, then its destination. Champions stay in their original pick slots.</p>
+                {(["blue", "red"] as const).map((side) => (
+                  <fieldset key={side}>
+                    <legend>{side === "blue" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {side === "blue" ? "Blue" : "Red"}</legend>
+                    <LeagueRoleOrder side={side} picks={picks[`${side}Picks`]} order={state.leagueOfLegends.draft[`${side}PickOrder`]} onAssign={(role, pick) => updateLeaguePickRole(side, role, pick)} />
+                  </fieldset>
+                ))}
+              </div>
             </section>
             <section className="panel-card league-draft-history">
-              <div className="card-title-row"><div><h2>Draft order</h2><p>{state.leagueOfLegends.draft.currentStep} of {LEAGUE_DRAFT_STEPS.length} selections locked.</p></div></div>
-              <div className="league-draft-steps">{LEAGUE_DRAFT_STEPS.map((step) => <div className={`${step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small></div>)}</div>
+              <div className="card-title-row"><div><h2>Draft order</h2><p>{state.leagueOfLegends.draft.currentStep} of {draftSteps.length} selections locked.</p></div></div>
+              <div className="league-draft-steps">{draftSteps.map((step) => <div className={`${step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small></div>)}</div>
             </section>
           </div>
         ) : null}
@@ -4519,7 +4856,6 @@ export default function Home() {
             <section className={`panel-card league-live-status ${liveConnected ? "connected" : "disconnected"}`}>
               <div><span className="eyebrow">Local spectator feed</span><h2>{state.leagueOfLegends.debugLiveEnabled ? "Debug fixture active" : liveConnected ? "League client connected" : liveStale ? "League data stale" : "Waiting for League client"}</h2><p>{liveConnected ? `${livePlayers.length} players · ${formatClock(Number(leagueLivePreview?.game?.gameTime ?? 0))}` : "Start or spectate a game on this Windows PC. Static team and series branding stays on air while live statistics are unavailable."}</p></div>
               <div className="league-live-toggles">
-                <label><span>Player board</span><span className="switch large"><input aria-label="Show League of Legends player board" type="checkbox" checked={state.leagueOfLegends.playerBoardEnabled} onChange={(event) => updateLeagueOfLegends({ playerBoardEnabled: event.target.checked })} /><span /></span></label>
                 <label><span>Debug data</span><span className="switch large"><input aria-label="Enable League of Legends debug data" type="checkbox" checked={state.leagueOfLegends.debugLiveEnabled} onChange={(event) => updateLeagueOfLegends({ debugLiveEnabled: event.target.checked })} /><span /></span></label>
                 {state.leagueOfLegends.debugLiveEnabled ? <label><span>Scenario</span><select aria-label="League of Legends debug scenario" value={state.leagueOfLegends.debugLiveScenario} onChange={(event) => updateLeagueOfLegends({ debugLiveScenario: event.target.value as LeagueOfLegends["debugLiveScenario"] })}><option value="live">Full live match</option><option value="finished">Game finished</option><option value="stale">Connection stale</option></select></label> : null}
               </div>
@@ -4551,7 +4887,7 @@ export default function Home() {
           <div className="rocket-league-layout game-results-layout">
             <section className="panel-card league-winner-card">
               <div className="card-title-row result-card-heading">
-                <div><h2>Game results</h2><p>Select one winner for each game, then update results. Saved winners drive the current game, series score, recap, and fearless history.</p></div>
+                <div><h2>Game results</h2><p>Select one winner for each game, then update results. Saved winners drive the current game, series score, and fearless history.</p></div>
                 <div className="result-update-controls">
                   <span className={leaguePendingResults ? "pending" : "current"}>{leaguePendingResults ? `${leaguePendingResults} unsaved` : "Results current"}</span>
                   <button className={`button ${leaguePendingResults ? "primary" : "secondary"}`} type="button" onClick={saveLeagueResults} disabled={!leaguePendingResults}>Update results</button>
@@ -4572,12 +4908,13 @@ export default function Home() {
                     const savedWinner = leagueConfirmedGames.find((game) => game.gameNumber === gameIndex + 1)?.winner ?? "";
                     const isPending = result.winner !== savedWinner;
                     const isSaved = Boolean(savedWinner) && !isPending;
+                    const locked = !result.winner && (gameIndex > leagueDraftProgress.completedGames || (leagueDraftProgress.complete && gameIndex >= leagueDraftProgress.completedGames));
                     return (
-                      <div className={`league-winner-row ${isSaved ? "complete" : ""} ${isPending ? "pending" : ""}`} key={gameIndex}>
-                        <span>Game {gameIndex + 1}<small>{isPending ? "Unsaved" : isSaved ? "Saved" : ""}</small></span>
-                        <button type="button" className={result.winner === "team1" ? "selected" : ""} aria-pressed={result.winner === "team1"} onClick={() => updateLeagueResult(gameIndex, "team1")}>{teamOne.name || "Team 1"}</button>
-                        <button type="button" className={result.winner === "team2" ? "selected" : ""} aria-pressed={result.winner === "team2"} onClick={() => updateLeagueResult(gameIndex, "team2")}>{teamTwo.name || "Team 2"}</button>
-                        <button className="league-result-clear" type="button" onClick={() => updateLeagueResult(gameIndex, "")} disabled={!result.winner}>Clear</button>
+                      <div className={`league-winner-row ${isSaved ? "complete" : ""} ${isPending ? "pending" : ""} ${locked ? "locked" : ""}`} key={gameIndex}>
+                        <span>Game {gameIndex + 1}<small>{locked ? "Complete earlier games first" : isPending ? "Unsaved" : isSaved ? "Saved" : ""}</small></span>
+                        <button disabled={locked} type="button" className={result.winner === "team1" ? "selected" : ""} aria-pressed={result.winner === "team1"} onClick={() => updateLeagueResult(gameIndex, "team1")}>{teamOne.name || "Team 1"}</button>
+                        <button disabled={locked} type="button" className={result.winner === "team2" ? "selected" : ""} aria-pressed={result.winner === "team2"} onClick={() => updateLeagueResult(gameIndex, "team2")}>{teamTwo.name || "Team 2"}</button>
+                        <button className="league-result-clear" type="button" onClick={() => updateLeagueResult(gameIndex, "")} disabled={locked || !result.winner}>Clear</button>
                       </div>
                     );
                   })}
@@ -4585,32 +4922,30 @@ export default function Home() {
               </div>
             </section>
             <div className="rocket-side-stack">
-              <section className="panel-card league-series-card league-series-compact">
-                <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values control the League graphics, series, and draft.</p></div><span className={leagueReady ? "status-inline ready" : "status-inline"}>{leagueReady ? "Ready" : "Needs header"}</span></div>
+              <section className="panel-card rocket-setup-card">
+                <div className="card-title-row"><div><h2>Scoreboard setup</h2><p>These values control the League graphics, series, and draft.</p></div></div>
                 <div className="form-grid">
-                  <Field label="Scoreboard header" value={state.leagueOfLegends.scoreboardHeader} onChange={(value) => updateLeagueOfLegends({ scoreboardHeader: value })} placeholder={state.general.eventName || "Event name"} />
+                  <Field
+                    label="Scoreboard header override"
+                    value={state.leagueOfLegends.scoreboardHeader}
+                    onChange={(value) => updateLeagueOfLegends({ scoreboardHeader: value })}
+                    placeholder={state.general.eventName || "Uses Event name"}
+                    hint={state.leagueOfLegends.scoreboardHeader.trim() ? `On-air: ${leagueHeader}` : "Leave blank to use General Info event name."}
+                  />
                   <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
-                  <label className="field"><span className="field-label">Draft rules</span><select value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Standard</option><option value="fearless">Global fearless</option></select></label>
+                  <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
                   <label className="field"><span className="field-label">Current game · driven by saved results</span><input readOnly value={`Game ${state.leagueOfLegends.currentGame}`} /></label>
                 </div>
-                <div className="league-side-row">
-                  <div><span>Blue side</span><strong>{blueTeam.name || "Team 1"}</strong></div>
-                  <button className="button secondary" type="button" onClick={() => updateLeagueOfLegends({ blueTeam: state.leagueOfLegends.blueTeam === "team1" ? "team2" : "team1" })}>Swap</button>
-                  <div><span>Red side</span><strong>{redTeam.name || "Team 2"}</strong></div>
+                <div className="valorant-toggle-list">
+                  <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
+                  <GameFlipSidesControl gameName="League of Legends" checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueOfLegends({ blueTeam: checked ? "team2" : "team1" })} />
                 </div>
               </section>
-              <section className="panel-card league-results-summary">
-                <div className="card-title-row"><div><h2>Live match indicators</h2><p>Only saved winners change the current game and series values sent to browser sources and live JSON.</p></div></div>
-                <div className="league-result-output-grid">
-                  <div><span>Current game</span><strong>{state.leagueOfLegends.currentGame}</strong><small>{state.leagueOfLegends.bestOf}</small></div>
-                  <div><span>{teamOne.name || "Team 1"}</span><strong>{leagueSeries.teamOne}</strong><small>series wins</small></div>
-                  <div><span>{teamTwo.name || "Team 2"}</span><strong>{leagueSeries.teamTwo}</strong><small>series wins</small></div>
-                </div>
-              </section>
-              <section className="panel-card league-confirmed-games">
-                <div className="card-title-row"><div><h2>Saved game history</h2><p>Changing a saved winner rebuilds the recap and global fearless pool.</p></div></div>
-                {leagueConfirmedGames.length ? leagueConfirmedGames.map((game) => <div key={game.id}><span>Game {game.gameNumber}</span><strong>{game.winner === "team1" ? teamOne.name || "Team 1" : teamTwo.name || "Team 2"}</strong><small>{[...game.bluePicks, ...game.redPicks].filter(Boolean).length} fearless picks</small></div>) : <div className="league-empty-row">No saved game results.</div>}
-              </section>
+              <GameLiveMatchIndicators gameName="League of Legends" indicators={[
+                { label: "Current game", value: state.leagueOfLegends.currentGame, detail: state.leagueOfLegends.bestOf },
+                { label: teamOne.name || "Team 1", value: leagueSeries.teamOne, detail: "Series wins" },
+                { label: teamTwo.name || "Team 2", value: leagueSeries.teamTwo, detail: "Series wins" },
+              ]} />
             </div>
           </div>
         ) : null}
@@ -4628,7 +4963,7 @@ export default function Home() {
         <section className="sponsor-overview panel-card">
           <div>
             <h2>Rotation</h2>
-            <p>Only populated sponsor slots are written to the JSON file. Disabled partners remain saved in your local draft.</p>
+            <p>Only populated sponsor slots are written to the JSON file. Disabled partners remain saved in your local draft. Remote logos are loaded on this PC so vMix can display them.</p>
           </div>
           <p><strong>{includedSponsors}</strong> active <span>/</span> {filledSponsors} configured</p>
         </section>
@@ -4666,26 +5001,229 @@ export default function Home() {
     );
   }
 
-  function renderDraw() {
-    const definition = DRAW_DEFINITIONS[drawTab];
+  function renderDrawTabs() {
+    const keys = Object.keys(DRAW_DEFINITIONS) as DrawKey[];
     return (
-      <div className="page-stack">
-        <SectionHeading eyebrow="Feature preview" title="Draw show" description="Populate the pool order for each division. Every division keeps the legacy key structure expected by the current graphics." />
-        <div className="tabs draw-tabs" role="tablist" aria-label="Draw show divisions" onKeyDown={handleTabListKeyDown}>
-          {(Object.keys(DRAW_DEFINITIONS) as DrawKey[]).map((key) => <button role="tab" aria-selected={drawTab === key} tabIndex={drawTab === key ? 0 : -1} key={key} className={drawTab === key ? "active" : ""} onClick={() => { setDrawTab(key); setDrawPastePool(null); setDrawPasteText(""); }}><small>{DRAW_DEFINITIONS[key].game}</small>{DRAW_DEFINITIONS[key].label}</button>)}
+      <div className="tabs draw-tabs" role="tablist" aria-label="Draw show divisions" onKeyDown={handleTabListKeyDown}>
+        <button role="tab" aria-selected={drawTab === "import"} tabIndex={drawTab === "import" ? 0 : -1} className={drawTab === "import" ? "active" : ""} type="button" onClick={() => { setDrawTab("import"); setDrawPastePool(null); setDrawPasteText(""); }}><small>Seeding</small>Import / Export</button>
+        {keys.map((key) => <button role="tab" aria-selected={drawTab === key} tabIndex={drawTab === key ? 0 : -1} key={key} className={drawTab === key ? "active" : ""} type="button" onClick={() => { setDrawTab(key); setDrawPastePool(null); setDrawPasteText(""); setDrawPicker(null); setDrawPickerDraft(""); setDrawPickerQuery(""); }}><small>{DRAW_DEFINITIONS[key].game}</small>{DRAW_DEFINITIONS[key].label}</button>)}
+      </div>
+    );
+  }
+
+  function renderSeedingImport() {
+    const keys = Object.keys(DRAW_DEFINITIONS) as DrawKey[];
+    return (
+      <>
+        <SectionHeading eyebrow="Feature preview" title="Draw show" description="Upload the overall seed list for each division. Drag teams into the pools. Export writes the group list." action={<button className="button primary" type="button" onClick={exportSeeding}>Export groups</button>} />
+        {renderDrawTabs()}
+        <div className="import-grid">
+          {keys.map((key) => {
+            const definition = DRAW_DEFINITIONS[key];
+            const teams = state.drawSeeding[key].teams;
+            return (
+              <section className="panel-card import-card" key={key}>
+                <div className="import-card-title">
+                  <div><span>{definition.label}</span><small>{definition.game} · {key}</small></div>
+                  <div className="import-card-actions">
+                    <label className="button compact">
+                      Upload CSV
+                      <input className="import-file" type="file" accept=".csv,text/csv" aria-label={`Upload ${key} seeding CSV`} onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) void importSeedingFile(key, file);
+                      }} />
+                    </label>
+                    <button className="button compact" type="button" aria-label={`Export ${key} group list`} onClick={() => exportDivisionSeeding(key)}>Export CSV</button>
+                    <button className="button compact" type="button" disabled={teams.length === 0} onClick={() => clearSeedingFile(key)}>Clear CSV</button>
+                  </div>
+                </div>
+                <p className="import-empty">{teams.length ? `${teams.length} teams imported` : "No overall seed list uploaded."}</p>
+              </section>
+            );
+          })}
         </div>
+      </>
+    );
+  }
+
+  function renderDrawDivision(division: DrawKey) {
+    const definition = DRAW_DEFINITIONS[division];
+    const catalog = state.drawSeeding[division].teams;
+    const placed = placedSeedTeamIds(catalog, state.draws[division], state.drawSeeding[division].slots);
+    const holding = unplacedSeedTeams(catalog, state.draws[division], state.drawSeeding[division].slots);
+    return (
+      <>
+        <SectionHeading eyebrow="Feature preview" title="Draw show" description="Drag an imported team into a slot, search the dropdown, or type another name. Delete a name and press Enter to clear that row." />
+        {renderDrawTabs()}
         <div className="pool-grid">
           {Array.from({ length: definition.pools }, (_, poolIndex) => (
             <section className="panel-card pool-card" key={poolIndex}>
-              <div className="pool-title"><div><span>Pool {String.fromCharCode(65 + poolIndex)}</span><small>{definition.rows} entries</small></div><div className="pool-actions"><button type="button" onClick={() => { setDrawPastePool(poolIndex); setDrawPasteText(""); }}>Paste from Excel</button><button type="button" onClick={() => clearDrawPool(poolIndex)}>Clear</button></div></div>
-              {drawPastePool === poolIndex ? <div className="excel-paste-panel"><label><span>Paste one Excel column</span><textarea autoFocus value={drawPasteText} onChange={(event) => setDrawPasteText(event.target.value)} placeholder={`Paste up to ${definition.rows} team names here`} /></label><div><small>{parseExcelPool(drawPasteText, definition.rows).filter(Boolean).length} of {definition.rows} entries detected</small><button type="button" onClick={() => { setDrawPastePool(null); setDrawPasteText(""); }}>Cancel</button><button className="apply" type="button" onClick={() => applyExcelPool(poolIndex)}>Apply to pool</button></div></div> : null}
+              <div className="pool-title"><div><span>Pool {String.fromCharCode(65 + poolIndex)}</span><small>{definition.rows} entries</small></div><div className="pool-actions"><button type="button" onClick={() => { setDrawPastePool(poolIndex); setDrawPasteText(""); }}>Paste from Excel</button><button type="button" onClick={() => clearDrawPool(division, poolIndex)}>Clear</button></div></div>
+              {drawPastePool === poolIndex ? <div className="excel-paste-panel"><label><span>Paste one Excel column</span><textarea autoFocus value={drawPasteText} onChange={(event) => setDrawPasteText(event.target.value)} placeholder={`Paste up to ${definition.rows} team names here`} /></label><div><small>{parseExcelPool(drawPasteText, definition.rows).filter(Boolean).length} of {definition.rows} entries detected</small><button type="button" onClick={() => { setDrawPastePool(null); setDrawPasteText(""); }}>Cancel</button><button className="apply" type="button" onClick={() => applyExcelPool(division, poolIndex)}>Apply to pool</button></div></div> : null}
               {Array.from({ length: definition.rows }, (_, rowIndex) => {
                 const fieldKey = `P${poolIndex + 1}${rowIndex + 1}`;
-                return <label className="pool-row" key={fieldKey}><span>{String(rowIndex + 1).padStart(2, "0")}</span><input value={state.draws[drawTab][fieldKey]} onChange={(event) => setState((current) => ({ ...current, draws: { ...current.draws, [drawTab]: { ...current.draws[drawTab], [fieldKey]: event.target.value } } }))} placeholder="Team or seed" /></label>;
+                const menuId = `seed-menu-${division}-${fieldKey}`;
+                const committed = state.draws[division][fieldKey];
+                const open = drawPicker === fieldKey;
+                const typed = (open ? drawPickerQuery : committed).trim();
+                const matches = open ? sortSeedTeams(division, filterSeedTeams(catalog, drawPickerQuery)) : [];
+                const exactMatch = catalog.some((team) => team.name.toLowerCase() === typed.toLowerCase());
+                const options = open ? [
+                  ...matches.map((team) => ({ kind: "team" as const, team })),
+                  ...(typed && !exactMatch ? [{ kind: "custom" as const, name: typed }] : []),
+                ] : [];
+                const activeIndex = drawPickerIndex >= 0 ? Math.min(drawPickerIndex, Math.max(options.length - 1, 0)) : -1;
+                const closePicker = () => {
+                  setDrawPicker(null);
+                  setDrawPickerDraft("");
+                  setDrawPickerQuery("");
+                };
+                const chooseOption = (option: (typeof options)[number]) => {
+                  if (option.kind === "team") {
+                    if (placed.has(option.team.id)) return;
+                    placeSeededTeam(division, fieldKey, option.team.id);
+                  } else updateDrawSlot(division, fieldKey, option.name);
+                  closePicker();
+                };
+                return (
+                  <label
+                    className={`pool-row${drawDropSlot === fieldKey ? " drop-target" : ""}`}
+                    key={fieldKey}
+                    onDragOver={(event) => { event.preventDefault(); setDrawDropSlot(fieldKey); }}
+                    onDragLeave={() => setDrawDropSlot((current) => current === fieldKey ? null : current)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDrawDropSlot(null);
+                      closePicker();
+                      const drag = seedingDragRef.current;
+                      if (drag?.division === division) placeSeededTeam(division, fieldKey, drag.id);
+                    }}
+                  >
+                    <span>{String(rowIndex + 1).padStart(2, "0")}</span>
+                    <span className="pool-field">
+                    <input
+                      role="combobox"
+                      aria-expanded={open && options.length > 0}
+                      aria-controls={menuId}
+                      aria-autocomplete="list"
+                      value={open ? drawPickerDraft : committed}
+                      placeholder="Search teams or type a name"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      name={`draw-${division}-${fieldKey}`}
+                      onFocus={() => {
+                        setDrawPicker(fieldKey);
+                        setDrawPickerDraft(committed);
+                        setDrawPickerQuery("");
+                        setDrawPickerIndex(-1);
+                      }}
+                      onBlur={() => window.setTimeout(() => setDrawPicker((current) => current === fieldKey ? null : current), 120)}
+                      onChange={(event) => {
+                        setDrawPicker(fieldKey);
+                        setDrawPickerDraft(event.target.value);
+                        setDrawPickerQuery(event.target.value);
+                        setDrawPickerIndex(event.target.value.trim() ? 0 : -1);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !drawPickerDraft.trim() && activeIndex < 0) {
+                          event.preventDefault();
+                          if (committed.trim()) updateDrawSlot(division, fieldKey, "");
+                          closePicker();
+                          return;
+                        }
+                        if (!open || options.length === 0) return;
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          setDrawPickerIndex((current) => (current + 1) % options.length);
+                        } else if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          setDrawPickerIndex((current) => (current - 1 + options.length) % options.length);
+                        } else if (event.key === "Enter" && activeIndex >= 0) {
+                          event.preventDefault();
+                          chooseOption(options[activeIndex]);
+                        } else if (event.key === "Escape") {
+                          setDrawPicker(null);
+                        }
+                      }}
+                    />
+                    {open && options.length > 0 ? (
+                      <div className="seed-menu" id={menuId} role="listbox">
+                        {options.map((option, optionIndex) => (
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={optionIndex === activeIndex}
+                            key={option.kind === "team" ? option.team.id : "custom"}
+                            className={`${option.kind === "team" && placed.has(option.team.id) ? "placed" : ""} ${optionIndex === activeIndex ? "active" : ""}`.trim()}
+                            disabled={option.kind === "team" && placed.has(option.team.id)}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => chooseOption(option)}
+                          >
+                            {option.kind === "team" ? <><small>{seedHatLabel(division, option.team.seed)}</small><span>{option.team.name}</span></> : <span>Use “{option.name}”</span>}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    </span>
+                    {committed.trim() ? <button className="row-clear" type="button" aria-label={`Clear row ${String(rowIndex + 1).padStart(2, "0")}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { updateDrawSlot(division, fieldKey, ""); closePicker(); }}>Clear</button> : null}
+                  </label>
+                );
               })}
             </section>
           ))}
         </div>
+        <section className="panel-card holding-tray">
+          <div className="import-card-title"><div><span>Imported teams</span><small>{holding.length} ready to place</small></div></div>
+          <p className="draw-order-note">{drawOrderNote(division)}</p>
+          {catalog.length ? (
+            <div className="hat-groups">
+              {groupSeedTeamsByHat(division, catalog).map((group: { label: string; range: string; teams: SeededTeam[] }) => (
+                <div key={group.label}>
+                  <div className="hat-heading"><span>{group.label}</span>{group.range ? <small>Seeds {group.range}</small> : null}</div>
+                  <div className="holding-chips">
+                    {group.teams.map((team) => {
+                      const isPlaced = placed.has(team.id);
+                      return (
+                      <button
+                        className={isPlaced ? "seed-chip placed" : "seed-chip"}
+                        type="button"
+                        key={team.id}
+                        draggable={!isPlaced}
+                        disabled={isPlaced}
+                        title={isPlaced ? "Already in a pool" : undefined}
+                        aria-label={isPlaced ? `${team.name} is already in a pool` : `Drag ${team.name} into a pool`}
+                        onDragStart={(event) => {
+                          if (isPlaced) {
+                            event.preventDefault();
+                            return;
+                          }
+                          seedingDragRef.current = { division, id: team.id };
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", team.id);
+                        }}
+                        onDragEnd={() => { seedingDragRef.current = null; setDrawDropSlot(null); }}
+                      >
+                        <small>{seedHatLabel(division, team.seed)}</small>
+                        <span>{team.name}</span>
+                      </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <p className="import-empty">Upload a seeding file on the Import / Export tab.</p>}
+        </section>
+      </>
+    );
+  }
+
+  function renderDraw() {
+    return (
+      <div className="page-stack">
+        {drawTab === "import" ? renderSeedingImport() : renderDrawDivision(drawTab)}
       </div>
     );
   }

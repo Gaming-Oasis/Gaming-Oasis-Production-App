@@ -42,17 +42,11 @@
   left: 0;
   width: 1920px;
   height: 39px;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--league-primary) 70%, #121212) 0%,
-    var(--league-primary) 34%,
-    color-mix(in srgb, var(--league-primary) 52%, var(--league-secondary)) 50%,
-    var(--league-secondary) 66%,
-    color-mix(in srgb, var(--league-secondary) 70%, #121212) 100%);
+  background: #171717;
   -webkit-mask-image: url("/valorant-overlay/masks/center-rail.png");
   mask-image: url("/valorant-overlay/masks/center-rail.png");
 }
 
-.centerRail::before,
 .teamPanel::before,
 .scoreWedge::before,
 .logoBox::before {
@@ -77,15 +71,8 @@
   left: -6%;
   width: 112%;
   pointer-events: none;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--league-primary) 70%, #121212) 0%,
-    var(--league-primary) 34%,
-    color-mix(in srgb, var(--league-primary) 52%, var(--league-secondary)) 50%,
-    var(--league-secondary) 66%,
-    color-mix(in srgb, var(--league-secondary) 70%, #121212) 100%);
+  background: #171717;
 }
-
-.centerRail::before { z-index: 2; }
 
 .teamPanel {
   z-index: 2;
@@ -312,21 +299,20 @@
 }
 
 .sponsorSlideEntering {
-  animation: sponsorFadeIn 400ms ease-out both;
+  animation: sponsorFadeIn 400ms ease-out;
 }
 
 .sponsorSlideLeaving {
-  animation: sponsorFadeOut 400ms ease-out both;
+  animation: sponsorFadeOut 400ms ease-out forwards;
 }
 
 .sponsorSlide img {
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 348px;
-  max-height: 128px;
+  width: 348px;
+  height: 128px;
   object-fit: contain;
   object-position: center;
+  background: #171717;
 }
 
 .sponsorSlide span {

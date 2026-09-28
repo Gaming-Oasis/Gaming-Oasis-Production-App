@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readableText, resolveImagePlate } from "../../../lib/readable-text.mjs";
+import { sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import styles from "./vs-overlay.module.css";
 import { useStableImageSource } from "../useStableImageSource";
 
@@ -65,7 +66,7 @@ function StableLogo({
     : null;
 }
 
-function FitTeamName({
+export function FitTeamName({
   name,
   className,
   maxPx = VS_NAME_MAX_PX,
@@ -132,7 +133,7 @@ function sponsorAssetKey(sponsor: VsOverlaySponsor) {
 const SPONSOR_ASSET_RETRY_BASE_MS = 1000;
 const SPONSOR_ASSET_RETRY_MAX_MS = 60000;
 
-function SponsorCarousel({ sponsors }: { sponsors: VsOverlaySponsor[] }) {
+export function SponsorCarousel({ sponsors, className = "" }: { sponsors: VsOverlaySponsor[]; className?: string }) {
   const [rotation, setRotation] = useState({ currentId: "", previousId: "" });
   const [assetState, setAssetState] = useState<Record<string, "loaded" | "failed">>({});
   const retryAssetRef = useRef<(sponsor: VsOverlaySponsor) => void>(() => undefined);
@@ -188,7 +189,8 @@ function SponsorCarousel({ sponsors }: { sponsors: VsOverlaySponsor[] }) {
           scheduleRetry(sponsor);
         }
       };
-      image.src = localLogoUrl(sponsor.logo);
+      image.referrerPolicy = "no-referrer";
+      image.src = sponsorLogoSrc(sponsor.logo);
     }
 
     stableSponsors.forEach((sponsor) => {
@@ -212,7 +214,7 @@ function SponsorCarousel({ sponsors }: { sponsors: VsOverlaySponsor[] }) {
   const displayableSponsors = useMemo(() => stableSponsors.filter((sponsor) => {
     if (!sponsor.logo) return Boolean(sponsor.name);
     const status = assetState[sponsorAssetKey(sponsor)];
-    return status === "loaded" || (status === "failed" && Boolean(sponsor.name));
+    return status !== "failed" || Boolean(sponsor.name);
   }), [assetState, stableSponsors]);
 
   useEffect(() => {
@@ -240,26 +242,32 @@ function SponsorCarousel({ sponsors }: { sponsors: VsOverlaySponsor[] }) {
   const sponsor = displayableSponsors.find((entry) => entry.id === rotation.currentId) || displayableSponsors[0];
   if (!sponsor) return null;
   const previousSponsor = displayableSponsors.find((entry) => entry.id === rotation.previousId && entry.id !== sponsor.id);
-  const logoLoaded = sponsor.logo && assetState[sponsorAssetKey(sponsor)] === "loaded";
-  const slideKey = `${sponsorAssetKey(sponsor)}\u0000${logoLoaded ? "logo" : "name"}`;
+  const slideKey = sponsorAssetKey(sponsor);
 
   function slideContent(entry: VsOverlaySponsor) {
-    const entryLogoLoaded = entry.logo && assetState[sponsorAssetKey(entry)] === "loaded";
-    return entryLogoLoaded ? (
-      <img
-        src={localLogoUrl(entry.logo)}
-        alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
-        onError={() => {
-          const key = sponsorAssetKey(entry);
-          setAssetState((current) => current[key] === "failed" ? current : { ...current, [key]: "failed" });
-          retryAssetRef.current(entry);
-        }}
-      />
-    ) : <span>{entry.name}</span>;
+    const failed = assetState[sponsorAssetKey(entry)] === "failed";
+    if (entry.logo && !failed) {
+      return (
+        <img
+          src={sponsorLogoSrc(entry.logo)}
+          alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
+          width={348}
+          height={128}
+          draggable={false}
+          referrerPolicy="no-referrer"
+          onError={() => {
+            const key = sponsorAssetKey(entry);
+            setAssetState((current) => current[key] === "failed" ? current : { ...current, [key]: "failed" });
+            retryAssetRef.current(entry);
+          }}
+        />
+      );
+    }
+    return <span>{entry.name}</span>;
   }
 
   return (
-    <aside className={styles.sponsorCard} aria-label="Sponsor rotation">
+    <aside className={`${styles.sponsorCard} ${className}`} aria-label="Sponsor rotation">
       {previousSponsor ? (
         <div key={`${sponsorAssetKey(previousSponsor)}-leaving`} className={`${styles.sponsorSlide} ${styles.sponsorSlideLeaving}`} aria-hidden="true">
           {slideContent(previousSponsor)}

@@ -21,6 +21,7 @@ import {
   resolveBroadcastSetupAction,
 } from "../lib/rocket-league-stats-api.mjs";
 import { resolveScoreboardHeader } from "../lib/scoreboard-header.mjs";
+import { setLeagueBaronActive, setLeagueElderActive, updateLeagueDragons } from "../lib/league-scoreboard.mjs";
 import {
   IMAGE_PLATE_DARK,
   IMAGE_PLATE_LIGHT,
@@ -48,11 +49,16 @@ import {
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
 import { mergeLeagueOverlayLive, startLeagueLiveClient } from "../lib/league-of-legends-live.mjs";
+import { sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
 import { FINAL_OUTPUT_KEYS, JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
 import { resolveNpmInvocation, stopChild } from "../scripts/launch-production.mjs";
 
 const WRITER_TEST_ORIGIN = "http://localhost:3000";
 const writerTestSessions = new WeakMap();
+
+function liveOutputNames(extra = []) {
+  return [...JSON_FILENAMES, "sponsor-logos", ...extra].sort();
+}
 
 async function productionFileFixtures(marker = "") {
   const files = [];
@@ -196,6 +202,9 @@ test("resolves scoreboard headers from event name with game-level override", () 
   assert.equal(resolveScoreboardHeader("", "Spring Invitational"), "Spring Invitational");
   assert.equal(resolveScoreboardHeader("  ", "Spring Invitational"), "Spring Invitational");
   assert.equal(resolveScoreboardHeader("RL Finals", "Spring Invitational"), "RL Finals");
+  assert.equal(resolveScoreboardHeader("", "Rocket League Spring Invitational"), "RL Spring Invitational");
+  assert.equal(resolveScoreboardHeader("", "Collegiate Rocket League Finals"), "Collegiate RL Finals");
+  assert.equal(resolveScoreboardHeader("Rocket League Championship", "Spring Invitational"), "RL Championship");
   assert.equal(resolveScoreboardHeader("", ""), "");
 });
 
@@ -307,7 +316,7 @@ test("polls Riot allgamedata as the complete official League live snapshot", asy
       requests.push(url);
       return {
         activePlayer: { riotId: "Blue#GO", riotIdGameName: "Blue", riotIdTagLine: "GO", currentGold: 500, level: 1, abilities: {}, championStats: {}, fullRunes: {} },
-        allPlayers: [{ riotId: "Blue#GO", riotIdGameName: "Blue", championName: "Ahri", team: "ORDER", scores: {} }],
+        allPlayers: [{ riotId: "Blue#GO", riotIdGameName: "Blue", championName: "Ahri", team: "ORDER", scores: { kills: 0 } }],
         events: { Events: [{ EventID: 0, EventName: "GameStart", EventTime: 0 }] },
         gameData: { gameTime: 1, gameMode: "CLASSIC", mapName: "Map11", mapNumber: 11, mapTerrain: "Default" },
       };
@@ -382,8 +391,8 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
 });
 
-test("server-renders the four transparent League of Legends browser sources", async () => {
-  for (const scene of ["draft", "live", "recap", "vs"]) {
+test("server-renders only the three supported League of Legends browser sources", async () => {
+  for (const scene of ["draft", "live", "vs"]) {
     const response = await render(`/overlays/league-of-legends/${scene}`);
     assert.equal(response.status, 200, scene);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -392,9 +401,10 @@ test("server-renders the four transparent League of Legends browser sources", as
   const css = await readFile(new URL("../app/overlays/league-of-legends/league-overlay.module.css", import.meta.url), "utf8");
   assert.match(component, /api\/overlays\/league-of-legends/);
   assert.match(component, /scene === "draft"/);
-  assert.match(component, /scene === "recap"/);
+  assert.equal((await render("/overlays/league-of-legends/recap")).status, 404);
+  assert.doesNotMatch(component, /RecapOverlay|PlayerBoard/);
   assert.match(component, /data\.vsScreenEnabled/);
-  assert.equal((component.match(/data\.vsScreenEnabled \? <VsSceneBackdrop/g) ?? []).length, 2);
+  assert.equal((component.match(/data\.vsScreenEnabled \? <VsSceneBackdrop/g) ?? []).length, 1);
   const vsComponent = await readFile(new URL("../app/overlays/vs/VsMatchupOverlay.tsx", import.meta.url), "utf8");
   const vsCss = await readFile(new URL("../app/overlays/vs/vs-overlay.module.css", import.meta.url), "utf8");
   assert.match(vsComponent, /function VsSceneBackdrop/);
@@ -402,7 +412,13 @@ test("server-renders the four transparent League of Legends browser sources", as
   assert.match(vsCss, /\.sceneBackdropDim \{[\s\S]*rgb\(23 23 23 \/ 0\.8\)/);
   assert.match(css, /width: 1920px; height: 1080px/);
   assert.match(css, /background: #171717/);
-  assert.doesNotMatch(css, /linear-gradient|radial-gradient|box-shadow/);
+  assert.doesNotMatch(css, /radial-gradient|box-shadow/);
+  assert.match(css, /\.draftTeamLogo::after \{[^}]*border: 2px solid var\(--draft-team-accent\)/);
+  assert.match(css, /\.scoreLogo::after \{[^}]*linear-gradient\(90deg, var\(--league-primary\), var\(--league-secondary\)\)/);
+  assert.match(component, /className=\{styles\.ban\} style=\{\{ \.\.\.box\(art\.bans\[index\]\), "--pick-accent": team\.color/);
+  assert.match(css, /\.pick\[data-active="true"\]::after, \.ban\[data-active="true"\]::after \{[^}]*z-index: 3;[^}]*border: 4px solid var\(--pick-accent\);[^}]*animation: draftActiveSelectionBorder 3s/);
+  assert.match(css, /@keyframes draftActiveSelectionBorder/);
+  assert.doesNotMatch(css, /draftActiveSelectionBorder[\s\S]{0,180}(?:outline|border-color)/);
 });
 
 test("server-renders the transparent VALORANT browser overlay route", async () => {
@@ -432,7 +448,10 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(page, /aria-label="Sponsor rotation"/);
   assert.match(page, /stableSponsors/);
   assert.doesNotMatch(page, /\[sponsorSignature, sponsors\]/);
-  assert.match(page, /status === "failed" && Boolean\(sponsor\.name\)/);
+  assert.match(page, /status !== "failed" \|\| Boolean\(sponsor\.name\)/);
+  assert.match(page, /sponsorLogoSrc\(entry\.logo\)/);
+  assert.match(page, /width=\{348\}/);
+  assert.match(page, /height=\{128\}/);
   assert.doesNotMatch(page, /SideIcon|<svg viewBox="0 0 16 16"/);
   assert.doesNotMatch(page, /pickerSide|SIDE TBD|starts attack|starts defense/);
   assert.doesNotMatch(page, /mapLogo[^\n]*style=\{\{ background: team\.logoBackground \}\}/);
@@ -458,8 +477,9 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(css, /\.sponsorCard \{[\s\S]*background: #171717/);
   assert.match(css, /@keyframes sponsorFadeIn/);
   assert.match(css, /@keyframes sponsorFadeOut/);
-  assert.match(css, /animation: sponsorFadeIn 400ms ease-out both/);
-  assert.match(css, /animation: sponsorFadeOut 400ms ease-out both/);
+  assert.match(css, /animation: sponsorFadeIn 400ms ease-out;/);
+  assert.match(css, /animation: sponsorFadeOut 400ms ease-out forwards;/);
+  assert.match(css, /\.sponsorSlide img \{[\s\S]*width: 348px;[\s\S]*height: 128px;[\s\S]*object-fit: contain;[\s\S]*background: #171717/);
   assert.doesNotMatch(css, /\.mapLogo \{[^}]*border:/);
   assert.doesNotMatch(css, /\.mapItem::after|skewX\(-35deg\)/);
   assert.match(css, /\.mapItem:last-child \{[^}]*clip-path: polygon/);
@@ -485,7 +505,10 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.doesNotMatch(page, /PREFERRED_WHITE_MIN_CONTRAST = 2\.5/);
   assert.match(page, /--team-one-shadow/);
   assert.match(page, /--team-two-shadow/);
-  assert.match(page, /mixColors\(overlay\.leaguePrimary, overlay\.leagueSecondary\)/);
+  assert.match(page, /readableText\("#171717"\)/);
+  assert.match(css, /\.centerRail \{[^}]*background: #171717/);
+  assert.match(css, /\.centerRail::after \{[^}]*background: #171717/);
+  assert.doesNotMatch(css, /\.centerRail(?:\s|::after)\s*\{[^}]*background: linear-gradient/);
   assert.match(page, /--header-text/);
   assert.match(css, /\.header \{[^}]*color: var\(--header-text\)/);
   assert.match(css, /text-shadow: 0 1px 1px var\(--header-shadow\)/);
@@ -2293,7 +2316,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /rlseriesscore2/);
   assert.match(page, /buildValorantFields/);
   assert.match(page, /Picks \/ bans/);
-  assert.match(page, /VALORANT live match indicators/);
+  assert.match(page, /GameLiveMatchIndicators gameName="VALORANT"/);
   assert.match(page, /Browser overlay/);
   assert.match(page, /Open overlay/);
   assert.match(page, /Enable VALORANT map widget/);
@@ -2325,7 +2348,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /Leave blank to use General Info event name\./);
   assert.match(page, /resolveScoreboardHeader/);
   assert.match(page, /Event name \/ header not configured/);
-  assert.match(page, /Auto-accept live results/);
+  assert.match(page, /Auto Accept Live Results/);
   assert.match(page, /autoAcceptLiveResults/);
   assert.match(page, /proposeRocketLeagueLiveResult/);
   assert.match(page, /ROCKET_LEAGUE_LIVE_OVERLAY_ENDPOINT/);
@@ -2402,7 +2425,10 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/setLeagueTab\("live"\)\}>Debug</g) ?? []).length, 1);
   assert.equal((page.match(/game-results-layout/g) ?? []).length, 3);
   assert.equal((page.match(/<h2>Scoreboard setup<\/h2>/g) ?? []).length, 3);
-  assert.equal((page.match(/<h2>Live match indicators<\/h2>/g) ?? []).length, 3);
+  assert.equal((page.match(/<GameAutoAcceptControl /g) ?? []).length, 3);
+  assert.equal((page.match(/<GameFlipSidesControl /g) ?? []).length, 3);
+  assert.equal((page.match(/<GameLiveMatchIndicators /g) ?? []).length, 3);
+  assert.match(page, /<h2>Live Match Indicators<\/h2>/);
   assert.match(page, /function resetRocketLeagueSeries\(\)/);
   assert.match(page, /games: createRocketLeagueGames\(\),\s*savedGames: createRocketLeagueGames\(\)/);
   assert.match(page, /notify\("Rocket League series results cleared"\)/);
@@ -2462,9 +2488,12 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /Official Live Client coverage/);
   assert.match(page, /League of Legends debug scenario/);
   assert.match(page, /function saveLeagueResults\(\)/);
-  assert.match(page, /Saved winners drive the current game, series score, recap, and fearless history/);
+  assert.match(page, /Saved winners drive the current game, series score, and fearless history/);
   assert.match(page, /Current game · driven by saved results/);
   assert.match(page, /aria-pressed=\{result\.winner === "team1"\}/);
+  assert.match(page, /gameIndex > leagueDraftProgress\.completedGames/);
+  assert.match(page, /disabled=\{locked\}/);
+  assert.match(page, /Complete earlier games first/);
   assert.match(page, /Full live match/);
   assert.match(page, /Game finished/);
   assert.match(page, /Connection stale/);
@@ -2727,6 +2756,82 @@ function fieldsFixtureBo3() {
   return { pick1: "Ascent", pick2: "Haven", decider: "Sunset" };
 }
 
+test("writes sponsor logos as local image paths vMix titles can open", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-vmix-sponsors-"));
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+  });
+  try {
+    const posted = await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("SHOW") });
+    assert.equal(posted.status, 200);
+    const sponsors = JSON.parse(await readFile(path.join(outputDir, "sponsors.json"), "utf8"));
+    assert.match(sponsors[0].logo, /^[A-Za-z]:\/.*\/sponsor-logos\/gaming-oasis-[a-f0-9]{8}\.png$/);
+    const saved = await readFile(sponsors[0].logo);
+    const source = await readFile(new URL("../public/gaming-oasis-logo-light.png", import.meta.url));
+    assert.deepEqual(saved, source);
+  } finally {
+    await writer.close();
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("saves a Google Drive view link as a local vMix sponsor image", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-drive-sponsor-"));
+  const driveUrl = "https://drive.google.com/uc?export=view&id=14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4";
+  const imageBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  let requestedUrl = "";
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    fetchImpl: async (url) => {
+      requestedUrl = String(url);
+      return new Response(imageBytes, { status: 200, headers: { "Content-Type": "image/jpeg" } });
+    },
+  });
+  try {
+    const files = await productionFileFixtures("SHOW");
+    files.find((file) => file.filename === "sponsors.json").data.push({
+      id: "sponsor1",
+      name: "Partner",
+      logo: driveUrl,
+      enabled: true,
+    });
+    const posted = await postWriter(writer, "/api/live-json", { files });
+    assert.equal(posted.status, 200);
+    assert.equal(requestedUrl, "https://drive.google.com/thumbnail?id=14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4&sz=w1000");
+    const sponsors = JSON.parse(await readFile(path.join(outputDir, "sponsors.json"), "utf8"));
+    assert.match(sponsors[1].logo, /^[A-Za-z]:\/.*\/sponsor-logos\/sponsor1-[a-f0-9]{8}\.jpg$/);
+    assert.deepEqual(await readFile(sponsors[1].logo), imageBytes);
+  } finally {
+    await writer.close();
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("resolves sponsor logos onto sources vMix can paint", () => {
+  assert.equal(sponsorLogoSrc("http://localhost:3000/gaming-oasis-logo-light.png"), "/gaming-oasis-logo-light.png");
+  assert.equal(sponsorLogoSrc("http://127.0.0.1:3000/gaming-oasis-logo-light.png"), "/gaming-oasis-logo-light.png");
+  assert.equal(
+    sponsorLogoSrc("https://cdn.example/logos/partner.png"),
+    "http://127.0.0.1:4877/api/sponsor-logos?src=https%3A%2F%2Fcdn.example%2Flogos%2Fpartner.png",
+  );
+  assert.equal(sponsorLogoSrc("  "), "");
+  assert.equal(sponsorLogoSrc("partner.png"), "partner.png");
+  assert.equal(
+    sponsorLogoSrc("https://drive.google.com/uc?export=view&id=14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4"),
+    "http://127.0.0.1:4877/api/public/map-artwork/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4",
+  );
+  assert.equal(
+    sponsorLogoSrc("https://drive.google.com/file/d/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4/view"),
+    "http://127.0.0.1:4877/api/public/map-artwork/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4",
+  );
+});
+
 test("proxies public League Hub matches without credentials", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-proxy-"));
   const matchId = "20fc8747-34cd-4254-8497-1b3293e6bfbd";
@@ -2754,6 +2859,57 @@ test("proxies public League Hub matches without credentials", async () => {
     assert.equal(response.headers.get("access-control-allow-origin"), "http://localhost:3000");
     assert.match(requestedUrl, new RegExp(`${matchId}$`));
     assert.deepEqual(await response.json(), { match: { id: matchId } });
+  } finally {
+    await writer.close();
+  }
+});
+
+test("proxies remote sponsor logos for vMix without fetching private hosts", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-sponsor-logo-"));
+  const imageBytes = new Uint8Array([137, 80, 78, 71]);
+  const requested = [];
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+    dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    fetchImpl: async (url, options) => {
+      requested.push(String(url));
+      assert.equal(options?.redirect, "manual");
+      assert.deepEqual(options?.headers, { Accept: "image/*" });
+      if (String(url) === "https://cdn.example/logo.png") {
+        return new Response(null, { status: 302, headers: { Location: "https://cdn.example/logo-final.png" } });
+      }
+      if (String(url) === "https://cdn.example/private-hop.png") {
+        return new Response(null, { status: 302, headers: { Location: "https://127.0.0.1/secret.png" } });
+      }
+      return new Response(imageBytes, { status: 200, headers: { "Content-Type": "image/png" } });
+    },
+  });
+
+  try {
+    const blocked = await fetch(`${writer.url}/api/sponsor-logos?src=${encodeURIComponent("http://127.0.0.1/logo.png")}`);
+    assert.equal(blocked.status, 400);
+    assert.equal(requested.length, 0);
+
+    const remote = `https://cdn.example/logo.png`;
+    const response = await fetch(`${writer.url}/api/sponsor-logos?src=${encodeURIComponent(remote)}`, {
+      headers: { Origin: "http://localhost:3000" },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.equal(response.headers.get("access-control-allow-origin"), "http://localhost:3000");
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), imageBytes);
+    assert.deepEqual(requested, ["https://cdn.example/logo.png", "https://cdn.example/logo-final.png"]);
+
+    const cached = await fetch(`${writer.url}/api/sponsor-logos?src=${encodeURIComponent(remote)}`);
+    assert.equal(cached.status, 200);
+    assert.equal(requested.length, 2);
+
+    const privateHop = await fetch(`${writer.url}/api/sponsor-logos?src=${encodeURIComponent("https://cdn.example/private-hop.png")}`);
+    assert.equal(privateHop.status, 400);
+    assert.deepEqual(requested, ["https://cdn.example/logo.png", "https://cdn.example/logo-final.png", "https://cdn.example/private-hop.png"]);
   } finally {
     await writer.close();
   }
@@ -3191,7 +3347,7 @@ test("rolls back a failed package replacement and accepts the next queued revisi
     const healthy = await fetch(`${writer.url}/api/live-json/status`);
     assert.equal(healthy.status, 200);
     assert.equal((await healthy.json()).service, "gaming-oasis-production-os-writer");
-    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
   } finally {
     await writer.close();
   }
@@ -3298,7 +3454,7 @@ test("blocks a new transaction behind an unresolved rollback and recovers on a l
     assert.equal(recovered.status, 200);
     const saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
     assert.equal(saved[0].eventname, "RECOVERED");
-    assert.deepEqual((await readdir(outputDir)).sort(), filenames.sort());
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
   } finally {
     await writer.close();
   }
@@ -3316,7 +3472,7 @@ test("continuously writes the complete JSON package to disk", async () => {
     const second = await postWriter(writer, "/api/live-json", { files });
     assert.equal(second.status, 200);
 
-    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
     const saved = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"));
     assert.equal(saved[0].eventname, "LATEST");
 
@@ -3342,7 +3498,7 @@ test("writes editable VALORANT map artwork beside the unchanged six-file package
     assert.equal(response.status, 200);
     assert.equal(JSON_FILENAMES.size, 6);
     assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, VALORANT_MAP_DATA_FILENAME), "utf8")), valorantMapData);
-    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES, VALORANT_MAP_DATA_FILENAME].sort());
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames([VALORANT_MAP_DATA_FILENAME]));
   } finally {
     await writer.close();
   }
@@ -3387,7 +3543,7 @@ test("serves the latest non-exported VALORANT overlay state without changing the
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), valorant);
-    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
   } finally {
     await writer.close();
   }
@@ -3442,7 +3598,7 @@ test("serves the latest non-exported Rocket League overlay state without changin
     const response = await fetch(`${writer.url}/api/overlays/rocket-league`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { ...rocketLeague, finishedGame: null, matchTeamStats: null });
-    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
   } finally {
     await writer.close();
   }
@@ -3571,12 +3727,16 @@ test("allows a new writer to claim an expired server ownership lease", async () 
 
 test("serves normalized League overlay state without changing the six JSON files", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-lol-overlay-"));
-  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false });
+  const installed = [];
+  const writer = await startJsonWriter({
+    port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    beforeInstallFile: (filename) => { installed.push(filename); },
+  });
   const files = await productionFileFixtures();
   const leagueOfLegends = buildLeagueOverlayState({
-    scoreboardHeader: "SEL Finals", bestOf: "Bo3", currentGame: 1, draftMode: "fearless", blueTeam: "team1",
+    scoreboardHeader: "", bestOf: "Bo3", currentGame: 1, draftMode: "fearless", blueTeam: "team1",
     playerBoardEnabled: true, debugLiveEnabled: false, draft: createLeagueDraftState(), confirmedGames: [], resultProposal: null, playerOverrides: {},
-  }, { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF" }, { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#171717" }, { primaryColor: "#F6AC18", secondaryColor: "#47213F" }, []);
+  }, { name: "Alpha", standing: "2-0", logo: "a.png", color: "#111111", logoBackground: "#FFFFFF" }, { name: "Beta", standing: "1-1", logo: "b.png", color: "#222222", logoBackground: "#171717" }, { primaryColor: "#F6AC18", secondaryColor: "#47213F" }, [], { eventName: "SEL Finals" });
 
   try {
     const before = await fetch(`${writer.url}/api/overlays/league-of-legends`);
@@ -3588,7 +3748,38 @@ test("serves normalized League overlay state without changing the six JSON files
     const payload = await response.json();
     assert.equal(payload.header, "SEL Finals");
     assert.equal(payload.live.connection.connected, false);
-    assert.deepEqual((await readdir(outputDir)).sort(), [...JSON_FILENAMES].sort());
+    assert.equal(payload.playerBoardEnabled, false);
+    assert.equal(payload.leagueLogo, "/gaming-oasis-favicon.png");
+    assert.equal(payload.scoreboard.hideScoreboard, true);
+    assert.equal(payload.scoreboard.hideCountdowns, true);
+    assert.deepEqual(payload.draft.bluePickOrder, [0, 1, 2, 3, 4]);
+    assert.deepEqual(installed.splice(0).sort(), files.map((file) => file.filename).sort());
+    for (const order of [[2, 1, 0, 3, 4], [2, 1, 4, 3, 0], [0, 1, 2, 3, 4]]) {
+      leagueOfLegends.draft.bluePickOrder = order;
+      leagueOfLegends.scoreboard.hideScoreboard = false;
+      leagueOfLegends.scoreboard.stats.grubs.team1 += 1;
+      leagueOfLegends.scoreboard = updateLeagueDragons(leagueOfLegends.scoreboard, "team1", { types: [...leagueOfLegends.scoreboard.dragons.team1.types, "ocean"], soulActive: true, soulType: "ocean" });
+      leagueOfLegends.scoreboard = setLeagueBaronActive(leagueOfLegends.scoreboard, "team1", true);
+      leagueOfLegends.scoreboard = setLeagueElderActive(leagueOfLegends.scoreboard, "team2", true);
+      const saved = await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } });
+      assert.equal(saved.status, 200);
+      assert.deepEqual(installed.splice(0).sort(), files.map((file) => file.filename).sort());
+      const displayed = await (await fetch(`${writer.url}/api/overlays/league-of-legends`)).json();
+      assert.deepEqual(displayed.draft.bluePickOrder, order);
+      assert.deepEqual(displayed.scoreboard, leagueOfLegends.scoreboard);
+    }
+    leagueOfLegends.scoreboard.stats.grubs.source = "api";
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } })).status, 422);
+    leagueOfLegends.scoreboard.stats.grubs.source = "manual";
+    leagueOfLegends.scoreboard.baronBuffs.team1.expiresAt = "invalid";
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } })).status, 422);
+    leagueOfLegends.scoreboard.baronBuffs.team1.expiresAt = null;
+    leagueOfLegends.scoreboard.elderBuffs.team2.expiresAt = "invalid";
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } })).status, 422);
+    leagueOfLegends.scoreboard.elderBuffs.team2.expiresAt = null;
+    leagueOfLegends.scoreboard.dragons.team1.types[0] = "invalid";
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } })).status, 422);
+    assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
   } finally {
     await writer.close();
   }

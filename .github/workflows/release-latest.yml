@@ -1,0 +1,115 @@
+name: Build latest distributable
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: latest-main-distributable
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and publish Windows ZIP
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out main commit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run tests and production build
+        run: npm test
+
+      - name: Package distributable
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archiveName = "Gaming-Oasis-Production-OS-windows.zip"
+          $packageRoot = Join-Path $env:RUNNER_TEMP "Gaming-Oasis-Production-OS"
+          $sourceArchive = Join-Path $env:RUNNER_TEMP "source.zip"
+          $outputDirectory = Join-Path $env:GITHUB_WORKSPACE "release"
+          $archivePath = Join-Path $outputDirectory $archiveName
+          $checksumPath = "$archivePath.sha256"
+          $commitSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not resolve the main commit" }
+
+          New-Item -ItemType Directory -Path $packageRoot, $outputDirectory -Force | Out-Null
+          git archive --format=zip --output=$sourceArchive HEAD
+          if ($LASTEXITCODE -ne 0) { throw "git archive failed" }
+          Expand-Archive -LiteralPath $sourceArchive -DestinationPath $packageRoot
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "dist") -Destination $packageRoot -Recurse
+
+          @(
+            "Gaming Oasis Production OS"
+            "Commit: $commitSha"
+            "Built: $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+            ""
+            "Extract this ZIP, then run Run Gaming Oasis Production OS.bat."
+            "Node.js 22.13 or newer and npm are required."
+          ) | Set-Content -LiteralPath (Join-Path $packageRoot "BUILD-INFO.txt") -Encoding utf8
+
+          Compress-Archive -Path $packageRoot -DestinationPath $archivePath -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $archiveName" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+
+          "archive_path=$archivePath" >> $env:GITHUB_OUTPUT
+          "checksum_path=$checksumPath" >> $env:GITHUB_OUTPUT
+          "commit_sha=$commitSha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gaming-Oasis-Production-OS-${{ steps.package.outputs.commit_sha }}
+          path: |
+            ${{ steps.package.outputs.archive_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rolling latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_PATH: ${{ steps.package.outputs.archive_path }}
+          CHECKSUM_PATH: ${{ steps.package.outputs.checksum_path }}
+          COMMIT_SHA: ${{ steps.package.outputs.commit_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          git tag --force production-os-latest $env:COMMIT_SHA
+          git push --force origin refs/tags/production-os-latest
+          if ($LASTEXITCODE -ne 0) { throw "Could not update the latest tag" }
+
+          gh release view production-os-latest --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit production-os-latest `
+              --title "Latest main build" `
+              --notes "Automated Windows distribution built from main commit $env:COMMIT_SHA." `
+              --latest
+          } else {
+            gh release create production-os-latest `
+              --title "Latest main build" `
+              --notes "Automated Windows distribution built from main commit $env:COMMIT_SHA." `
+              --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Could not create or update the latest release" }
+
+          gh release upload production-os-latest $env:ARCHIVE_PATH $env:CHECKSUM_PATH --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload the release assets" }
