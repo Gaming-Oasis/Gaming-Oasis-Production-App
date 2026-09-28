@@ -44,6 +44,15 @@ jobs:
           if (@(0, 1641, 3010) -notcontains $LASTEXITCODE) {
             throw "NSIS installation failed with exit code $LASTEXITCODE"
           }
+          $nsisExe = @(
+            (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe")
+            (Join-Path $env:ProgramFiles "NSIS\makensis.exe")
+            (Join-Path $env:ChocolateyInstall "bin\makensis.exe")
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $nsisExe) {
+            throw "NSIS installed, but makensis.exe could not be located"
+          }
+          "NSIS_EXE=$nsisExe" >> $env:GITHUB_ENV
 
       - name: Package distributable
         id: package
@@ -104,7 +113,7 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $packageRoot "BUILD-INFO.txt") -Encoding utf8
 
           Move-Item -LiteralPath (Join-Path $packageRoot "JSONs") -Destination $jsonTemplates
-          & makensis.exe `
+          & $env:NSIS_EXE `
             "/DPAYLOAD=$packageRoot" `
             "/DJSON_TEMPLATES=$jsonTemplates" `
             "/DOUTPUT_FILE=$installerPath" `
