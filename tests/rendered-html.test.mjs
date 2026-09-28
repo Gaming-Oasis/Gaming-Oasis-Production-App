@@ -2506,7 +2506,11 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /className="confirmation-modal" role="dialog" aria-modal="true"/);
   assert.match(page, /function resetLocalData\(\)/);
   assert.doesNotMatch(page, /window\.confirm\("Reset all locally saved production data/);
-  assert.deepEqual(await readdir(new URL("../app/_sites-preview", import.meta.url)), []);
+  const starterPreviewFiles = await readdir(new URL("../app/_sites-preview", import.meta.url)).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  assert.deepEqual(starterPreviewFiles, []);
 });
 
 test("derives the short production name while preserving team labels", () => {
