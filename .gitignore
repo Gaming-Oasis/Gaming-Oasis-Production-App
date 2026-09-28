@@ -47,5 +47,6 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/
+/release/
 /work/
 .production-os.pid

@@ -3,6 +3,11 @@ setlocal
 title Gaming Oasis Production OS
 cd /d "%~dp0"
 
+if exist "%~dp0runtime\node.exe" (
+  set "GO_NODE=%~dp0runtime\node.exe"
+  goto node_ready
+)
+
 where node >nul 2>nul
 if errorlevel 1 (
   echo Node.js is required to run Gaming Oasis Production OS.
@@ -11,6 +16,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
+set "GO_NODE=node"
+
 where npm >nul 2>nul
 if errorlevel 1 (
   echo npm is required to run Gaming Oasis Production OS.
@@ -18,7 +25,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-node scripts\launch-production.mjs
+:node_ready
+"%GO_NODE%" scripts\launch-production.mjs
 if errorlevel 1 (
   echo.
   echo Startup did not complete. Review the message above, then try again.

@@ -96,6 +96,16 @@ npm run dev
 
 The app runs at `http://localhost:3000` by default. Production drafts and sidebar preferences are saved only in that browser profile on the workstation.
 
+## Windows distribution
+
+Every push to `main` runs the full test and production-build gate in GitHub Actions, then updates the **Latest main build** GitHub release. The release contains:
+
+- `Gaming-Oasis-Production-OS-Setup.exe` — per-user Windows installer with its own verified Node.js runtime, desktop shortcut, and Start-menu shortcut. Operators do not need to install Node.js or npm.
+- `Gaming-Oasis-Production-OS-Portable.zip` — the same self-contained application for operators who prefer to extract and run it directly.
+- `Gaming-Oasis-Production-OS-SHA256SUMS.txt` — SHA-256 checksums for both packages.
+
+Installing a newer build over an existing installation preserves the live `JSONs` directory. The uninstaller also offers to preserve production JSON and downloaded sponsor assets. The installer is not code-signed, so Windows may identify the publisher as unknown until a signing certificate is added to the release workflow.
+
 ## Brand system
 
 The interface uses the official Gaming Oasis master-brand system: Oxanium, Brand Gold (`#F6AC18`), Brand Purple (`#47213F`), Accent Orange (`#C7564B`), charcoal surfaces, overlay plate fill (`#171717`) for browser-overlay plates, the official wordmark/favicon, and the official chromatic background. Browser overlay fixed vs live colors are documented under **Browser overlays color scheme** in the [brand guide](docs/GAMING-OASIS-TOOL-BRAND-GUIDE.md). All brand assets and font files are stored locally so the tool retains its intended appearance without an internet connection.

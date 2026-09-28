@@ -15,9 +15,9 @@ permissions:
 
 jobs:
   build:
-    name: Build and publish Windows ZIP
+    name: Build and publish Windows installer
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Check out main commit
@@ -37,25 +37,62 @@ jobs:
       - name: Run tests and production build
         run: npm test
 
+      - name: Install installer compiler
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.12.0 --yes --no-progress
+          if (@(0, 1641, 3010) -notcontains $LASTEXITCODE) {
+            throw "NSIS installation failed with exit code $LASTEXITCODE"
+          }
+
       - name: Package distributable
         id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $archiveName = "Gaming-Oasis-Production-OS-windows.zip"
+          $nodeVersion = "22.13.0"
+          $archiveName = "Gaming-Oasis-Production-OS-Portable.zip"
+          $installerName = "Gaming-Oasis-Production-OS-Setup.exe"
+          $checksumName = "Gaming-Oasis-Production-OS-SHA256SUMS.txt"
           $packageRoot = Join-Path $env:RUNNER_TEMP "Gaming-Oasis-Production-OS"
           $sourceArchive = Join-Path $env:RUNNER_TEMP "source.zip"
+          $jsonTemplates = Join-Path $env:RUNNER_TEMP "initial-json"
+          $nodeArchiveName = "node-v$nodeVersion-win-x64.zip"
+          $nodeArchive = Join-Path $env:RUNNER_TEMP $nodeArchiveName
+          $nodeExtract = Join-Path $env:RUNNER_TEMP "node-runtime"
           $outputDirectory = Join-Path $env:GITHUB_WORKSPACE "release"
           $archivePath = Join-Path $outputDirectory $archiveName
-          $checksumPath = "$archivePath.sha256"
+          $installerPath = Join-Path $outputDirectory $installerName
+          $checksumPath = Join-Path $outputDirectory $checksumName
           $commitSha = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) { throw "Could not resolve the main commit" }
 
-          New-Item -ItemType Directory -Path $packageRoot, $outputDirectory -Force | Out-Null
+          New-Item -ItemType Directory -Path $packageRoot, $outputDirectory, $nodeExtract -Force | Out-Null
           git archive --format=zip --output=$sourceArchive HEAD
           if ($LASTEXITCODE -ne 0) { throw "git archive failed" }
           Expand-Archive -LiteralPath $sourceArchive -DestinationPath $packageRoot
           Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "dist") -Destination $packageRoot -Recurse
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "node_modules") -Destination $packageRoot -Recurse
+
+          $lockHash = (Get-FileHash -LiteralPath (Join-Path $packageRoot "package-lock.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$lockHash`n" | Set-Content -LiteralPath (Join-Path $packageRoot "node_modules\.gaming-oasis-lock.sha256") -Encoding ascii -NoNewline
+          @{
+            formatVersion = 1
+            lockSha256 = $lockHash
+            commit = $commitSha
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $packageRoot ".production-build.json") -Encoding utf8
+
+          $nodeBaseUrl = "https://nodejs.org/dist/v$nodeVersion"
+          Invoke-WebRequest -Uri "$nodeBaseUrl/$nodeArchiveName" -OutFile $nodeArchive
+          $shasumsPath = Join-Path $env:RUNNER_TEMP "node-SHASUMS256.txt"
+          Invoke-WebRequest -Uri "$nodeBaseUrl/SHASUMS256.txt" -OutFile $shasumsPath
+          $checksumLine = Get-Content -LiteralPath $shasumsPath | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($nodeArchiveName))$" }
+          if (@($checksumLine).Count -ne 1) { throw "Could not find the Node.js archive checksum" }
+          $expectedNodeHash = ($checksumLine -split "\s+")[0]
+          $actualNodeHash = (Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualNodeHash -ne $expectedNodeHash) { throw "Node.js runtime checksum verification failed" }
+          Expand-Archive -LiteralPath $nodeArchive -DestinationPath $nodeExtract
+          Move-Item -LiteralPath (Join-Path $nodeExtract "node-v$nodeVersion-win-x64") -Destination (Join-Path $packageRoot "runtime")
 
           @(
             "Gaming Oasis Production OS"
@@ -63,14 +100,29 @@ jobs:
             "Built: $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
             ""
             "Extract this ZIP, then run Run Gaming Oasis Production OS.bat."
-            "Node.js 22.13 or newer and npm are required."
+            "Node.js and npm are included; no separate installation is required."
           ) | Set-Content -LiteralPath (Join-Path $packageRoot "BUILD-INFO.txt") -Encoding utf8
 
+          Move-Item -LiteralPath (Join-Path $packageRoot "JSONs") -Destination $jsonTemplates
+          & makensis.exe `
+            "/DPAYLOAD=$packageRoot" `
+            "/DJSON_TEMPLATES=$jsonTemplates" `
+            "/DOUTPUT_FILE=$installerPath" `
+            "/DCOMMIT_SHA=$commitSha" `
+            (Join-Path $env:GITHUB_WORKSPACE "installer\production-os.nsi")
+          if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
+          Move-Item -LiteralPath $jsonTemplates -Destination (Join-Path $packageRoot "JSONs")
+
           Compress-Archive -Path $packageRoot -DestinationPath $archivePath -CompressionLevel Optimal
-          $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $archiveName" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+          $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "$installerHash  $installerName"
+            "$archiveHash  $archiveName"
+          ) | Set-Content -LiteralPath $checksumPath -Encoding ascii
 
           "archive_path=$archivePath" >> $env:GITHUB_OUTPUT
+          "installer_path=$installerPath" >> $env:GITHUB_OUTPUT
           "checksum_path=$checksumPath" >> $env:GITHUB_OUTPUT
           "commit_sha=$commitSha" >> $env:GITHUB_OUTPUT
 
@@ -79,6 +131,7 @@ jobs:
         with:
           name: Gaming-Oasis-Production-OS-${{ steps.package.outputs.commit_sha }}
           path: |
+            ${{ steps.package.outputs.installer_path }}
             ${{ steps.package.outputs.archive_path }}
             ${{ steps.package.outputs.checksum_path }}
           if-no-files-found: error
@@ -88,6 +141,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer_path }}
           ARCHIVE_PATH: ${{ steps.package.outputs.archive_path }}
           CHECKSUM_PATH: ${{ steps.package.outputs.checksum_path }}
           COMMIT_SHA: ${{ steps.package.outputs.commit_sha }}
@@ -111,5 +165,9 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { throw "Could not create or update the latest release" }
 
-          gh release upload production-os-latest $env:ARCHIVE_PATH $env:CHECKSUM_PATH --clobber
+          gh release upload production-os-latest $env:INSTALLER_PATH $env:ARCHIVE_PATH $env:CHECKSUM_PATH --clobber
           if ($LASTEXITCODE -ne 0) { throw "Could not upload the release assets" }
+
+          gh release delete-asset production-os-latest Gaming-Oasis-Production-OS-windows.zip --yes 2>$null
+          gh release delete-asset production-os-latest Gaming-Oasis-Production-OS-windows.zip.sha256 --yes 2>$null
+          exit 0

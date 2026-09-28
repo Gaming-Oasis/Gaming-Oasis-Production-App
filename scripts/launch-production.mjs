@@ -12,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedOutputDir = path.join(root, "JSONs");
 const lockPath = path.join(root, "package-lock.json");
 const installStampPath = path.join(root, "node_modules", ".gaming-oasis-lock.sha256");
+const packagedBuildPath = path.join(root, ".production-build.json");
 const writerStatusUrl = "http://127.0.0.1:4877/api/live-json/status";
 const workspaceUrl = "http://localhost:3000";
 const minimumNode = [22, 13, 0];
@@ -127,6 +128,24 @@ function lockDigest() {
   return createHash("sha256").update(readFileSync(lockPath)).digest("hex");
 }
 
+export function packagedBuildMatches(marker, digest) {
+  return marker?.formatVersion === 1
+    && marker?.lockSha256 === digest
+    && typeof marker?.commit === "string"
+    && /^[0-9a-f]{40}$/.test(marker.commit);
+}
+
+function packagedBuildIsCurrent(digest) {
+  try {
+    const marker = JSON.parse(readFileSync(packagedBuildPath, "utf8"));
+    return packagedBuildMatches(marker, digest)
+      && existsSync(path.join(root, "dist", "server", "index.js"))
+      && existsSync(path.join(root, "dist", "client", ".vite", "manifest.json"));
+  } catch {
+    return false;
+  }
+}
+
 function dependenciesAreCurrent(digest) {
   if (!existsSync(installStampPath)) return false;
   try {
@@ -192,18 +211,21 @@ async function main() {
     fail(`Node.js ${minimumNode.join(".")} or newer is required. Current version: ${process.versions.node}`);
     return;
   }
-  try {
-    runNpm(["--version"], "ignore");
-  } catch {
-    fail("npm is required to run Gaming Oasis Production OS.");
-    return;
-  }
   if (!existsSync(lockPath)) {
     fail("package-lock.json is missing; dependency integrity cannot be verified.");
     return;
   }
 
   const digest = lockDigest();
+  const packagedBuild = packagedBuildIsCurrent(digest);
+  if (!packagedBuild) {
+    try {
+      runNpm(["--version"], "ignore");
+    } catch {
+      fail("npm is required to prepare Gaming Oasis Production OS.");
+      return;
+    }
+  }
   let [existingWriter, port3000Open, port4877Open] = await Promise.all([
     probeWriter(),
     portIsOpen(3000),
@@ -222,13 +244,21 @@ async function main() {
   }
 
   if (!dependenciesAreCurrent(digest)) {
+    if (packagedBuild) {
+      fail("The packaged application is incomplete. Reinstall Gaming Oasis Production OS.");
+      return;
+    }
     console.log("Preparing the verified Production OS dependency set...");
     runNpm(["ci", "--include=dev", "--prefer-offline", "--no-audit", "--no-fund"]);
     writeFileSync(installStampPath, `${digest}\n`, "utf8");
   }
 
-  console.log("Building Gaming Oasis Production OS...");
-  runNpm(["run", "build"]);
+  if (packagedBuild) {
+    console.log("Using the verified packaged production build...");
+  } else {
+    console.log("Building Gaming Oasis Production OS...");
+    runNpm(["run", "build"]);
+  }
   if (await portIsOpen(3000) || await portIsOpen(4877)) {
     fail("A required port became occupied during setup. Close the owning application and try again.");
     return;
