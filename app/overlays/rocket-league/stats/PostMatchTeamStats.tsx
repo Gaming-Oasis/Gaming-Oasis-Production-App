@@ -259,10 +259,10 @@ export function PostMatchTeamStatsStage({
   const leftTotals = matchTeamStats?.teamOne;
   const rightTotals = matchTeamStats?.teamTwo;
   const leftResult = !hasStats
-    ? "AWAITING RESULT"
+    ? ""
     : winnerTeam === null ? "TIED" : (winnerTeam === 0 ? "VICTORY" : "LOSS");
   const rightResult = !hasStats
-    ? "AWAITING RESULT"
+    ? ""
     : winnerTeam === null ? "TIED" : (winnerTeam === 1 ? "VICTORY" : "LOSS");
   const seriesLeft = Number.parseInt(leftTeam.seriesScore || "0", 10) || 0;
   const seriesRight = Number.parseInt(rightTeam.seriesScore || "0", 10) || 0;

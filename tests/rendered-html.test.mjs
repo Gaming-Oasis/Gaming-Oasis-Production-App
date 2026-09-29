@@ -735,7 +735,9 @@ test("server-renders dedicated Rocket League post-match stats overlay route", as
   assert.match(component, /PostMatchTeamStatsStage/);
   assert.match(component, /Ball Touches/);
   assert.match(component, /VICTORY/);
-  assert.match(component, /AWAITING RESULT/);
+  assert.doesNotMatch(component, /AWAITING RESULT/);
+  assert.match(component, /const leftResult = !hasStats\s*\? ""/);
+  assert.match(component, /const rightResult = !hasStats\s*\? ""/);
   assert.match(component, /formatStatValue/);
   assert.match(css, /--league-primary/);
   assert.match(component, /--league-secondary/);
@@ -861,7 +863,7 @@ test("buildRocketLeagueOverlayState includes lobbyScene and merge publishes matc
   assert.deepEqual(debugMerged.matchTeamStats, buildDebugMatchTeamStats(debugBase.game));
 });
 
-test("snapshots matchTeamStats on winner rising edge and clears on countdown", () => {
+test("snapshots matchTeamStats on winner rising edge and holds it until the next result", () => {
   const now = Date.parse("2026-08-14T20:00:00.000Z");
   const live = applyStatsApiMessage(createEmptyLiveFeed(), {
     Event: "UpdateState",
@@ -899,8 +901,33 @@ test("snapshots matchTeamStats on winner rising edge and clears on countdown", (
   assert.equal(lobby.game.hasGame, false);
 
   const countdown = applyStatsApiMessage(lobby, { Event: "CountdownBegin", Data: {} }, now + 3000);
-  assert.equal(countdown.matchTeamStats, null);
+  assert.ok(countdown.matchTeamStats);
+  assert.equal(countdown.matchTeamStats.teamOne.goals, 2);
   assert.equal(countdown.game.hasGame, true);
+
+  const nextGame = applyStatsApiMessage(countdown, {
+    Event: "UpdateState",
+    Data: {
+      Players: [
+        { Name: "Blue2", PrimaryId: "b2", TeamNum: 0, Goals: 0, Assists: 0, Shots: 0, Saves: 0, Demos: 0, Touches: 1, Score: 0 },
+        { Name: "Orange2", PrimaryId: "o2", TeamNum: 1, Goals: 0, Assists: 0, Shots: 0, Saves: 0, Demos: 0, Touches: 1, Score: 0 },
+      ],
+      Game: {
+        Teams: [
+          { Name: "Blue", TeamNum: 0, Score: 0 },
+          { Name: "Orange", TeamNum: 1, Score: 0 },
+        ],
+        TimeSeconds: 299,
+        bOvertime: false,
+        bReplay: false,
+        bHasWinner: false,
+        bHasTarget: false,
+      },
+    },
+  }, now + 4000);
+  assert.ok(nextGame.matchTeamStats);
+  assert.equal(nextGame.matchTeamStats.teamOne.goals, 2);
+  assert.equal(nextGame.matchTeamStats.teamTwo.touches, 19);
 });
 
 test("builds Rocket League overlay state from Match 1 teams and league colors", () => {
