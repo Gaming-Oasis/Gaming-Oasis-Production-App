@@ -2722,14 +2722,14 @@ test("builds the VALORANT overlay from saved results and flips all team fields t
   assert.equal(state.leaguePrimary, "#644EB5");
   assert.equal(state.leagueSecondary, "#FCC500");
   assert.deepEqual(state.teamOne, {
-    name: "Team B",
+    name: "TEAM B",
     standing: "2-0",
     logo: "two.png",
     color: "#1D4E89",
     logoBackground: "#FFFFFF",
     seriesScore: "1",
   });
-  assert.equal(state.teamTwo.name, "Team A");
+  assert.equal(state.teamTwo.name, "TEAM A");
   assert.equal(state.teamTwo.seriesScore, "2");
   assert.equal(state.mapWidget.visible, true);
   assert.equal(state.sponsorWidgetEnabled, true);
