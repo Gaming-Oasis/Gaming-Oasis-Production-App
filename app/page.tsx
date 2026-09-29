@@ -78,6 +78,7 @@ import { normalizeLeagueScoreboard, resetLeagueScoreboardCounts } from "../lib/l
 type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "leagueOfLegends" | "sponsors" | "draw" | "settings";
 type ConnectionState = "idle" | "connected" | "error";
 type LiveSyncState = "checking" | "standby" | "saving" | "retrying" | "synced" | "error";
+type LiveDataTone = "live" | "waiting" | "offline" | "manual";
 type ColorSource = "primary" | "alternate" | "backup1" | "backup2";
 type StandingDisplay = "placement" | "standing" | "seed";
 
@@ -241,6 +242,20 @@ type LeagueLivePreview = {
   };
   players: LeagueLivePreviewPlayer[];
   events: Array<{ id: string; name: string; time: number; team?: "ORDER" | "CHAOS" | null }>;
+};
+
+type WriterLiveDataStatus = {
+  checked: boolean;
+  reachable: boolean;
+  rocketLeagueStatsApi: null | {
+    connected: boolean;
+    lastEventAt: string | null;
+  };
+  leagueOfLegends: null | {
+    connected: boolean;
+    lastEventAt: string | null;
+    stale?: boolean;
+  };
 };
 
 type LeagueOfLegends = {
@@ -1807,6 +1822,45 @@ function GameLiveMatchIndicators({ gameName, indicators }: { gameName: string; i
   );
 }
 
+function receivedRecently(lastEventAt: string | null | undefined, now = Date.now()) {
+  if (!lastEventAt) return false;
+  const timestamp = Date.parse(lastEventAt);
+  return Number.isFinite(timestamp) && now - timestamp <= 5_000;
+}
+
+function lastDataLabel(lastEventAt: string | null | undefined) {
+  if (!lastEventAt) return "No game data received this run";
+  const timestamp = Date.parse(lastEventAt);
+  if (!Number.isFinite(timestamp)) return "Last data time unavailable";
+  return `Last data ${new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+}
+
+function GameLiveDataMonitor({
+  gameName,
+  label,
+  detail,
+  tone,
+  lastEventAt,
+}: {
+  gameName: string;
+  label: string;
+  detail: string;
+  tone: LiveDataTone;
+  lastEventAt?: string | null;
+}) {
+  return (
+    <section className={`game-live-data-monitor ${tone}`} aria-label={`${gameName} live data connection`} aria-live="polite">
+      <span className="game-live-data-indicator" aria-hidden="true" />
+      <div>
+        <span>Live data</span>
+        <strong>{label}</strong>
+      </div>
+      <p>{detail}</p>
+      {tone !== "manual" ? <small>{lastDataLabel(lastEventAt)}</small> : null}
+    </section>
+  );
+}
+
 function SectionHeading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
   return (
     <header className="section-heading">
@@ -1876,6 +1930,12 @@ export default function Home() {
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [syncingMatch, setSyncingMatch] = useState<number | null>(null);
   const [liveSync, setLiveSync] = useState<LiveSyncState>("checking");
+  const [writerLiveDataStatus, setWriterLiveDataStatus] = useState<WriterLiveDataStatus>({
+    checked: false,
+    reachable: false,
+    rocketLeagueStatsApi: null,
+    leagueOfLegends: null,
+  });
   const [toast, setToast] = useState("");
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
   const [rocketLeagueSeriesResetOpen, setRocketLeagueSeriesResetOpen] = useState(false);
@@ -2016,6 +2076,43 @@ export default function Home() {
       })
       .catch(() => {});
     return () => controller.abort();
+  }, [hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    let active = true;
+    let requestActive = false;
+    const controller = new AbortController();
+
+    async function pollWriterLiveDataStatus() {
+      if (requestActive) return;
+      requestActive = true;
+      try {
+        const response = await fetch(LIVE_JSON_STATUS_ENDPOINT, { cache: "no-store", signal: controller.signal });
+        const payload = await response.json();
+        if (!active || payload?.service !== "gaming-oasis-production-os-writer") return;
+        setWriterLiveDataStatus({
+          checked: true,
+          reachable: true,
+          rocketLeagueStatsApi: payload.rocketLeagueStatsApi ?? null,
+          leagueOfLegends: payload.leagueOfLegends ?? null,
+        });
+      } catch {
+        if (active) {
+          setWriterLiveDataStatus({ checked: true, reachable: false, rocketLeagueStatsApi: null, leagueOfLegends: null });
+        }
+      } finally {
+        requestActive = false;
+      }
+    }
+
+    void pollWriterLiveDataStatus();
+    const timer = window.setInterval(pollWriterLiveDataStatus, 2_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [hydrated]);
 
   useEffect(() => {
@@ -4241,6 +4338,12 @@ export default function Home() {
           title="VALORANT"
           description="Manage map results, scoreboard settings, and the complete series pick/ban order. Match 1 supplies team data."
         />
+        <GameLiveDataMonitor
+          gameName="VALORANT"
+          label="Manual control"
+          detail="No VALORANT live-data API is configured. Results and match state are controlled from this workspace."
+          tone="manual"
+        />
         <div className="tabs" role="tablist" aria-label="VALORANT views" onKeyDown={handleTabListKeyDown}>
           <button role="tab" aria-selected={valorantTab === "results"} tabIndex={valorantTab === "results" ? 0 : -1} className={valorantTab === "results" ? "active" : ""} onClick={() => setValorantTab("results")}>Results & setup</button>
           <button role="tab" aria-selected={valorantTab === "pickBans"} tabIndex={valorantTab === "pickBans" ? 0 : -1} className={valorantTab === "pickBans" ? "active" : ""} onClick={() => setValorantTab("pickBans")}>Pick / ban</button>
@@ -4425,6 +4528,17 @@ export default function Home() {
     const overlayRightTeam = state.rocketLeague.flipSides ? homeTeam : awayTeam;
     const overlayLeftGameSide = "Blue";
     const overlayRightGameSide = "Orange";
+    const rlApi = writerLiveDataStatus.rocketLeagueStatsApi;
+    const rlReceiving = Boolean(rlApi?.connected && receivedRecently(rlApi.lastEventAt));
+    const rlMonitor = !writerLiveDataStatus.checked
+      ? { label: "Checking connection", detail: "Checking the local writer and Rocket League Game Data API.", tone: "waiting" as LiveDataTone }
+      : !writerLiveDataStatus.reachable
+        ? { label: "Writer offline", detail: "Start Production OS with run.bat to monitor Rocket League data.", tone: "offline" as LiveDataTone }
+        : !rlApi?.connected
+          ? { label: "API disconnected", detail: "Rocket League is not connected to the local writer. Verify PacketSendRate and restart the game.", tone: "offline" as LiveDataTone }
+          : rlReceiving
+            ? { label: "Receiving game data", detail: "Rocket League match data is updating the browser overlays.", tone: "live" as LiveDataTone }
+            : { label: "Connected · waiting for match", detail: "The Game Data API is connected. Start or spectate a match to receive live statistics.", tone: "waiting" as LiveDataTone };
 
     return (
       <div className="page-stack rocket-league-page">
@@ -4433,6 +4547,7 @@ export default function Home() {
           title="Rocket League"
           description="Enter game results and configure the scoreboard. Match 1 supplies the team names used here."
         />
+        <GameLiveDataMonitor gameName="Rocket League" {...rlMonitor} lastEventAt={rlApi?.lastEventAt} />
         <div className="tabs" role="tablist" aria-label="Rocket League views" onKeyDown={handleTabListKeyDown}>
           <button role="tab" aria-selected={rocketLeagueTab === "results"} tabIndex={rocketLeagueTab === "results" ? 0 : -1} className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
           <button role="tab" aria-selected={rocketLeagueTab === "admin"} tabIndex={rocketLeagueTab === "admin" ? 0 : -1} className={rocketLeagueTab === "admin" ? "active" : ""} onClick={() => setRocketLeagueTab("admin")}>Admin control</button>
@@ -4765,6 +4880,19 @@ export default function Home() {
     const liveConnected = Boolean(leagueLivePreview?.connection?.connected);
     const liveStale = Boolean(leagueLivePreview?.connection?.stale);
     const formatClock = (seconds: number) => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds) % 60)).padStart(2, "0")}`;
+    const leagueApi = writerLiveDataStatus.leagueOfLegends;
+    const leagueReceiving = Boolean(leagueApi?.connected && !leagueApi.stale && receivedRecently(leagueApi.lastEventAt));
+    const leagueMonitor = !writerLiveDataStatus.checked
+      ? { label: "Checking connection", detail: "Checking the local writer and League Live Client Data API.", tone: "waiting" as LiveDataTone }
+      : !writerLiveDataStatus.reachable
+        ? { label: "Writer offline", detail: "Start Production OS with run.bat to monitor League data.", tone: "offline" as LiveDataTone }
+        : leagueApi?.stale
+          ? { label: "Game data stale", detail: "The last valid League snapshot is no longer current.", tone: "offline" as LiveDataTone }
+          : leagueReceiving
+            ? { label: "Receiving game data", detail: "League spectator data is updating the browser overlays.", tone: "live" as LiveDataTone }
+            : leagueApi?.connected
+              ? { label: "Connected · waiting for game", detail: "The League client is reachable, but current spectator data has not arrived.", tone: "waiting" as LiveDataTone }
+              : { label: "Client disconnected", detail: "Start or spectate a League game on this Windows PC to receive live statistics.", tone: "offline" as LiveDataTone };
 
     return (
       <div className="page-stack league-page">
@@ -4773,6 +4901,7 @@ export default function Home() {
           title="League of Legends"
           description="Run champion select, verify the local spectator feed, and confirm each game before it changes the series. Match 1 supplies team and league branding."
         />
+        <GameLiveDataMonitor gameName="League of Legends" {...leagueMonitor} lastEventAt={leagueApi?.lastEventAt} />
         <div className="tabs" role="tablist" aria-label="League of Legends views">
           <button className={leagueTab === "results" ? "active" : ""} onClick={() => setLeagueTab("results")}>Results & setup</button>
           <button className={leagueTab === "draft" ? "active" : ""} onClick={() => setLeagueTab("draft")}>Draft</button>

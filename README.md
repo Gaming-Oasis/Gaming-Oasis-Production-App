@@ -85,7 +85,7 @@ Synced team names are converted to their short production form before output. Fo
 
 ## Local development
 
-For production staff, double-click **`Run Gaming Oasis Production OS.bat`**. The launcher verifies Node.js 22.13 or newer, npm, the lockfile-backed dependency set, and both local service ports. On relaunch it stops the previous tool server process tree only when the writer identity, workspace path, and saved runner PID agree, then starts a fresh instance. It never kills an unknown process using those ports. It performs a clean dependency install when the lockfile changes, builds the app, waits for the identified web and writer services to become healthy, and only then opens the browser. Keep the CMD window open while using the tool; it pauses after the server exits so messages remain visible.
+For production staff, double-click **`run.bat`**. The launcher verifies Node.js 22.13 or newer, npm, the lockfile-backed dependency set, and both local service ports. On relaunch it stops the previous tool server process tree only when the writer identity, workspace path, and saved runner PID agree, then starts a fresh instance. It never kills an unknown process using those ports. It performs a clean dependency install when the lockfile changes, builds the app, waits for the identified web and writer services to become healthy, and only then opens the browser. Keep the CMD window open while using the tool; it pauses after the server exits so messages remain visible.
 
 For development:
 

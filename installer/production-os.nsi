@@ -30,7 +30,7 @@ VIAddVersionKey /LANG=1033 "FileVersion" "0.1.0"
 VIAddVersionKey /LANG=1033 "ProductVersion" "0.1.0 (${COMMIT_SHA})"
 
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\Run Gaming Oasis Production OS.bat"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\run.bat"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch Gaming Oasis Production OS"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -66,8 +66,8 @@ Section "Gaming Oasis Production OS" SEC_MAIN
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gaming Oasis Production OS" "NoRepair" 1
 
   CreateDirectory "$SMPROGRAMS\Gaming Oasis"
-  CreateShortCut "$SMPROGRAMS\Gaming Oasis\Gaming Oasis Production OS.lnk" "$INSTDIR\Run Gaming Oasis Production OS.bat"
-  CreateShortCut "$DESKTOP\Gaming Oasis Production OS.lnk" "$INSTDIR\Run Gaming Oasis Production OS.bat"
+  CreateShortCut "$SMPROGRAMS\Gaming Oasis\Gaming Oasis Production OS.lnk" "$INSTDIR\run.bat"
+  CreateShortCut "$DESKTOP\Gaming Oasis Production OS.lnk" "$INSTDIR\run.bat"
 SectionEnd
 
 Section "Uninstall"

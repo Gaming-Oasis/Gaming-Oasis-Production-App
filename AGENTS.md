@@ -22,7 +22,7 @@ The live human brand source is https://gamingoasis.gg/brand. The local Gaming Oa
 - Preserve the legacy JSON filenames and field shapes.
 - Every data change must continue to write the complete six-file package to `JSONs` through the live local writer.
 - Keep manual export as a recovery path.
-- Keep the application easy to run through `Run Gaming Oasis Production OS.bat` and `npm run dev`.
+- Keep the application easy to run through `run.bat` and `npm run dev`.
 
 ## Change discipline
 

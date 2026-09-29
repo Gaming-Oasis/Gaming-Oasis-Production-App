@@ -381,6 +381,14 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /outputActivated: isEnvelope \? parsed\.outputActivated === true : hasProductionContent\(state\)/);
   assert.match(page, /createJsonPackageArchive\(files\)/);
   assert.match(page, /VALORANT_MAP_DATA_FILENAME/);
+  assert.match(page, /function GameLiveDataMonitor/);
+  assert.match(page, /Receiving game data/);
+  assert.match(page, /Connected · waiting for match/);
+  assert.match(page, /No VALORANT live-data API is configured/);
+  assert.match(page, /setInterval\(pollWriterLiveDataStatus, 2_000\)/);
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.game-live-data-monitor\.live \{ border-left-color: var\(--status-success\)/);
+  assert.match(css, /\.game-live-data-monitor\.offline \{ border-left-color: var\(--status-error\)/);
   assert.equal((page.match(/window\.confirm/g) ?? []).length, 2, "only excluded League of Legends controls retain native confirmation prompts");
   assert.match(page, /actionConfirmationModalRef[\s\S]*isPrimaryTabRef\.current\) confirmation\.onConfirm\(\)/);
   assert.match(page, /current\.general\.eventName === previousResolved\.eventName[\s\S]{0,300}eventName: shouldRestoreSourceEvent/);
@@ -2225,7 +2233,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
-  const launcher = await readFile(new URL("../Run Gaming Oasis Production OS.bat", import.meta.url), "utf8");
+  const launcher = await readFile(new URL("../run.bat", import.meta.url), "utf8");
   const localRunner = await readFile(new URL("../scripts/local-runner.mjs", import.meta.url), "utf8");
 
   for (const filename of [

@@ -69,6 +69,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .eyebrow { color: var(--muted); font-size: 11px; font-weight: 500; }
 .heading-action { flex: 0 0 auto; }
 
+.game-live-data-monitor { min-height: 60px; padding: 11px 14px; display: grid; grid-template-columns: 8px minmax(170px, auto) minmax(240px, 1fr) auto; align-items: center; gap: 12px; border: 1px solid var(--border); border-left: 3px solid #666666; border-radius: var(--radius); background: var(--surface); }
+.game-live-data-monitor.live { border-left-color: var(--status-success); }
+.game-live-data-monitor.offline { border-left-color: var(--status-error); }
+.game-live-data-monitor.manual { border-left-color: var(--muted); }
+.game-live-data-indicator { width: 8px; height: 8px; border-radius: 50%; background: #666666; }
+.game-live-data-monitor.live .game-live-data-indicator { background: var(--status-success); }
+.game-live-data-monitor.offline .game-live-data-indicator { background: var(--status-error); }
+.game-live-data-monitor > div { display: grid; gap: 3px; }
+.game-live-data-monitor > div span, .game-live-data-monitor small { color: var(--muted); font-size: 9px; }
+.game-live-data-monitor strong { font-size: 12px; font-weight: 600; }
+.game-live-data-monitor p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.game-live-data-monitor small { text-align: right; white-space: nowrap; }
+
 .button { min-height: 40px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
 .button:disabled { cursor: wait; opacity: .55; }
 .button.primary, .button.export-button { border-color: var(--brand); background: var(--brand); color: var(--brand-contrast); }
@@ -583,6 +596,8 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
   .content-area { width: 100%; padding: 24px 16px 48px; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 16px; }
   .heading-action, .heading-action .button { width: 100%; }
+  .game-live-data-monitor { grid-template-columns: 8px 1fr; }
+  .game-live-data-monitor p, .game-live-data-monitor small { grid-column: 2; text-align: left; white-space: normal; }
   .activity-strip, .form-grid.three, .pool-grid, .import-grid, .holding-chips { grid-template-columns: 1fr; }
   .activity-strip > div + div { border-left: 0; border-top: 1px solid var(--border); }
   .sponsor-overview { align-items: flex-start; flex-direction: column; }
