@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { readableText, resolveImagePlate } from "../../../lib/readable-text.mjs";
+import { readableVsText, resolveImagePlate } from "../../../lib/readable-text.mjs";
 import { sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import styles from "./vs-overlay.module.css";
 import { useStableImageSource } from "../useStableImageSource";
@@ -25,8 +25,8 @@ const VS_NAME_MAX_PX = 72;
 const VS_NAME_MIN_PX = 28;
 const SPONSOR_ROTATION_MS = 15000;
 
-function seriesPillColor(teamColor: string) {
-  return readableText(teamColor);
+function seriesPillColor(team: VsOverlayTeam) {
+  return readableVsText(team.color, team.logoBackground);
 }
 
 function localLogoUrl(value: string) {
@@ -339,8 +339,8 @@ function LobbyVsScreen({
   winsNeeded: number;
   skipEnterAnimation?: boolean;
 }) {
-  const leftText = readableText(leftTeam.color);
-  const rightText = readableText(rightTeam.color);
+  const leftText = readableVsText(leftTeam.color, leftTeam.logoBackground);
+  const rightText = readableVsText(rightTeam.color, rightTeam.logoBackground);
   const leftStanding = leftTeam.standing.trim();
   const rightStanding = rightTeam.standing.trim();
   return (
@@ -357,7 +357,7 @@ function LobbyVsScreen({
         {leftStanding ? (
           <span className={styles.lobbyVsStanding}>{leftStanding}</span>
         ) : null}
-        <SeriesPills wins={winsOne} needed={winsNeeded} color={seriesPillColor(leftTeam.color)} />
+        <SeriesPills wins={winsOne} needed={winsNeeded} color={seriesPillColor(leftTeam)} />
       </div>
       <div
         className={`${styles.lobbyVsCorner} ${styles.lobbyVsCornerRight}`}
@@ -367,7 +367,7 @@ function LobbyVsScreen({
         {rightStanding ? (
           <span className={styles.lobbyVsStanding}>{rightStanding}</span>
         ) : null}
-        <SeriesPills wins={winsTwo} needed={winsNeeded} color={seriesPillColor(rightTeam.color)} />
+        <SeriesPills wins={winsTwo} needed={winsNeeded} color={seriesPillColor(rightTeam)} />
       </div>
       <div className={styles.lobbyVsMark} aria-hidden="true">
         <span>VS</span>

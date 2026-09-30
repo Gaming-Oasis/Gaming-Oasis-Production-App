@@ -31,7 +31,7 @@ export default function LeagueScoreboardControls({ value, blueTeamKey, teamOne, 
     const update = elder ? setLeagueElderActive : setLeagueBaronActive;
     return <>
       <div className="league-dragon-soul-toggle"><span>{label} active</span><label className="switch"><input type="checkbox" aria-label={`${teamNames[team]} ${label} active`} checked={remaining > 0} onChange={event => onChange(update(value, team, event.target.checked) as LeagueScoreboardSettings)} /><span /></label></div>
-      <small className="league-buff-status">{remaining > 0 ? <output aria-label={`${teamNames[team]} ${label} buff remaining`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")} remaining</output> : `Activate to start ${elder ? "2:30" : "3:00"}`}</small>
+      <small className="league-buff-status">{remaining > 0 ? <output aria-label={`${teamNames[team]} ${label} buff remaining`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")} remaining</output> : elder ? "Activate to start 2:30" : "Activate to add 1 Baron and start 3:00"}</small>
     </>;
   };
   return <section className="panel-card browser-overlay-card browser-overlay-workspace league-scoreboard-controls" aria-label="League scoreboard controls">
@@ -62,7 +62,7 @@ export default function LeagueScoreboardControls({ value, blueTeamKey, teamOne, 
           </label>)}
           <small className="league-buff-status">{value.dragons[team].soulActive ? "Dragon Soul secured · fourth dragon" : "The fourth dragon automatically grants Soul."}</small>
           {buffControl(team, "elder")}
-        </div> : <div className="league-stat-values"><input className="setting-input" type="number" min={0} max={max} step={1} inputMode="numeric" aria-label={`${teamNames[team]} ${label}`} disabled={value.stats[key].source === "api"} value={value.stats[key][team]} onChange={event => updateStat(key, { [team]: event.target.value === "" ? 0 : Number(event.target.value) })} />
+        </div> : <div className="league-stat-values"><label className="field">{key === "barons" ? <span className="field-label">Manual override</span> : null}<input className="setting-input" type="number" min={0} max={max} step={1} inputMode="numeric" aria-label={`${teamNames[team]} ${label}${key === "barons" ? " manual override" : ""}`} disabled={value.stats[key].source === "api"} value={value.stats[key][team]} onChange={event => updateStat(key, { [team]: event.target.value === "" ? 0 : Number(event.target.value) })} /></label>
           {key === "barons" ? buffControl(team, "baron") : null}
         </div>}</td>)}
       </tr>)}

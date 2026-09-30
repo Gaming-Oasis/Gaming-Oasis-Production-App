@@ -73,7 +73,7 @@ export type OverlayData = {
   draft: {
     bluePicks: string[]; redPicks: string[]; blueBans: string[]; redBans: string[];
     bluePickOrder?: number[]; redPickOrder?: number[];
-    currentStep: number; timer: number;
+    currentStep: number; timer: number; firstPickSide?: "ORDER" | "CHAOS";
   };
   confirmedGames: Array<{ gameNumber: number; bluePicks: string[]; redPicks: string[] }>;
 };
@@ -198,7 +198,7 @@ function FearlessStrip({ data }: { data: OverlayData }) {
 }
 
 export function DraftOverlay({ data }: { data: OverlayData }) {
-  const active = leagueDraftSteps(data.draftMode)[data.draft.currentStep];
+  const active = leagueDraftSteps(data.draftMode, data.draft.firstPickSide)[data.draft.currentStep];
   return <div className={styles.draftStage}>
     {data.vsScreenEnabled ? <VsSceneBackdrop leftTeam={data.blueTeam} rightTeam={data.redTeam} /> : null}
     <FearlessStrip data={data} />

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LeagueRoleOrder } from "./LeagueRoleOrder";
+import { TwitchControls } from "./TwitchControls";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
 import {
@@ -67,11 +68,14 @@ import {
   createLeagueDraftState,
   draftSlots,
   fearlessChampionSet,
+  leagueFearlessResultError,
   lockLeagueDraftSelection,
   leagueGameLimit,
   normalizeLeagueDraft,
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
+import { applyProductionDefaults, matchesProductionDefaults } from "../lib/production-defaults.mjs";
+import { clearProductionData } from "../lib/clear-production-data.mjs";
 import LeagueScoreboardControls, { type LeagueScoreboardSettings } from "./LeagueScoreboardControls";
 import { normalizeLeagueScoreboard, resetLeagueScoreboardCounts } from "../lib/league-scoreboard.mjs";
 
@@ -175,6 +179,7 @@ function sectionEnabled(section: Section, settings: Settings) {
 }
 
 type LeagueDraftState = {
+  firstPickSide: "ORDER" | "CHAOS";
   bluePickOrder: number[];
   redPickOrder: number[];
   currentStep: number;
@@ -758,8 +763,8 @@ function createInitialState(): ProductionState {
       playerCardEnabled: true,
       sponsorWidgetEnabled: true,
       broadcastSetupEnabled: true,
-      lobbyScene: "vs",
-      statsSceneBackground: "transparent",
+      lobbyScene: "stats",
+      statsSceneBackground: "team-split",
       autoAcceptLiveResults: false,
       lastLiveResultProposalKey: "",
       debugActivePlayerEnabled: false,
@@ -784,12 +789,12 @@ function createInitialState(): ProductionState {
       scoreboardHeader: "",
       scoreboard: normalizeLeagueScoreboard() as LeagueScoreboardSettings,
       bestOf: "Bo3",
-      draftMode: "standard",
+      draftMode: "fearless",
       currentGame: 1,
       blueTeam: "team1",
       autoAcceptLiveResults: false,
       sponsorWidgetEnabled: true,
-      vsScreenEnabled: false,
+      vsScreenEnabled: true,
       debugLiveEnabled: false,
       debugLiveScenario: "live",
       results: createLeagueResultGames(),
@@ -1134,8 +1139,8 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       playerCardEnabled: booleanValue(savedRocketLeague.playerCardEnabled, true),
       sponsorWidgetEnabled: booleanValue(savedRocketLeague.sponsorWidgetEnabled, true),
       broadcastSetupEnabled: booleanValue(savedRocketLeague.broadcastSetupEnabled, true),
-      lobbyScene: savedRocketLeague.lobbyScene === "stats" ? "stats" : "vs",
-      statsSceneBackground: savedRocketLeague.statsSceneBackground === "team-split" ? "team-split" : "transparent",
+      lobbyScene: savedRocketLeague.lobbyScene === "vs" ? "vs" : "stats",
+      statsSceneBackground: savedRocketLeague.statsSceneBackground === "transparent" ? "transparent" : "team-split",
       autoAcceptLiveResults: booleanValue(savedRocketLeague.autoAcceptLiveResults, false),
       lastLiveResultProposalKey: stringValue(savedRocketLeague.lastLiveResultProposalKey),
       debugActivePlayerEnabled: booleanValue(savedRocketLeague.debugActivePlayerEnabled, false),
@@ -1167,12 +1172,12 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       ...savedLeague,
       scoreboard: normalizeLeagueScoreboard(savedLeague.scoreboard) as LeagueScoreboardSettings,
       bestOf: savedLeagueBestOf,
-      draftMode: savedLeague.draftMode === "fearless" ? "fearless" : savedLeague.draftMode === "online" ? "online" : "standard",
+      draftMode: savedLeague.draftMode === "standard" ? "standard" : savedLeague.draftMode === "online" ? "online" : "fearless",
       currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
       blueTeam: savedLeague.blueTeam === "team2" ? "team2" : "team1",
       autoAcceptLiveResults: booleanValue(savedLeague.autoAcceptLiveResults, false),
       sponsorWidgetEnabled: savedLeague.sponsorWidgetEnabled !== false,
-      vsScreenEnabled: Boolean(savedLeague.vsScreenEnabled),
+      vsScreenEnabled: booleanValue(savedLeague.vsScreenEnabled, true),
       debugLiveEnabled: Boolean(savedLeague.debugLiveEnabled),
       debugLiveScenario: ["live", "finished", "stale"].includes(savedLeague.debugLiveScenario ?? "")
         ? savedLeague.debugLiveScenario!
@@ -1911,8 +1916,8 @@ export default function Home() {
   const [state, setState] = useState<ProductionState>(() => createInitialState());
   const [activeSection, setActiveSection] = useState<Section>("welcome");
   const [generalTab, setGeneralTab] = useState<"talent" | "segments">("talent");
-  const [valorantTab, setValorantTab] = useState<"results" | "pickBans" | "mapPool" | "overlay">("results");
-  const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "overlay" | "admin" | "debug">("results");
+  const [valorantTab, setValorantTab] = useState<"results" | "pickBans" | "mapPool" | "controls" | "overlay">("results");
+  const [rocketLeagueTab, setRocketLeagueTab] = useState<"results" | "controls" | "overlay" | "admin" | "debug">("results");
   const [leagueTab, setLeagueTab] = useState<"results" | "draft" | "controls" | "live" | "overlay">("results");
   const [leagueChampion, setLeagueChampion] = useState("");
   const [leagueCatalog, setLeagueCatalog] = useState<Array<{ id: string; name: string }>>(() => [...DEFAULT_LEAGUE_CHAMPIONS]);
@@ -2583,11 +2588,6 @@ export default function Home() {
   const leagueHeader = resolveScoreboardHeader(state.leagueOfLegends.scoreboardHeader, state.general.eventName);
 
   useEffect(() => {
-    if (!hydrated || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
-    saveLeagueResults();
-  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id]);
-
-  useEffect(() => {
     if (!hydrated) return;
     if (!isPrimaryTab) {
       setLiveSync("standby");
@@ -3063,7 +3063,7 @@ export default function Home() {
     let failure = "";
     setState((current) => {
       const unavailable = current.leagueOfLegends.draftMode === "fearless"
-        ? fearlessChampionSet(current.leagueOfLegends.confirmedGames)
+        ? fearlessChampionSet(current.leagueOfLegends.confirmedGames, current.leagueOfLegends.bestOf, current.leagueOfLegends.currentGame)
         : new Set();
       const result = lockLeagueDraftSelection(current.leagueOfLegends.draft, leagueChampion, unavailable, current.leagueOfLegends.draftMode);
       if (!result.changed) {
@@ -3142,6 +3142,11 @@ export default function Home() {
 
   function saveLeagueResults() {
     if (!leaguePendingResults) return;
+    const fearlessError = leagueFearlessResultError(state.leagueOfLegends);
+    if (fearlessError) {
+      notify(fearlessError);
+      return;
+    }
     setState((current) => {
       const slots = draftSlots(current.leagueOfLegends.draft, current.leagueOfLegends.draftMode);
       const currentDraftHasPicks = [...slots.bluePicks, ...slots.redPicks].some(Boolean);
@@ -3185,6 +3190,11 @@ export default function Home() {
     });
     notify("League of Legends results updated");
   }
+
+  useEffect(() => {
+    if (!hydrated || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
+    saveLeagueResults();
+  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id]);
 
   function resetLeagueSeries() {
     if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool.")) return;
@@ -3881,7 +3891,7 @@ export default function Home() {
       request.controller?.abort();
       request.controller = null;
     });
-    const fresh = createInitialState();
+    const fresh = clearProductionData(stateRef.current, createInitialState()) as ProductionState;
     hydratedStateRef.current = fresh;
     stateRef.current = fresh;
     outputActivatedRef.current = true;
@@ -3891,7 +3901,7 @@ export default function Home() {
     setSyncingMatch(null);
     setActiveSection("welcome");
     setResetConfirmationOpen(false);
-    notify("Local production draft reset");
+    notify("Entered production data cleared; settings preserved");
   }
 
   async function syncMatch(matchIndex: number) {
@@ -4013,6 +4023,25 @@ export default function Home() {
     setActiveSection(sectionEnabled(section, state.settings) ? section : "welcome");
   }
 
+  function renderProductionDefaults() {
+    return <section className="panel-card settings-card" aria-label="Production defaults">
+      <div className="settings-card-copy"><h2>Production defaults</h2><p>Apply a preset to all three games. Match data and entered statistics are preserved.</p></div>
+      <div className="settings-rows">
+        {([true, false] as const).map(conferences => {
+          const aligned = matchesProductionDefaults(state, conferences);
+          const label = conferences ? "Gaming Oasis Conferences production Defaults" : "Standard (Recommended Default)";
+          return <div className="setting-row" key={label}>
+            <div><strong>{label}</strong><p role="status">{aligned ? "✓ Current settings match" : "Current settings differ"}</p></div>
+            <button className="button secondary" type="button" aria-label={`Apply ${label}`} disabled={aligned} onClick={() => {
+              setState(current => applyProductionDefaults(current, conferences) as ProductionState);
+              notify(conferences ? "Conference production defaults applied" : "Recommended defaults applied");
+            }}>{aligned ? "Applied" : "Apply defaults"}</button>
+          </div>;
+        })}
+      </div>
+    </section>;
+  }
+
   function renderWelcome() {
     const readiness = [
       state.settings.generalInfoEnabled ? Boolean(state.general.eventName) : null,
@@ -4030,6 +4059,7 @@ export default function Home() {
           description="Prepare the show, verify the required data, and export the vMix files from one local workspace."
         />
 
+        {renderProductionDefaults()}
         <section className="welcome-overview panel-card">
           <div className="overview-heading">
             <div><h2>Show setup</h2><p>Complete the items needed for this broadcast.</p></div>
@@ -4348,7 +4378,8 @@ export default function Home() {
           <button role="tab" aria-selected={valorantTab === "results"} tabIndex={valorantTab === "results" ? 0 : -1} className={valorantTab === "results" ? "active" : ""} onClick={() => setValorantTab("results")}>Results & setup</button>
           <button role="tab" aria-selected={valorantTab === "pickBans"} tabIndex={valorantTab === "pickBans" ? 0 : -1} className={valorantTab === "pickBans" ? "active" : ""} onClick={() => setValorantTab("pickBans")}>Pick / ban</button>
           <button role="tab" aria-selected={valorantTab === "mapPool"} tabIndex={valorantTab === "mapPool" ? 0 : -1} className={valorantTab === "mapPool" ? "active" : ""} onClick={() => setValorantTab("mapPool")}>Map pool</button>
-          <button role="tab" aria-selected={valorantTab === "overlay"} tabIndex={valorantTab === "overlay" ? 0 : -1} className={valorantTab === "overlay" ? "active" : ""} onClick={() => setValorantTab("overlay")}>Browser overlay</button>
+          <button role="tab" aria-selected={valorantTab === "controls"} tabIndex={valorantTab === "controls" ? 0 : -1} className={valorantTab === "controls" ? "active" : ""} onClick={() => setValorantTab("controls")}>Overlay controls</button>
+          <button role="tab" aria-selected={valorantTab === "overlay"} tabIndex={valorantTab === "overlay" ? 0 : -1} className={valorantTab === "overlay" ? "active" : ""} onClick={() => setValorantTab("overlay")}>Browser overlay links</button>
         </div>
 
         {valorantTab === "results" ? (
@@ -4488,13 +4519,16 @@ export default function Home() {
             </div>
           </section>
         ) : (
-          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="Browser overlay">
+          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label={valorantTab === "controls" ? "Overlay controls" : "Browser overlay"}>
+            {valorantTab === "overlay" ? <>
             <div className="card-title-row"><div><h2>VALORANT browser overlay</h2><p>Use this transparent PSD-aligned source as a vMix browser input.</p></div></div>
             <div className="browser-overlay-details">
               <div><span>Canvas</span><strong>1920 × 1080</strong><small>Transparent background</small></div>
               <div><span>Data</span><strong>Match 1</strong><small>Saved VALORANT results</small></div>
               <div><span>Refresh</span><strong>Automatic</strong><small>Updates twice per second</small></div>
             </div>
+            </> : <>
+            <div className="card-title-row"><h2>VALORANT overlay controls</h2></div>
             <div className="browser-overlay-widget-controls" aria-label="Overlay widget visibility">
               <div className="browser-overlay-widget-toggle">
                 <div><strong>Map widget</strong><small>Show the three-map series strip.</small></div>
@@ -4505,6 +4539,8 @@ export default function Home() {
                 <label className="switch large"><input aria-label="Enable VALORANT sponsor widget" type="checkbox" checked={state.valorant.sponsorWidgetEnabled} onChange={(event) => updateValorant({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
             </div>
+            </>}
+            {valorantTab === "overlay" ? <>
             <label className="field browser-overlay-url"><span className="field-label">Scoreboard URL</span><input readOnly value={VALORANT_OVERLAY_URL} /></label>
             <div className="browser-overlay-actions">
               <button className="button secondary" type="button" onClick={copyValorantOverlayLink}>Copy link</button>
@@ -4515,6 +4551,7 @@ export default function Home() {
               <button className="button secondary" type="button" onClick={copyValorantVsOverlayLink}>Copy VS link</button>
               <button className="button primary" type="button" onClick={openValorantVsOverlay}>Open VS overlay</button>
             </div>
+            </> : null}
           </section>
         )}
       </div>
@@ -4552,7 +4589,8 @@ export default function Home() {
           <button role="tab" aria-selected={rocketLeagueTab === "results"} tabIndex={rocketLeagueTab === "results" ? 0 : -1} className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
           <button role="tab" aria-selected={rocketLeagueTab === "admin"} tabIndex={rocketLeagueTab === "admin" ? 0 : -1} className={rocketLeagueTab === "admin" ? "active" : ""} onClick={() => setRocketLeagueTab("admin")}>Admin control</button>
           <button role="tab" aria-selected={rocketLeagueTab === "debug"} tabIndex={rocketLeagueTab === "debug" ? 0 : -1} className={rocketLeagueTab === "debug" ? "active" : ""} onClick={() => setRocketLeagueTab("debug")}>Debug</button>
-          <button role="tab" aria-selected={rocketLeagueTab === "overlay"} tabIndex={rocketLeagueTab === "overlay" ? 0 : -1} className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay</button>
+          <button role="tab" aria-selected={rocketLeagueTab === "controls"} tabIndex={rocketLeagueTab === "controls" ? 0 : -1} className={rocketLeagueTab === "controls" ? "active" : ""} onClick={() => setRocketLeagueTab("controls")}>Overlay controls</button>
+          <button role="tab" aria-selected={rocketLeagueTab === "overlay"} tabIndex={rocketLeagueTab === "overlay" ? 0 : -1} className={rocketLeagueTab === "overlay" ? "active" : ""} onClick={() => setRocketLeagueTab("overlay")}>Browser overlay links</button>
         </div>
 
         {rocketLeagueTab === "results" ? (
@@ -4627,8 +4665,9 @@ export default function Home() {
 
             </div>
           </div>
-        ) : rocketLeagueTab === "overlay" ? (
-          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="Browser overlay">
+        ) : rocketLeagueTab === "overlay" || rocketLeagueTab === "controls" ? (
+          <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label={rocketLeagueTab === "controls" ? "Overlay controls" : "Browser overlay"}>
+            {rocketLeagueTab === "overlay" ? <>
             <div className="card-title-row"><div><h2>Rocket League browser overlay</h2><p>Use this transparent PSD-aligned source as a vMix browser input. League colors and logo backgrounds come from Match 1 / Team Info.</p></div></div>
             <div className="browser-overlay-details">
               <div><span>Canvas</span><strong>1920 × 1080</strong><small>Transparent background</small></div>
@@ -4636,6 +4675,8 @@ export default function Home() {
               <div><span>Live feed</span><strong>Game Data API</strong><small>Clock, score, OT, player card, activities when Debug is off. Auto broadcast camera uses Director cam, then hides the full native HUD at countdown start and restores it when the match ends. Manual fallback: press <strong>9</strong>, then <strong>H</strong> twice while spectating.</small></div>
               <div><span>Refresh</span><strong>Automatic</strong><small>Updates four times per second</small></div>
             </div>
+            </> : <>
+            <div className="card-title-row"><h2>Rocket League overlay controls</h2></div>
             <section className="rl-side-assignment" aria-label="In-game team assignment">
               <div className="card-title-row">
                 <div>
@@ -4695,6 +4736,8 @@ export default function Home() {
                 <label className="switch large"><input aria-label="Enable Rocket League auto broadcast camera" type="checkbox" checked={state.rocketLeague.broadcastSetupEnabled} onChange={(event) => updateRocketLeague({ broadcastSetupEnabled: event.target.checked })} /><span /></label>
               </div>
             </div>
+            </>}
+            {rocketLeagueTab === "overlay" ? <>
             <label className="field browser-overlay-url"><span className="field-label">Scoreboard URL</span><input readOnly value={ROCKET_LEAGUE_OVERLAY_URL} /></label>
             <div className="browser-overlay-actions">
               <button className="button secondary" type="button" onClick={copyRocketLeagueOverlayLink}>Copy link</button>
@@ -4710,6 +4753,7 @@ export default function Home() {
               <button className="button secondary" type="button" onClick={copyRocketLeagueStatsOverlayLink}>Copy stats link</button>
               <button className="button primary" type="button" onClick={openRocketLeagueStatsOverlay}>Open stats overlay</button>
             </div>
+            </> : null}
           </section>
         ) : rocketLeagueTab === "admin" ? (
           <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label="Rocket League admin control">
@@ -4802,7 +4846,7 @@ export default function Home() {
                     <div><strong>Replay</strong></div>
                     <label className="switch large"><input aria-label="Debug replay" type="checkbox" checked={state.rocketLeague.debugLive.isReplay} onChange={(event) => updateDebugLive({ isReplay: event.target.checked })} /><span /></label>
                   </div>
-                  <p style={{ margin: "0 0 8px", opacity: 0.85 }}>Has game off shows the lobby scene on the scoreboard overlay (VS or post-match stats from the Browser overlay toggle). Replay on synthesizes a sample scorer info card from the target player for overlay preview. Dedicated VS and stats URLs are also available under Browser overlay.</p>
+                  <p style={{ margin: "0 0 8px", opacity: 0.85 }}>Has game off shows the lobby scene on the scoreboard overlay (VS or post-match stats from the Overlay controls toggle). Replay on synthesizes a sample scorer info card from the target player for overlay preview. Dedicated VS and stats URLs are also available under Browser overlay links.</p>
                   <Field label="Clock (seconds)" value={String(state.rocketLeague.debugLive.timeSeconds)} onChange={(value) => updateDebugLive({ timeSeconds: Number.parseInt(value || "0", 10) || 0 })} placeholder="300" />
                   <Field label="Score one" value={String(state.rocketLeague.debugLive.scoreOne)} onChange={(value) => updateDebugLive({ scoreOne: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
                   <Field label="Score two" value={String(state.rocketLeague.debugLive.scoreTwo)} onChange={(value) => updateDebugLive({ scoreTwo: Number.parseInt(value || "0", 10) || 0 })} placeholder="0" />
@@ -4867,11 +4911,11 @@ export default function Home() {
     const teamTwo = resolveTeam(state.general.matches[0].team2);
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
     const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
-    const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode);
+    const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode, state.leagueOfLegends.draft.firstPickSide);
     const activeStep = draftSteps[state.leagueOfLegends.draft.currentStep];
     const picks = draftSlots(state.leagueOfLegends.draft, state.leagueOfLegends.draftMode);
     const unavailable = state.leagueOfLegends.draftMode === "fearless"
-      ? fearlessChampionSet(leagueConfirmedGames)
+      ? fearlessChampionSet(leagueConfirmedGames, state.leagueOfLegends.bestOf, state.leagueOfLegends.currentGame)
       : new Set<string>();
     const used = new Set(state.leagueOfLegends.draft.selections.filter((champion, index) => champion && !(state.leagueOfLegends.draftMode === "online" && activeStep?.action === "ban" && draftSteps[index].side !== activeStep.side)));
     const livePlayers = Array.isArray(leagueLivePreview?.players) ? leagueLivePreview.players : [];
@@ -4907,7 +4951,7 @@ export default function Home() {
           <button className={leagueTab === "draft" ? "active" : ""} onClick={() => setLeagueTab("draft")}>Draft</button>
           <button className={leagueTab === "controls" ? "active" : ""} onClick={() => setLeagueTab("controls")}>Overlay controls</button>
           <button className={leagueTab === "live" ? "active" : ""} onClick={() => setLeagueTab("live")}>Debug</button>
-          <button className={leagueTab === "overlay" ? "active" : ""} onClick={() => setLeagueTab("overlay")}>Browser overlay</button>
+          <button className={leagueTab === "overlay" ? "active" : ""} onClick={() => setLeagueTab("overlay")}>Browser overlay links</button>
         </div>
 
         {leagueTab === "controls" ? (
@@ -5063,8 +5107,9 @@ export default function Home() {
                   />
                   <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
                   <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
-                  <label className="field"><span className="field-label">Current game · driven by saved results</span><input readOnly value={`Game ${state.leagueOfLegends.currentGame}`} /></label>
+                  <label className="field"><span className="field-label">First pick side</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} value={state.leagueOfLegends.draft.firstPickSide} onChange={(event) => updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, firstPickSide: event.target.value as LeagueDraftState["firstPickSide"] } })}><option value="ORDER">Blue · {blueTeam.name || "Blue team"}</option><option value="CHAOS">Red · {redTeam.name || "Red team"}</option></select></label>
                 </div>
+                {state.leagueOfLegends.bestOf !== "Bo1" && state.leagueOfLegends.draftMode !== "fearless" ? <p role="alert">Conference setup mismatch: select Global fearless before starting this series.</p> : null}
                 <div className="valorant-toggle-list">
                   <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
                   <GameFlipSidesControl gameName="League of Legends" checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueOfLegends({ blueTeam: checked ? "team2" : "team1" })} />
@@ -5361,6 +5406,7 @@ export default function Home() {
     return (
       <div className="page-stack settings-page">
         <SectionHeading eyebrow="System configuration" title="Settings" description="Control sidebar visibility and manage this workstation's local draft." />
+        {renderProductionDefaults()}
         <section className="panel-card settings-card">
           <div className="settings-card-copy"><div><h2>Sidebar visibility</h2><p>Choose which workspaces appear in the sidebar. Hiding one does not change its data or JSON output.</p></div></div>
           <div className="settings-rows">
@@ -5426,6 +5472,7 @@ export default function Home() {
         <div className="content-area">
           {visibleSection === "welcome" ? renderWelcome() : null}
           {visibleSection === "general" || visibleSection === "matches" ? renderGeneral() : null}
+          <TwitchControls visible={visibleSection === "general" && generalTab === "talent"} enabled={hydrated && isPrimaryTab} />
           {visibleSection === "rocketLeague" ? renderRocketLeague() : null}
           {visibleSection === "valorant" ? renderValorant() : null}
           {visibleSection === "leagueOfLegends" ? renderLeagueOfLegends() : null}
@@ -5455,8 +5502,8 @@ export default function Home() {
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setResetConfirmationOpen(false); }}>
           <div ref={resetModalRef} className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="reset-modal-title" aria-describedby="reset-modal-description">
             <span className="eyebrow">Confirm reset</span>
-            <h2 id="reset-modal-title">Reset this workstation?</h2>
-            <p id="reset-modal-description">This clears the local draft, match data, results, picks and bans, sponsors, and all draw data. This cannot be undone.</p>
+            <h2 id="reset-modal-title">Clear entered production data?</h2>
+            <p id="reset-modal-description">This clears event and team details, results, picks and bans, manual statistics and active timers, entered sponsors, and all draw data. Your production settings, sidebar preferences, and map artwork configuration stay as they are. This cannot be undone.</p>
             <div className="confirmation-modal-actions">
               <button className="button secondary" type="button" onClick={() => setResetConfirmationOpen(false)}>Cancel</button>
               <button className="button danger" type="button" onClick={resetLocalData}>Reset local data</button>

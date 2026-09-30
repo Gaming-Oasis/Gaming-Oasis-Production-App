@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { applyProductionDefaults } from "../lib/production-defaults.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { calculateRocketLeagueSeries, formatRocketLeagueScore, proposeRocketLeagueLiveResult } from "../lib/rocket-league.mjs";
 import { buildRocketLeagueOverlayState, resolveRocketLeagueLiveTeamColor, resolveRocketLeagueSideTeams } from "../lib/rocket-league-live.mjs";
@@ -2360,8 +2361,8 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /sponsorWidgetEnabled: true/);
   assert.match(page, /\/overlays\/valorant/);
   assert.match(page, /\/overlays\/rocket-league/);
-  assert.match(page, /useState<"results" \| "pickBans" \| "mapPool" \| "overlay">/);
-  assert.match(page, /useState<"results" \| "overlay" \| "admin" \| "debug">\("results"\)/);
+  assert.match(page, /useState<"results" \| "pickBans" \| "mapPool" \| "controls" \| "overlay">/);
+  assert.match(page, /useState<"results" \| "controls" \| "overlay" \| "admin" \| "debug">\("results"\)/);
   assert.match(page, /setValorantTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("overlay"\)/);
   assert.match(page, /setRocketLeagueTab\("debug"\)/);
@@ -2438,7 +2439,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /overlayRightTeam/);
   assert.match(page, /In-game \{overlayLeftGameSide\}/);
   assert.match(page, /In-game \{overlayRightGameSide\}/);
-  assert.equal((page.match(/aria-label="Browser overlay"/g) ?? []).length, 3);
+  assert.equal((page.match(/"Browser overlay"/g) ?? []).length, 3);
   assert.match(page, /aria-label="Rocket League debug"/);
   assert.match(page, /valorant-reference-ban-control/);
   assert.match(page, /Ban Team A/);
@@ -2454,7 +2455,8 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/Update results/g) ?? []).length, 3);
   assert.equal((page.match(/Reset series/g) ?? []).length, 5);
   assert.equal((page.match(/>Results & setup</g) ?? []).length, 3);
-  assert.equal((page.match(/>Browser overlay</g) ?? []).length, 3);
+  assert.equal((page.match(/>Browser overlay links</g) ?? []).length, 3);
+  assert.equal((page.match(/>Overlay controls</g) ?? []).length, 3);
   assert.equal((page.match(/>Draft</g) ?? []).length, 1);
   assert.equal((page.match(/>Pick \/ ban</g) ?? []).length, 1);
   assert.equal((page.match(/setLeagueTab\("live"\)\}>Debug</g) ?? []).length, 1);
@@ -2524,7 +2526,6 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /League of Legends debug scenario/);
   assert.match(page, /function saveLeagueResults\(\)/);
   assert.match(page, /Saved winners drive the current game, series score, and fearless history/);
-  assert.match(page, /Current game · driven by saved results/);
   assert.match(page, /aria-pressed=\{result\.winner === "team1"\}/);
   assert.match(page, /gameIndex > leagueDraftProgress\.completedGames/);
   assert.match(page, /disabled=\{locked\}/);
@@ -3789,8 +3790,8 @@ test("serves normalized League overlay state without changing the six JSON files
     assert.equal(payload.live.connection.connected, false);
     assert.equal(payload.playerBoardEnabled, false);
     assert.equal(payload.leagueLogo, "/gaming-oasis-favicon.png");
-    assert.equal(payload.scoreboard.hideScoreboard, true);
-    assert.equal(payload.scoreboard.hideCountdowns, true);
+    assert.equal(payload.scoreboard.hideScoreboard, false);
+    assert.equal(payload.scoreboard.hideCountdowns, false);
     assert.deepEqual(payload.draft.bluePickOrder, [0, 1, 2, 3, 4]);
     assert.deepEqual(installed.splice(0).sort(), files.map((file) => file.filename).sort());
     for (const order of [[2, 1, 0, 3, 4], [2, 1, 4, 3, 0], [0, 1, 2, 3, 4]]) {
@@ -3806,6 +3807,18 @@ test("serves normalized League overlay state without changing the six JSON files
       const displayed = await (await fetch(`${writer.url}/api/overlays/league-of-legends`)).json();
       assert.deepEqual(displayed.draft.bluePickOrder, order);
       assert.deepEqual(displayed.scoreboard, leagueOfLegends.scoreboard);
+    }
+    for (const conferences of [true, false, true]) {
+      const preset = applyProductionDefaults({ rocketLeague: {}, valorant: {}, leagueOfLegends }, conferences);
+      leagueOfLegends.scoreboard = preset.leagueOfLegends.scoreboard;
+      leagueOfLegends.vsScreenEnabled = preset.leagueOfLegends.vsScreenEnabled;
+      const saved = await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } });
+      assert.equal(saved.status, 200);
+      assert.deepEqual(installed.splice(0).sort(), files.map(file => file.filename).sort());
+      const displayed = await (await fetch(`${writer.url}/api/overlays/league-of-legends`)).json();
+      assert.equal(displayed.scoreboard.hideCountdowns, conferences);
+      assert.equal(displayed.scoreboard.goldSource, "disabled");
+      assert.equal(displayed.vsScreenEnabled, !conferences);
     }
     leagueOfLegends.scoreboard.stats.grubs.source = "api";
     assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends } })).status, 422);

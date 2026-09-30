@@ -4,18 +4,18 @@ import { normalizeLeagueScoreboard, isLeagueScoreboard, resetLeagueScoreboardCou
 import { buildLeagueOverlayState, createLeagueDebugFeed, createLeagueDraftState } from "../lib/league-of-legends.mjs";
 import { isLeagueOverlayData } from "../lib/league-overlay.mjs";
 
-test("League scoreboard defaults hide the scoreboard and countdowns and disable unreliable API choices", () => {
+test("League scoreboard defaults show the scoreboard and countdowns with manual statistics and a disabled clock", () => {
   const settings = normalizeLeagueScoreboard();
-  assert.equal(settings.hideScoreboard, true);
-  assert.equal(settings.hideCountdowns, true);
+  assert.equal(settings.hideScoreboard, false);
+  assert.equal(settings.hideCountdowns, false);
   assert.equal(settings.goldSource, "disabled");
   assert.equal(settings.stats.gold, undefined);
   const unsupportedGold = { ...settings, goldSource: "api" };
   assert.equal(isLeagueScoreboard(unsupportedGold), false);
   assert.equal(normalizeLeagueScoreboard(unsupportedGold).goldSource, "disabled");
-  assert.equal(settings.clockSource, "api");
-  assert.equal(settings.stats.kills.source, "api");
-  assert.equal(settings.stats.towers.source, "api");
+  assert.equal(settings.clockSource, "disabled");
+  assert.equal(settings.stats.kills.source, "manual");
+  assert.equal(settings.stats.towers.source, "manual");
   for (const key of ["grubs", "barons", "dragons"]) {
     assert.deepEqual(settings.stats[key], { source: "manual", team1: 0, team2: 0 });
     const invalid = structuredClone(settings);
@@ -26,7 +26,7 @@ test("League scoreboard defaults hide the scoreboard and countdowns and disable 
 });
 
 test("manual values survive reloads and API outages, follow side flips, and reset for new games", () => {
-  const settings = normalizeLeagueScoreboard({ hideScoreboard: false, hideCountdowns: false, goldSource: "disabled", clockSource: "disabled", stats: { grubs: { team1: 3, team2: 1 }, kills: { source: "manual", team1: 60, team2: 9 } } });
+  const settings = normalizeLeagueScoreboard({ hideScoreboard: false, hideCountdowns: false, goldSource: "disabled", clockSource: "disabled", stats: { towers: { source: "api" }, grubs: { team1: 3, team2: 1 }, kills: { source: "manual", team1: 60, team2: 9 } } });
   const reloaded = normalizeLeagueScoreboard(JSON.parse(JSON.stringify(settings)));
   assert.deepEqual(reloaded, settings);
   const live = createLeagueDebugFeed("live");
@@ -46,7 +46,7 @@ test("manual values survive reloads and API outages, follow side flips, and rese
 });
 
 test("manual controls validate finite bounded whole counts and retain API kills", () => {
-  const settings = normalizeLeagueScoreboard({ stats: { grubs: { team1: -1, team2: 3.8 }, barons: { team1: Infinity, team2: "2" }, dragons: { team1: 8 } } });
+  const settings = normalizeLeagueScoreboard({ stats: { kills: { source: "api" }, grubs: { team1: -1, team2: 3.8 }, barons: { team1: Infinity, team2: "2" }, dragons: { team1: 8 } } });
   assert.equal(settings.stats.grubs.team1, 0);
   assert.equal(settings.stats.grubs.team2, 3);
   assert.equal(settings.stats.barons.team1, 0);
@@ -148,7 +148,7 @@ test("dragon payload validation rejects invalid fields and normalization ignores
   assert.equal(isLeagueScoreboard(normalizeLeagueScoreboard(bad)), true);
 });
 
-test("Baron activation starts a persisted three-minute timer without changing kill counts", () => {
+test("Baron activation increments the count and starts a persisted three-minute timer", () => {
   const started = 1_800_000_000_000;
   const settings = setLeagueBaronActive(normalizeLeagueScoreboard({ stats: { barons: { team1: 2 } } }), "team1", true, started);
   const buff = settings.baronBuffs.team1;
@@ -159,7 +159,7 @@ test("Baron activation starts a persisted three-minute timer without changing ki
   assert.equal(leagueBaronSecondsRemaining(buff, started + 179_001), 1);
   assert.equal(leagueBaronSecondsRemaining(buff, started + 180_000), 0);
   assert.equal(leagueBaronSecondsRemaining(buff, started + 300_000), 0);
-  assert.equal(settings.stats.barons.team1, 2);
+  assert.equal(settings.stats.barons.team1, 3);
   const reloaded = normalizeLeagueScoreboard(JSON.parse(JSON.stringify(settings)));
   assert.deepEqual(reloaded, settings);
   assert.equal(leagueBaronSecondsRemaining(reloaded.baronBuffs[leagueScoreboardTeam("CHAOS", "team2")], started + 45_000), 135);
@@ -171,12 +171,30 @@ test("Baron deactivation, ownership changes, reactivation, and game reset clear 
   let settings = setLeagueBaronActive(normalizeLeagueScoreboard(), "team1", true, started);
   settings = setLeagueBaronActive(settings, "team2", true, started + 10_000);
   assert.equal(settings.baronBuffs.team1.expiresAt, null);
+  assert.equal(settings.stats.barons.team1, 1);
+  assert.equal(settings.stats.barons.team2, 1);
   assert.equal(leagueBaronSecondsRemaining(settings.baronBuffs.team2, started + 10_000), 180);
   settings = setLeagueBaronActive(settings, "team2", false, started + 11_000);
   assert.equal(leagueBaronSecondsRemaining(settings.baronBuffs.team2, started + 11_000), 0);
+  assert.equal(settings.stats.barons.team2, 1);
   settings = setLeagueBaronActive(settings, "team2", true, started + 20_000);
   assert.equal(settings.baronBuffs.team2.expiresAt, started + 200_000);
+  assert.equal(settings.stats.barons.team2, 2);
   assert.deepEqual(resetLeagueScoreboardCounts(settings).baronBuffs, { team1: { expiresAt: null }, team2: { expiresAt: null } });
+});
+
+test("Baron counts increment after expiry, use manual overrides, and stay within bounds", () => {
+  const started = 1_800_000_000_000;
+  let settings = setLeagueBaronActive(normalizeLeagueScoreboard(), "team1", true, started);
+  settings = setLeagueBaronActive(settings, "team1", true, started + 1_000);
+  assert.equal(settings.stats.barons.team1, 1);
+  settings.stats.barons.team1 = 5;
+  settings = setLeagueBaronActive(settings, "team1", true, started + 181_000);
+  assert.equal(settings.stats.barons.team1, 6);
+  settings.stats.barons.team1 = 99;
+  settings = setLeagueBaronActive(settings, "team1", true, started + 361_000);
+  assert.equal(settings.stats.barons.team1, 99);
+  assert.equal(isLeagueScoreboard(settings), true);
 });
 
 test("Baron timers default inactive for old drafts and reject malformed expiry values", () => {
