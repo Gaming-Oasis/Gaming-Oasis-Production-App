@@ -7,7 +7,7 @@ test("presets update all production controls while preserving show data and manu
   const state = {
     general: { eventName: "Live show" },
     settings: { drawShowEnabled: false },
-    rocketLeague: { games: [{ team1: 2 }], playerCardEnabled: false },
+    rocketLeague: { games: [{ team1: 2 }], playerCardEnabled: false, sceneMode: "stats" },
     valorant: { bestOf: "Bo5", mapWidgetEnabled: false },
     leagueOfLegends: { scoreboard: normalizeLeagueScoreboard({ stats: { kills: { source: "api", team1: 12 } } }), currentGame: 2 },
   };
@@ -15,7 +15,8 @@ test("presets update all production controls while preserving show data and manu
   const conference = applyProductionDefaults(state, true);
   assert.equal(matchesProductionDefaults(conference, true), true);
   assert.equal(conference.rocketLeague.lobbyScene, "stats");
-  assert.equal(conference.rocketLeague.statsSceneBackground, "team-split");
+  assert.equal(conference.rocketLeague.statsSceneBackground, "transparent");
+  assert.equal(conference.rocketLeague.sceneMode, "auto");
   assert.equal(conference.rocketLeague.broadcastSetupEnabled, true);
   assert.equal(conference.rocketLeague.sponsorWidgetEnabled, true);
   assert.equal(conference.rocketLeague.playerCardEnabled, true);
@@ -30,6 +31,12 @@ test("presets update all production controls while preserving show data and manu
   assert.equal(conference.rocketLeague.games, state.rocketLeague.games);
   const reloaded = JSON.parse(JSON.stringify(conference));
   assert.equal(matchesProductionDefaults(reloaded, true), true);
+  reloaded.rocketLeague.sceneMode = "vs";
+  assert.equal(matchesProductionDefaults(reloaded, true), false);
+  reloaded.rocketLeague.sceneMode = "auto";
+  reloaded.rocketLeague.statsSceneBackground = "team-split";
+  assert.equal(matchesProductionDefaults(reloaded, true), false);
+  reloaded.rocketLeague.statsSceneBackground = "transparent";
   reloaded.valorant.mapWidgetEnabled = false;
   assert.equal(matchesProductionDefaults(reloaded, true), false);
   const standard = applyProductionDefaults(conference, false);
@@ -38,6 +45,7 @@ test("presets update all production controls while preserving show data and manu
   assert.equal(matchesProductionDefaults(conference, false), false);
   assert.equal(matchesProductionDefaults(reloaded, false), false);
   assert.equal(standard.leagueOfLegends.vsScreenEnabled, true);
+  assert.equal(standard.rocketLeague.statsSceneBackground, "team-split");
   assert.equal(standard.leagueOfLegends.scoreboard.hideCountdowns, false);
   assert.equal(standard.leagueOfLegends.scoreboard.hideScoreboard, false);
   assert.equal(standard.leagueOfLegends.scoreboard.clockSource, "disabled");
