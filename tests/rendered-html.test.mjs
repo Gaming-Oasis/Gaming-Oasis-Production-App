@@ -605,7 +605,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /showReplayScorer/);
   assert.match(page, /replayCard/);
   assert.match(css, /\.replayScorerCard \{[\s\S]*background: #171717/);
-  assert.match(css, /\.replayScorerSlot \{[\s\S]*top: 75%;[\s\S]*left: 50%;[\s\S]*transform: translate\(-50%, -50%\)/);
+  assert.match(css, /\.replayScorerSlot \{[\s\S]*bottom: calc\(1080px - 930px - \(201 \* 970px \/ 1920\)\);[\s\S]*left: 50%;[\s\S]*transform: translateX\(-50%\)/);
   assert.match(css, /\.replayScorerCard \{[\s\S]*width: 100%;[\s\S]*height: 156px/);
   assert.match(css, /\.replayScorerStats/);
   assert.match(css, /\.replayScorerLogoFrame/);

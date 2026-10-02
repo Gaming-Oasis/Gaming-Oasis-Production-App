@@ -742,18 +742,16 @@
 }
 
 /*
- * Goal Replay scorer plate — center-stage, not activity rail / ActivePlayerCard.
- * Slot anchors the card’s geometric center at 50% × 75% of the 1920×1080 stage
- * (midpoint of the lower half). Animation transform lives on the inner card so it
- * does not fight the slot’s translate(-50%, -50%).
- * Size 560×156 → bottom edge at 810+78 = 888, clears active player (~top 930).
+ * Goal Replay scorer plate — horizontally centered with its bottom edge aligned
+ * to the corner sponsor plate. Animation transform lives on the inner card so
+ * it does not fight the slot’s horizontal centering.
  */
 .replayScorerSlot {
   position: absolute;
   z-index: 8;
-  top: 75%;
+  bottom: calc(1080px - 930px - (201 * 970px / 1920));
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   width: 560px;
   pointer-events: none;
 }

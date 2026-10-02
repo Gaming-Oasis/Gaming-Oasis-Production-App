@@ -1121,7 +1121,7 @@ export default function RocketLeagueOverlay() {
   const winsOne = Number.parseInt(leftTeam?.seriesScore || "0", 10) || 0;
   const winsTwo = Number.parseInt(rightTeam?.seriesScore || "0", 10) || 0;
   const targetPlayer = game?.targetPlayer ?? null;
-  const showActivePlayer = Boolean(overlay?.playerCardEnabled && targetPlayer);
+  const showActivePlayer = Boolean(overlay?.playerCardEnabled && targetPlayer && !game?.isReplay);
   const activePlateColor = targetPlayer && overlay
     ? resolveRocketLeagueLiveTeamColor(
       targetPlayer.team,
