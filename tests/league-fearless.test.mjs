@@ -4,8 +4,29 @@ import {
   createLeagueDraftState, draftSlots, fearlessChampionSet, leagueDraftSteps,
   leagueFearlessResultError, lockLeagueDraftSelection, normalizeLeagueDraft,
   undoLeagueDraftSelection, buildLeagueOverlayState,
+  resolveLeagueFirstSelection,
 } from "../lib/league-of-legends.mjs";
 import { leagueFearlessChampions } from "../lib/league-overlay.mjs";
+
+test("First Selection follows saved losers while preserving operator choices in the same game", () => {
+  const initial = { bestOf: "Bo5", currentGame: 1, confirmedGames: [], firstSelectionTeam: "" };
+  assert.equal(resolveLeagueFirstSelection(initial), "");
+  const chosen = { ...initial, firstSelectionTeam: "team1" };
+  assert.equal(resolveLeagueFirstSelection(JSON.parse(JSON.stringify(chosen))), "team1");
+  // Staged results cannot change the holder before saving.
+  assert.equal(resolveLeagueFirstSelection({ ...chosen, results: [{ winner: "team1" }] }), "team1");
+  const firstSaved = [{ gameNumber: 1, winner: "team1" }];
+  assert.equal(resolveLeagueFirstSelection(chosen, firstSaved), "team2");
+  const gameTwo = { ...chosen, currentGame: 2, confirmedGames: firstSaved, firstSelectionTeam: "team2" };
+  assert.equal(resolveLeagueFirstSelection({ ...gameTwo, blueTeam: "team2" }), "team2");
+  assert.equal(resolveLeagueFirstSelection({ ...gameTwo, firstSelectionTeam: "team1" }), "team1");
+  assert.equal(resolveLeagueFirstSelection({ ...gameTwo, draft: createLeagueDraftState() }), "team2");
+  assert.equal(resolveLeagueFirstSelection(gameTwo, [{ gameNumber: 1, winner: "team2" }]), "team1");
+  assert.equal(resolveLeagueFirstSelection(gameTwo, [...firstSaved, { gameNumber: 2, winner: "team2" }]), "team1");
+  assert.equal(resolveLeagueFirstSelection(gameTwo, []), "");
+  // Older saved workspaces acquire the correct default without a stored choice.
+  assert.equal(resolveLeagueFirstSelection({ ...gameTwo, firstSelectionTeam: undefined }), "team2");
+});
 
 test("Full Fearless accumulates only picks across five games, regardless of first pick side", () => {
   const games = [];

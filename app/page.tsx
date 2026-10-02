@@ -67,6 +67,7 @@ import {
   buildLeagueOverlayState,
   calculateLeagueCurrentGame,
   calculateLeagueSeries,
+  resolveLeagueFirstSelection,
   createLeagueDraftState,
   draftSlots,
   fearlessChampionSet,
@@ -266,6 +267,7 @@ type WriterLiveDataStatus = {
 };
 
 type LeagueOfLegends = {
+  firstSelectionTeam: "" | "team1" | "team2";
   scoreboardHeader: string;
   scoreboard: LeagueScoreboardSettings;
   bestOf: "Bo1" | "Bo3" | "Bo5";
@@ -366,9 +368,9 @@ type RocketLeague = {
   broadcastSetupEnabled: boolean;
   /** Lobby scene on the scoreboard when !hasGame: VS matchup or post-match team stats. */
   lobbyScene: "vs" | "stats";
+  sceneMode: "auto" | "scoreboard" | "vs" | "stats";
   /** Post-match stats scene canvas: transparent OBS plate or VS-style team split. */
   statsSceneBackground: "transparent" | "team-split";
-  sceneMode: "auto" | "scoreboard" | "vs" | "stats";
   autoAcceptLiveResults: boolean;
   lastLiveResultProposalKey: string;
   debugActivePlayerEnabled: boolean;
@@ -767,9 +769,9 @@ function createInitialState(): ProductionState {
       sponsorWidgetEnabled: true,
       broadcastSetupEnabled: true,
       lobbyScene: "stats",
+      sceneMode: "auto",
       statsSceneBackground: "team-split",
       autoAcceptLiveResults: false,
-      sceneMode: "auto",
       lastLiveResultProposalKey: "",
       debugActivePlayerEnabled: false,
       debugActivePlayerScenario: "skyljn3",
@@ -790,6 +792,7 @@ function createInitialState(): ProductionState {
       bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
     },
     leagueOfLegends: {
+      firstSelectionTeam: "",
       scoreboardHeader: "",
       scoreboard: normalizeLeagueScoreboard() as LeagueScoreboardSettings,
       bestOf: "Bo3",
@@ -1143,10 +1146,10 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       playerCardEnabled: booleanValue(savedRocketLeague.playerCardEnabled, true),
       sponsorWidgetEnabled: booleanValue(savedRocketLeague.sponsorWidgetEnabled, true),
       broadcastSetupEnabled: booleanValue(savedRocketLeague.broadcastSetupEnabled, true),
+      sceneMode: normalizeRocketLeagueSceneMode(savedRocketLeague.sceneMode) as RocketLeague["sceneMode"],
       lobbyScene: savedRocketLeague.lobbyScene === "vs" ? "vs" : "stats",
       statsSceneBackground: savedRocketLeague.statsSceneBackground === "transparent" ? "transparent" : "team-split",
       autoAcceptLiveResults: booleanValue(savedRocketLeague.autoAcceptLiveResults, false),
-      sceneMode: normalizeRocketLeagueSceneMode(savedRocketLeague.sceneMode) as RocketLeague["sceneMode"],
       lastLiveResultProposalKey: stringValue(savedRocketLeague.lastLiveResultProposalKey),
       debugActivePlayerEnabled: booleanValue(savedRocketLeague.debugActivePlayerEnabled, false),
       debugActivePlayerScenario: normalizeActivePlayerScenario(
@@ -1179,6 +1182,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       bestOf: savedLeagueBestOf,
       draftMode: savedLeague.draftMode === "standard" ? "standard" : savedLeague.draftMode === "online" ? "online" : "fearless",
       currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
+      firstSelectionTeam: resolveLeagueFirstSelection(savedLeague, savedLeagueConfirmedGames, savedLeagueBestOf),
       blueTeam: savedLeague.blueTeam === "team2" ? "team2" : "team1",
       autoAcceptLiveResults: booleanValue(savedLeague.autoAcceptLiveResults, false),
       sponsorWidgetEnabled: savedLeague.sponsorWidgetEnabled !== false,
@@ -3060,6 +3064,7 @@ export default function Home() {
         ...current.leagueOfLegends,
         bestOf,
         currentGame: calculateLeagueCurrentGame(current.leagueOfLegends.confirmedGames, bestOf),
+        firstSelectionTeam: resolveLeagueFirstSelection(current.leagueOfLegends, current.leagueOfLegends.confirmedGames, bestOf),
       },
     }));
   }
@@ -3183,6 +3188,7 @@ export default function Home() {
           confirmedGames,
           results: leagueResultsFromConfirmedGames(confirmedGames),
           currentGame,
+          firstSelectionTeam: resolveLeagueFirstSelection(current.leagueOfLegends, confirmedGames),
           scoreboard: currentGame !== current.leagueOfLegends.currentGame
             ? resetLeagueScoreboardCounts(current.leagueOfLegends.scoreboard) as LeagueScoreboardSettings
             : current.leagueOfLegends.scoreboard,
@@ -3208,6 +3214,7 @@ export default function Home() {
       leagueOfLegends: {
         ...current.leagueOfLegends,
         currentGame: 1,
+        firstSelectionTeam: "",
         scoreboard: resetLeagueScoreboardCounts(current.leagueOfLegends.scoreboard) as LeagueScoreboardSettings,
         results: createLeagueResultGames(),
         draft: createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds) as LeagueDraftState,
@@ -4682,13 +4689,6 @@ export default function Home() {
             </div>
             </> : <>
             <div className="card-title-row"><h2>Rocket League overlay controls</h2></div>
-            <section className="rl-side-assignment" aria-label="In-game team assignment">
-              <div className="card-title-row">
-                <div>
-                  <h2>In-game team assignment</h2>
-                  <p>Match 1 teams map to scoreboard Left (Blue) and Right (Orange). Swap assignment switches which Match team plays each side.</p>
-                </div>
-              </div>
             <label className="field">
               <span className="field-label">Scene control</span>
               <select value={state.rocketLeague.sceneMode} onChange={(event) => updateRocketLeague({ sceneMode: event.target.value as RocketLeague["sceneMode"] })}>
@@ -4701,6 +4701,13 @@ export default function Home() {
                 ? "Automatic: follows the live match and lobby scene setting."
                 : "Manual: holds this scene until you choose another scene or Automatic."} Applies to the Scoreboard URL. Stats uses the latest available match totals.</small>
             </label>
+            <section className="rl-side-assignment" aria-label="In-game team assignment">
+              <div className="card-title-row">
+                <div>
+                  <h2>In-game team assignment</h2>
+                  <p>Match 1 teams map to scoreboard Left (Blue) and Right (Orange). Swap assignment switches which Match team plays each side.</p>
+                </div>
+              </div>
               <div className="rl-side-assignment-grid">
                 <div className="rl-side-assignment-slot">
                   <span>Left</span>
@@ -4928,6 +4935,26 @@ export default function Home() {
     const teamTwo = resolveTeam(state.general.matches[0].team2);
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
     const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
+    const previousWinner = leagueConfirmedGames.find((game) => game.gameNumber === state.leagueOfLegends.currentGame - 1)?.winner;
+    const firstSelectionTeam = state.leagueOfLegends.firstSelectionTeam === "team1" ? teamOne.name || "Team 1"
+      : state.leagueOfLegends.firstSelectionTeam === "team2" ? teamTwo.name || "Team 2" : null;
+    const previousLoser = previousWinner === "team1" ? "team2" : previousWinner === "team2" ? "team1" : "";
+    const firstSelectionHint = firstSelectionTeam
+      ? `Game ${state.leagueOfLegends.currentGame} First Selection: ${firstSelectionTeam}${previousLoser && state.leagueOfLegends.firstSelectionTeam === previousLoser ? ` (lost Game ${state.leagueOfLegends.currentGame - 1})` : ""}. They choose side or pick order; their opponent chooses the other.`
+      : state.leagueOfLegends.currentGame === 1
+        ? null
+        : "Save the previous game's result to identify the team holding First Selection.";
+    const firstSelectionControl = (
+      <label className="field">
+        <span className="field-label">First Selection team</span>
+        <select disabled={state.leagueOfLegends.draft.currentStep > 0} value={state.leagueOfLegends.firstSelectionTeam} onChange={(event) => updateLeagueOfLegends({ firstSelectionTeam: event.target.value as LeagueOfLegends["firstSelectionTeam"] })}>
+          <option value="" disabled>Select team</option>
+          <option value="team1">{teamOne.name || "Team 1"}</option>
+          <option value="team2">{teamTwo.name || "Team 2"}</option>
+        </select>
+        <span className="field-hint">Later games automatically select the previous game's saved loser. Reset the draft to change this after drafting starts.</span>
+      </label>
+    );
     const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode, state.leagueOfLegends.draft.firstPickSide);
     const activeStep = draftSteps[state.leagueOfLegends.draft.currentStep];
     const picks = draftSlots(state.leagueOfLegends.draft, state.leagueOfLegends.draftMode);
@@ -5012,6 +5039,8 @@ export default function Home() {
           <div className="league-draft-layout">
             <section className="panel-card league-draft-control">
               <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the selected draft format. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div></div>
+              <p className="field-hint" role="status">{firstSelectionHint}</p>
+              {firstSelectionControl}
               {activeStep ? (
                 <div className="league-active-step">
                   <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
@@ -5123,11 +5152,12 @@ export default function Home() {
                     hint={state.leagueOfLegends.scoreboardHeader.trim() ? `On-air: ${leagueHeader}` : "Leave blank to use General Info event name."}
                   />
                   <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
+                  {firstSelectionControl}
                   <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
                   <label className="field"><span className="field-label">First pick side</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} value={state.leagueOfLegends.draft.firstPickSide} onChange={(event) => updateLeagueOfLegends({ draft: { ...state.leagueOfLegends.draft, firstPickSide: event.target.value as LeagueDraftState["firstPickSide"] } })}><option value="ORDER">Blue · {blueTeam.name || "Blue team"}</option><option value="CHAOS">Red · {redTeam.name || "Red team"}</option></select></label>
                 </div>
-                {state.leagueOfLegends.bestOf !== "Bo1" && state.leagueOfLegends.draftMode !== "fearless" ? <p role="alert">Conference setup mismatch: select Global fearless before starting this series.</p> : null}
                 <div className="valorant-toggle-list">
+                  <p className="field-hint" role="status">{firstSelectionHint}</p>
                   <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
                   <GameFlipSidesControl gameName="League of Legends" checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueOfLegends({ blueTeam: checked ? "team2" : "team1" })} />
                 </div>

@@ -279,7 +279,7 @@ export function LiveOverlay({ data, available }: { data: OverlayData; available:
           <SourceText value="—" rect={timer.textPlate} align="center" label={(index ? "Dragon" : "Baron") + " respawn unavailable: —"} />
         </div>)}
       </aside> : null}
-      {!settings.hideScoreboard ? <section aria-label="League scoreboard">
+      {!settings.hideScoreboard ? <section aria-label="League scoreboard" style={{ position: "absolute", inset: 0, transform: `translateY(${-art.main[1] * 0.75}px)` }}>
         <div className={styles.translucentPlate} style={box([art.main[0], art.bottom[1], art.main[2], art.bottom[3]])} />
         {[data.blueTeam, data.redTeam].map((team, side) => {
           const source = side ? "CHAOS" : "ORDER";

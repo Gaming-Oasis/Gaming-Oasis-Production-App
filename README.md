@@ -82,7 +82,9 @@ The VALORANT **Live match indicators** show the current saved map number and nam
 
 ### Full Fearless setup
 
-New workspaces start with Bo3 and **Global fearless**, the Full Fearless format required for Gaming Oasis Bo3/Bo5 series. Existing saved draft formats remain intact and show a conference setup warning when a Bo3/Bo5 uses another mode. The published [League game guidelines, sections 4.2–4.3](https://equal-sombrero-66f.notion.site/League-of-Legends-Game-Guidelines-31b4763b5e0580e2972fd46e6686fa84) govern selection and champion eligibility.
+Champion select and Scoreboard setup provide a **First Selection team** selector. Choose the Game 1 holder manually; later games automatically select the previous game's saved loser when results are saved. Operators can adjust the selection before drafting starts, and it survives refreshes and draft resets. Saving a correction to the previous game's winner updates the selection; unsaved results do not change it. Resetting the series clears it. First Selection grants the choice of side or pick order; operators apply those choices with the existing controls.
+
+New workspaces start with Bo3 and **Global fearless**, the Full Fearless format required for Gaming Oasis Bo3/Bo5 series. Existing saved draft formats remain intact. The published [League game guidelines, sections 4.2–4.3](https://equal-sombrero-66f.notion.site/League-of-Legends-Game-Guidelines-31b4763b5e0580e2972fd46e6686fa84) govern selection and champion eligibility.
 
 Set **First pick side** independently of the map-side assignment before drafting; either Blue or Red can pick first. It locks once drafting starts and survives refreshes. Each new draft starts with Blue first, so confirm the next game's assignment before locking a champion. First Selection belongs to the higher seed (or witnessed coin-toss winner) in Game 1 and the previous game's loser afterward; that team chooses side or pick order, and its opponent chooses the other.
 

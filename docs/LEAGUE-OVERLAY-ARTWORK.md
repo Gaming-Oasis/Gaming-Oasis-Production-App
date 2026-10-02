@@ -12,6 +12,8 @@ The files in `assets/league-of-legends` are the supplied originals. Their SHA-25
 
 The browser canvas scales proportionally to smaller sources. A wider viewport centers the complete 16:9 scene horizontally. Empty canvas space stays transparent.
 
+The complete scoreboard group is shifted upward by 75% of its original top margin: 21 source pixels, leaving 7 source pixels (about 11 pixels at 1920 × 1080) above it. Team logos, statistics, series indicators, and active buff tabs move together. The upper-left respawn timers retain their source position.
+
 At the operator's request, the five pick slots on each side now have uniform 7-pixel gaps. Portraits remain 153 × 274, with 7-pixel outer margins and a 320-pixel center opening. Each complete card moves together, preserving the name strip, role plate, and role icon alignment. The center match information, sponsor, and bans keep their existing positions. The extracted manifest retains the original PSD coordinates for provenance.
 
 Series indicators use rounded CSS pills with outlined empty states and solid filled states, matching Rocket League. Bo3 and Bo5 retain their separate source geometries; Bo1 uses the first Bo3 marker on each side. The scoreboard retains four dragon slots per side.

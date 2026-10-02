@@ -46,7 +46,7 @@ export default function LeagueScoreboardControls({ value, blueTeamKey, teamOne, 
       </div>)}
     </div>
     <div className="league-scoreboard-table-wrap"><table className="league-scoreboard-table">
-      <thead><tr><th scope="col">Statistic</th><th scope="col">Source</th>{teams.map((team, index) => <th scope="col" key={team}>{index === 0 ? "Left" : "Right"} · {teamNames[team]}</th>)}</tr></thead>
+      <thead><tr><th scope="col">Statistic</th><th scope="col">Source</th>{teams.map((team, index) => <th scope="col" key={team}>{index === 0 ? "Left · Blue" : "Right · Red"} · {teamNames[team]}</th>)}</tr></thead>
       <tbody>{LEAGUE_SCOREBOARD_STATS.map(({ key, label, api, max }) => <tr key={key} className={key === "dragons" ? "league-dragons-row" : undefined}>
         <th scope="row">{label}</th>
         <td><div className="league-stat-source" role="group" aria-label={`${label} source`}>
