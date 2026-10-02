@@ -681,23 +681,16 @@
 }
 
 /*
- * Fixed stage chip — not inside .upperRightRail.
- * Horizontal: left of activity column (right 16 + width 220 + gap 40 = 276).
- * Vertical: badge center matches rendered .clockValue optical center
- *   (scaled clockSlot mid Y + .clockValue translateY(-0.03em) at 60px × scale).
+ * Fixed stage chip below the scoreboard, with an 8px gap after its slot.
+ * Left edge matches the visible scoreboard chrome (native x 89).
  * Label uses clock’s on-stage size: 60px × (1000/1920) — clock stays 60px in native
  * scoreboard space; this chip is unscaled so it must use the scaled equivalent.
  */
 .replayIndicator {
   position: absolute;
   z-index: 9;
-  top: calc(
-    (146 * 1000px / 1920)
-    + (95 * 1000px / 1920) / 2
-    - (0.03 * 60px * 1000 / 1920)
-    - (80px * 1000 / 1920) / 2
-  );
-  right: 276px;
+  top: calc(156.25px + 8px);
+  left: calc(89 * 1000px / 1920);
   box-sizing: border-box;
   width: calc(360px * 1000 / 1920);
   height: calc(80px * 1000 / 1920);
@@ -742,14 +735,14 @@
 }
 
 /*
- * Goal Replay scorer plate — horizontally centered with its bottom edge aligned
- * to the corner sponsor plate. Animation transform lives on the inner card so
+ * Goal Replay scorer plate — horizontally centered with its vertical center aligned
+ * to the 164px-tall corner sponsor plate. Animation transform lives on the inner card so
  * it does not fight the slot’s horizontal centering.
  */
 .replayScorerSlot {
   position: absolute;
   z-index: 8;
-  bottom: calc(1080px - 930px - (201 * 970px / 1920));
+  bottom: calc(1080px - 930px - (201 * 970px / 1920) + (164px - 156px) / 2);
   left: 50%;
   transform: translateX(-50%);
   width: 560px;

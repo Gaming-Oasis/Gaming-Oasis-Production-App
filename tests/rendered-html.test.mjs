@@ -606,7 +606,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /showReplayScorer/);
   assert.match(page, /replayCard/);
   assert.match(css, /\.replayScorerCard \{[\s\S]*background: #171717/);
-  assert.match(css, /\.replayScorerSlot \{[\s\S]*bottom: calc\(1080px - 930px - \(201 \* 970px \/ 1920\)\);[\s\S]*left: 50%;[\s\S]*transform: translateX\(-50%\)/);
+  assert.match(css, /\.replayScorerSlot \{[\s\S]*bottom: calc\(1080px - 930px - \(201 \* 970px \/ 1920\) \+ \(164px - 156px\) \/ 2\);[\s\S]*left: 50%;[\s\S]*transform: translateX\(-50%\)/);
   assert.match(css, /\.replayScorerCard \{[\s\S]*width: 100%;[\s\S]*height: 156px/);
   assert.match(css, /\.replayScorerStats/);
   assert.match(css, /\.replayScorerLogoFrame/);
@@ -653,7 +653,7 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(css, /\.upperRightRail \{[\s\S]*top: 16px;[\s\S]*right: 16px;[\s\S]*width: 220px/);
   // Clock stays 60px in native scoreboard space; REPLAY is on the unscaled stage so it
   // uses 60px × (1000/1920) ≈ 31.25px — matching the clock’s on-screen size after scale.
-  assert.match(css, /\.replayIndicator \{[\s\S]*position: absolute;[\s\S]*top: calc\(\s*\(146 \* 1000px \/ 1920\)\s*\+\s*\(95 \* 1000px \/ 1920\) \/ 2\s*-\s*\(0\.03 \* 60px \* 1000 \/ 1920\)\s*-\s*\(80px \* 1000 \/ 1920\) \/ 2\s*\);[\s\S]*right: 276px;[\s\S]*width: calc\(360px \* 1000 \/ 1920\);[\s\S]*height: calc\(80px \* 1000 \/ 1920\);[\s\S]*background: #171717/);
+  assert.match(css, /\.replayIndicator \{[\s\S]*position: absolute;[\s\S]*top: calc\(156\.25px \+ 8px\);[\s\S]*left: calc\(89 \* 1000px \/ 1920\);[\s\S]*width: calc\(360px \* 1000 \/ 1920\);[\s\S]*height: calc\(80px \* 1000 \/ 1920\);[\s\S]*background: #171717/);
   assert.match(css, /\.replayLabel \{[\s\S]*font-size: calc\(60px \* 1000 \/ 1920\)/);
   assert.match(css, /\.activityToast \{[\s\S]*background: #171717/);
   assert.match(page, /ReplayIndicatorHost[\s\S]*ReplayScorerCardHost[\s\S]*upperRightRail[\s\S]*ActivityFeed/);
