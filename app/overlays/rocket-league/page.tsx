@@ -1198,7 +1198,7 @@ export default function RocketLeagueOverlay() {
               leaguePrimary={overlay.leaguePrimary}
               leagueSecondary={overlay.leagueSecondary}
               matchTeamStats={matchTeamStats}
-              statsSceneBackground={overlay.statsSceneBackground === "team-split" ? "team-split" : "transparent"}
+              statsSceneBackground="team-split"
               ariaLabel="Rocket League lobby post-match team stats"
             />
           </div>

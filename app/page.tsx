@@ -4741,7 +4741,7 @@ export default function Home() {
                 <label className="switch large"><input aria-label="Enable Rocket League sponsor widget" type="checkbox" checked={state.rocketLeague.sponsorWidgetEnabled} onChange={(event) => updateRocketLeague({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
-                <div><strong>VS screen background</strong><small>Place the team-split VS treatment behind the post-match Stats scene.</small></div>
+                <div><strong>VS screen background</strong><small>Place the team-split VS treatment behind the post-match Stats scene on the dedicated Stats link. Stats on the main Scoreboard link always shows this background.</small></div>
                 <label className="switch large"><input aria-label="Show Rocket League VS screen background" type="checkbox" checked={state.rocketLeague.statsSceneBackground === "team-split"} onChange={(event) => updateRocketLeague({ statsSceneBackground: event.target.checked ? "team-split" : "transparent" })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
