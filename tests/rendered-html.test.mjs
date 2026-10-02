@@ -3638,8 +3638,18 @@ test("serves the latest non-exported Rocket League overlay state without changin
 
     const response = await fetch(`${writer.url}/api/overlays/rocket-league`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ...rocketLeague, finishedGame: null, matchTeamStats: null });
+    assert.deepEqual(await response.json(), { ...rocketLeague, sceneMode: "auto", finishedGame: null, matchTeamStats: null });
     assert.deepEqual((await readdir(outputDir)).sort(), liveOutputNames());
+    const writtenFiles = await Promise.all(files.map(file => readFile(path.join(outputDir, file.filename), "utf8")));
+    for (const sceneMode of ["scoreboard", "vs", "stats", "auto"]) {
+      const updateScene = await postWriter(writer, "/api/live-json", {
+        files, overlays: { rocketLeague: { ...rocketLeague, sceneMode } },
+      });
+      assert.equal(updateScene.status, 200);
+      const scene = await fetch(`${writer.url}/api/overlays/rocket-league`).then(response => response.json());
+      assert.equal(scene.sceneMode, sceneMode);
+      assert.deepEqual(await Promise.all(files.map(file => readFile(path.join(outputDir, file.filename), "utf8"))), writtenFiles);
+    }
   } finally {
     await writer.close();
   }

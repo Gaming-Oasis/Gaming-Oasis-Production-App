@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeRocketLeagueSceneMode, resolveRocketLeagueScene } from "../../../lib/rocket-league-scene.mjs";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   resolveRocketLeagueLiveTeamColor,
@@ -98,6 +99,7 @@ type RocketLeagueOverlayState = {
   playerCardEnabled: boolean;
   sponsorWidgetEnabled: boolean;
   lobbyScene: "vs" | "stats";
+  sceneMode?: "auto" | "scoreboard" | "vs" | "stats";
   statsSceneBackground: "transparent" | "team-split";
   sponsors: OverlaySponsor[];
   roundNumber: number;
@@ -233,6 +235,7 @@ function isOverlayState(value: unknown): value is RocketLeagueOverlayState {
 function normalizeOverlayState(next: RocketLeagueOverlayState): RocketLeagueOverlayState {
   return {
     ...next,
+    sceneMode: normalizeRocketLeagueSceneMode(next.sceneMode) as RocketLeagueOverlayState["sceneMode"],
     lobbyScene: next.lobbyScene === "stats" ? "stats" : "vs",
     statsSceneBackground: next.statsSceneBackground === "team-split" ? "team-split" : "transparent",
     matchTeamStats: next.matchTeamStats && isMatchTeamStats(next.matchTeamStats)
@@ -1077,8 +1080,9 @@ export default function RocketLeagueOverlay() {
   }, []);
 
   const game = overlay?.game;
-  const live = Boolean(game?.hasGame);
-  const lobbyScene = overlay?.lobbyScene === "stats" ? "stats" : "vs";
+  const scene = resolveRocketLeagueScene(overlay);
+  const live = scene === "scoreboard";
+  const lobbyScene = scene;
   const showLobbyVs = Boolean(overlay && !live && lobbyScene === "vs");
   const showLobbyStats = Boolean(overlay && !live && lobbyScene === "stats");
   const showInGame = Boolean(overlay && live);

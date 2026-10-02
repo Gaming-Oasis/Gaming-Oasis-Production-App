@@ -1,5 +1,7 @@
 "use client";
 
+import { normalizeRocketLeagueSceneMode } from "../lib/rocket-league-scene.mjs";
+
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LeagueRoleOrder } from "./LeagueRoleOrder";
 import { TwitchControls } from "./TwitchControls";
@@ -366,6 +368,7 @@ type RocketLeague = {
   lobbyScene: "vs" | "stats";
   /** Post-match stats scene canvas: transparent OBS plate or VS-style team split. */
   statsSceneBackground: "transparent" | "team-split";
+  sceneMode: "auto" | "scoreboard" | "vs" | "stats";
   autoAcceptLiveResults: boolean;
   lastLiveResultProposalKey: string;
   debugActivePlayerEnabled: boolean;
@@ -766,6 +769,7 @@ function createInitialState(): ProductionState {
       lobbyScene: "stats",
       statsSceneBackground: "team-split",
       autoAcceptLiveResults: false,
+      sceneMode: "auto",
       lastLiveResultProposalKey: "",
       debugActivePlayerEnabled: false,
       debugActivePlayerScenario: "skyljn3",
@@ -1142,6 +1146,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       lobbyScene: savedRocketLeague.lobbyScene === "vs" ? "vs" : "stats",
       statsSceneBackground: savedRocketLeague.statsSceneBackground === "transparent" ? "transparent" : "team-split",
       autoAcceptLiveResults: booleanValue(savedRocketLeague.autoAcceptLiveResults, false),
+      sceneMode: normalizeRocketLeagueSceneMode(savedRocketLeague.sceneMode) as RocketLeague["sceneMode"],
       lastLiveResultProposalKey: stringValue(savedRocketLeague.lastLiveResultProposalKey),
       debugActivePlayerEnabled: booleanValue(savedRocketLeague.debugActivePlayerEnabled, false),
       debugActivePlayerScenario: normalizeActivePlayerScenario(
@@ -4684,6 +4689,18 @@ export default function Home() {
                   <p>Match 1 teams map to scoreboard Left (Blue) and Right (Orange). Swap assignment switches which Match team plays each side.</p>
                 </div>
               </div>
+            <label className="field">
+              <span className="field-label">Scene control</span>
+              <select value={state.rocketLeague.sceneMode} onChange={(event) => updateRocketLeague({ sceneMode: event.target.value as RocketLeague["sceneMode"] })}>
+                <option value="auto">Automatic</option>
+                <option value="scoreboard">Scoreboard</option>
+                <option value="vs">VS</option>
+                <option value="stats">Stats</option>
+              </select>
+              <small>{state.rocketLeague.sceneMode === "auto"
+                ? "Automatic: follows the live match and lobby scene setting."
+                : "Manual: holds this scene until you choose another scene or Automatic."} Applies to the Scoreboard URL. Stats uses the latest available match totals.</small>
+            </label>
               <div className="rl-side-assignment-grid">
                 <div className="rl-side-assignment-slot">
                   <span>Left</span>

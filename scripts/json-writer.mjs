@@ -511,6 +511,7 @@ function validRocketLeagueOverlay(value) {
   return hasExactKeys(value, [
     "version", "updatedAt", "skin", "header", "bestOf", "flipSides", "playerCardEnabled",
     "sponsorWidgetEnabled", "broadcastSetupEnabled", "lobbyScene", "statsSceneBackground", "sponsors",
+    ...(Object.hasOwn(value ?? {}, "sceneMode") ? ["sceneMode"] : []),
     "roundNumber", "winsNeeded", "leaguePrimary", "leagueSecondary", "teamOne", "teamTwo",
     "debugLiveOverride", "connection", "game", "activities", "replayCard",
   ])
@@ -524,6 +525,7 @@ function validRocketLeagueOverlay(value) {
     && typeof value.sponsorWidgetEnabled === "boolean"
     && typeof value.broadcastSetupEnabled === "boolean"
     && ["vs", "stats"].includes(value.lobbyScene)
+    && (value.sceneMode === undefined || ["auto", "scoreboard", "vs", "stats"].includes(value.sceneMode))
     && ["transparent", "team-split"].includes(value.statsSceneBackground)
     && validOverlaySponsors(value.sponsors)
     && typeof value.roundNumber === "number"
