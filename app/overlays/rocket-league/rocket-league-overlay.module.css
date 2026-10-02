@@ -717,7 +717,7 @@
   content: "";
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   width: 4px;
   height: 100%;
   background: var(--replay-accent, var(--league-secondary, #ffffff));
@@ -735,14 +735,14 @@
 }
 
 /*
- * Goal Replay scorer plate — horizontally centered with its vertical center aligned
- * to the 164px-tall corner sponsor plate. Animation transform lives on the inner card so
+ * Goal Replay scorer plate — horizontally centered with the same height and bottom
+ * edge as the corner sponsor plate. Animation transform lives on the inner card so
  * it does not fight the slot’s horizontal centering.
  */
 .replayScorerSlot {
   position: absolute;
   z-index: 8;
-  bottom: calc(1080px - 930px - (201 * 970px / 1920) + (164px - 156px) / 2);
+  bottom: calc(1080px - 930px - (201 * 970px / 1920));
   left: 50%;
   transform: translateX(-50%);
   width: 560px;
@@ -753,7 +753,7 @@
   position: relative;
   box-sizing: border-box;
   width: 100%;
-  height: 156px;
+  height: 164px;
   background: #171717;
   color: #ffffff;
   overflow: hidden;
