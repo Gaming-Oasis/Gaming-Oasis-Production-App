@@ -459,8 +459,8 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.doesNotMatch(page, /\[sponsorSignature, sponsors\]/);
   assert.match(page, /status !== "failed" \|\| Boolean\(sponsor\.name\)/);
   assert.match(page, /sponsorLogoSrc\(entry\.logo\)/);
-  assert.match(page, /width=\{348\}/);
-  assert.match(page, /height=\{128\}/);
+  assert.match(page, /width=\{464\}/);
+  assert.match(page, /height=\{78\}/);
   assert.doesNotMatch(page, /SideIcon|<svg viewBox="0 0 16 16"/);
   assert.doesNotMatch(page, /pickerSide|SIDE TBD|starts attack|starts defense/);
   assert.doesNotMatch(page, /mapLogo[^\n]*style=\{\{ background: team\.logoBackground \}\}/);
@@ -469,7 +469,8 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(css, /height: 1080px/);
   assert.match(css, /\.logoFrame img \{[\s\S]*width: 41px;[\s\S]*height: 41px/);
   assert.match(css, /\.mapWidget \{[\s\S]*bottom: 0/);
-  assert.match(css, /\.mapWidget \{[\s\S]*transform: scale\(1\.035\);[\s\S]*transform-origin: left bottom/);
+  assert.match(css, /\.bottomWidgets \{[^}]*left: 0;[^}]*bottom: 0;[^}]*width: 510px;[^}]*height: 136px;[^}]*transform: scale\(1\.035\);[^}]*transform-origin: left bottom/);
+  assert.match(page, /<div className=\{styles\.bottomWidgets\}>\s*\{overlay\.sponsorWidgetEnabled \? <SponsorCarousel[^\n]*\n\s*<MapWidgetStrip[^\n]*\n\s*<\/div>/);
   assert.match(css, /\.mapWidget \{[\s\S]*clip-path: polygon\(0 0, calc\(100% - 14px\) 0, 100% 50%, calc\(100% - 14px\) 100%, 0 100%\)/);
   assert.match(css, /grid-template-columns: repeat\(3, 170px\)/);
   assert.match(css, /\.mapArtwork \{[\s\S]*opacity: \.92;[\s\S]*object-fit: cover/);
@@ -482,13 +483,13 @@ test("server-renders the transparent VALORANT browser overlay route", async () =
   assert.match(css, /\.mapLogo \{[\s\S]*width: 34px;[\s\S]*height: 34px/);
   assert.match(css, /\.mapLogoSmall \{[\s\S]*width: 23px;[\s\S]*height: 23px/);
   assert.match(css, /\.mapLogoSmall \.logoImage \{[\s\S]*width: 22px;[\s\S]*height: 22px/);
-  assert.match(css, /\.sponsorCard \{[\s\S]*left: 16px;[\s\S]*bottom: 57\.4px;[\s\S]*width: 380px;[\s\S]*height: 164px/);
+  assert.match(css, /\.sponsorCard \{[^}]*left: 0;[^}]*bottom: 40px;[^}]*width: calc\(100% - 14px\);[^}]*height: 96px/);
   assert.match(css, /\.sponsorCard \{[\s\S]*background: #171717/);
   assert.match(css, /@keyframes sponsorFadeIn/);
   assert.match(css, /@keyframes sponsorFadeOut/);
   assert.match(css, /animation: sponsorFadeIn 400ms ease-out;/);
   assert.match(css, /animation: sponsorFadeOut 400ms ease-out forwards;/);
-  assert.match(css, /\.sponsorSlide img \{[\s\S]*width: 348px;[\s\S]*height: 128px;[\s\S]*object-fit: contain;[\s\S]*background: #171717/);
+  assert.match(css, /\.sponsorSlide img \{[\s\S]*width: 100%;[\s\S]*height: 78px;[\s\S]*object-fit: contain;[\s\S]*background: #171717/);
   assert.doesNotMatch(css, /\.mapLogo \{[^}]*border:/);
   assert.doesNotMatch(css, /\.mapItem::after|skewX\(-35deg\)/);
   assert.match(css, /\.mapItem:last-child \{[^}]*clip-path: polygon/);

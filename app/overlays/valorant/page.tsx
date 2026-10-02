@@ -329,8 +329,8 @@ function SponsorCarousel({ sponsors }: { sponsors: OverlaySponsor[] }) {
         <img
           src={sponsorLogoSrc(entry.logo)}
           alt={entry.name ? `${entry.name} logo` : "Sponsor logo"}
-          width={348}
-          height={128}
+          width={464}
+          height={78}
           draggable={false}
           referrerPolicy="no-referrer"
           onError={() => {
@@ -426,8 +426,10 @@ export default function ValorantOverlay() {
             <div className={`${styles.logoFrame} ${styles.logoOne}`}><StableLogo src={overlay.teamOne.logo} alt={`${overlay.teamOne.name} logo`} /></div>
             <div className={`${styles.logoFrame} ${styles.logoTwo}`}><StableLogo src={overlay.teamTwo.logo} alt={`${overlay.teamTwo.name} logo`} /></div>
 
-            {overlay.sponsorWidgetEnabled ? <SponsorCarousel sponsors={overlay.sponsors} /> : null}
-            <MapWidgetStrip widget={overlay.mapWidget} teamOne={overlay.teamOne} teamTwo={overlay.teamTwo} />
+            <div className={styles.bottomWidgets}>
+              {overlay.sponsorWidgetEnabled ? <SponsorCarousel sponsors={overlay.sponsors} /> : null}
+              <MapWidgetStrip widget={overlay.mapWidget} teamOne={overlay.teamOne} teamTwo={overlay.teamTwo} />
+            </div>
           </div>
         ) : null}
       </div>
