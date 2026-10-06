@@ -584,12 +584,13 @@ test("server-renders the transparent Rocket League browser overlay route", async
   assert.match(page, /showLobbyVs = Boolean\(overlay && !live && lobbyScene === "vs"\)/);
   assert.match(page, /showLobbyStats = Boolean\(overlay && !live && lobbyScene === "stats"\)/);
   assert.match(page, /showInGame = Boolean\(overlay && live\)/);
-  assert.match(page, /useScenePresence\(showLobbyVs\)/);
-  assert.match(page, /useScenePresence\(showInGame\)/);
+  assert.match(page, /useScenePresence\(showLobbyVs, overlay\)/);
+  assert.match(page, /useScenePresence\(showLobbyStats, overlay\)/);
+  assert.match(page, /useScenePresence\(showInGame, overlay\)/);
   assert.match(page, /sceneLayer/);
   assert.match(page, /SCENE_FADE_MS/);
-  assert.match(css, /\.sceneLayerEntering \{[\s\S]*sceneFadeIn 280ms/);
-  assert.match(css, /\.sceneLayerExiting \{[\s\S]*sceneFadeOut 280ms/);
+  assert.match(css, /\.sceneLayerEntering \{[\s\S]*sceneFadeIn 500ms/);
+  assert.match(css, /\.sceneLayerExiting \{[\s\S]*sceneFadeOut 500ms/);
   assert.match(page, /VsMatchupStage/);
   assert.match(page, /skipEnterAnimation/);
   assert.match(page, /from \"\.\.\/vs\/VsMatchupOverlay\"/);

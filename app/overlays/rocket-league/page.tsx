@@ -567,8 +567,8 @@ const ACTIVITY_EXIT_MS = 260;
 const ACTIVE_PLAYER_EXIT_MS = 280;
 const REPLAY_EXIT_MS = 260;
 const REPLAY_SCORER_EXIT_MS = 260;
-/** Quick opacity crossfade between lobby VS and in-game HUD. */
-const SCENE_FADE_MS = 280;
+/** Opacity crossfade between gameplay and the Stats / VS scenes. */
+const SCENE_FADE_MS = 500;
 
 function motionExitMs(fullMs: number) {
   if (typeof window !== "undefined"
@@ -578,8 +578,10 @@ function motionExitMs(fullMs: number) {
   return fullMs;
 }
 
-function useScenePresence(show: boolean) {
-  const [stage, setStage] = useState<{ exiting: boolean } | null>(show ? { exiting: false } : null);
+function useScenePresence(show: boolean, overlay: RocketLeagueOverlayState | null) {
+  const [stage, setStage] = useState<{ exiting: boolean; overlay: RocketLeagueOverlayState | null } | null>(
+    show ? { exiting: false, overlay } : null,
+  );
   const exitTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -588,7 +590,7 @@ function useScenePresence(show: boolean) {
         window.clearTimeout(exitTimerRef.current);
         exitTimerRef.current = null;
       }
-      setStage({ exiting: false });
+      setStage({ exiting: false, overlay });
       return undefined;
     }
 
@@ -597,7 +599,7 @@ function useScenePresence(show: boolean) {
       return { ...current, exiting: true };
     });
     return undefined;
-  }, [show]);
+  }, [show, overlay]);
 
   useEffect(() => {
     if (!stage?.exiting) return undefined;
@@ -1079,16 +1081,19 @@ export default function RocketLeagueOverlay() {
     return () => window.removeEventListener("resize", fitStage);
   }, []);
 
-  const game = overlay?.game;
   const scene = resolveRocketLeagueScene(overlay);
   const live = scene === "scoreboard";
   const lobbyScene = scene;
   const showLobbyVs = Boolean(overlay && !live && lobbyScene === "vs");
   const showLobbyStats = Boolean(overlay && !live && lobbyScene === "stats");
   const showInGame = Boolean(overlay && live);
-  const vsScene = useScenePresence(showLobbyVs);
-  const statsScene = useScenePresence(showLobbyStats);
-  const gameScene = useScenePresence(showInGame);
+  const vsScene = useScenePresence(showLobbyVs, overlay);
+  const statsScene = useScenePresence(showLobbyStats, overlay);
+  const gameScene = useScenePresence(showInGame, overlay);
+  // Keep the outgoing gameplay frame intact until its fade finishes. End events clear
+  // the feed's clock, player and replay fields before the lobby scene appears.
+  const gameOverlay = showInGame ? overlay : gameScene?.overlay;
+  const game = gameOverlay?.game;
   const sides = overlay
     ? resolveRocketLeagueSideTeams(overlay.flipSides, overlay.teamOne, overlay.teamTwo)
     : null;
@@ -1125,7 +1130,7 @@ export default function RocketLeagueOverlay() {
   const winsOne = Number.parseInt(leftTeam?.seriesScore || "0", 10) || 0;
   const winsTwo = Number.parseInt(rightTeam?.seriesScore || "0", 10) || 0;
   const targetPlayer = game?.targetPlayer ?? null;
-  const showActivePlayer = Boolean(overlay?.playerCardEnabled && targetPlayer && !game?.isReplay);
+  const showActivePlayer = Boolean(gameOverlay?.playerCardEnabled && targetPlayer && !game?.isReplay);
   const activePlateColor = targetPlayer && overlay
     ? resolveRocketLeagueLiveTeamColor(
       targetPlayer.team,
@@ -1134,11 +1139,11 @@ export default function RocketLeagueOverlay() {
       overlay.teamTwo,
     )
     : "#1A75FD";
-  const clockText = live ? formatClock(game?.timeSeconds ?? 0) : "";
-  const showOvertime = Boolean(live && game?.isOT);
-  const activities = overlay?.activities ?? [];
-  const replayCard = overlay?.replayCard && isOverlayReplayCard(overlay.replayCard)
-    ? overlay.replayCard
+  const clockText = gameScene ? formatClock(game?.timeSeconds ?? 0) : "";
+  const showOvertime = Boolean(gameScene && game?.isOT);
+  const activities = gameOverlay?.activities ?? [];
+  const replayCard = gameOverlay?.replayCard && isOverlayReplayCard(gameOverlay.replayCard)
+    ? gameOverlay.replayCard
     : null;
   const showReplayScorer = Boolean(game?.isReplay && replayCard?.scorerName);
   const replayScorerTeam = replayCard && overlay

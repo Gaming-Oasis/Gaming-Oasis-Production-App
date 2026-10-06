@@ -32,7 +32,7 @@
   text-rendering: geometricPrecision;
 }
 
-/* VS ↔ gameplay: short opacity crossfade (both layers briefly overlap). */
+/* Gameplay ↔ Stats / VS: keep both scenes mounted during the opacity crossfade. */
 .sceneLayer {
   position: absolute;
   inset: 0;
@@ -50,11 +50,11 @@
 }
 
 .sceneLayerEntering {
-  animation: sceneFadeIn 280ms ease-out both;
+  animation: sceneFadeIn 500ms ease-in-out both;
 }
 
 .sceneLayerExiting {
-  animation: sceneFadeOut 280ms ease-out both;
+  animation: sceneFadeOut 500ms ease-in-out both;
 }
 
 @keyframes sceneFadeIn {
