@@ -5,6 +5,10 @@ import { normalizeRocketLeagueSceneMode } from "../lib/rocket-league-scene.mjs";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LeagueRoleOrder } from "./LeagueRoleOrder";
 import { TwitchControls } from "./TwitchControls";
+import { ValorantMapLibrary, useValorantMapLibrary } from "./ValorantMapLibrary";
+import { migrateValorantPlaceholder } from "../lib/valorant-map-placeholder.mjs";
+import { MAP_API, mergeMapArtwork } from "../lib/valorant-map-library.mjs";
+import { prepareMapExport } from "../lib/valorant-map-export.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
 import {
@@ -445,6 +449,7 @@ type ProductionState = {
 };
 
 type ExportFile = { filename: string; data: unknown };
+type PackageFile = { filename: string; data?: unknown; text?: string; bytes?: Uint8Array<ArrayBuffer> };
 type PersistedStateEnvelope = {
   schemaVersion: 2;
   revision: number;
@@ -1111,12 +1116,12 @@ function mergeSavedState(savedValue: unknown): ProductionState {
     const key = name.replace(/\s+/g, "").toLowerCase();
     if (!key || seenMapNames.has(key)) continue;
     seenMapNames.add(key);
-    uniqueMaps.push({
+    uniqueMaps.push(migrateValorantPlaceholder({
       name,
       nextMap: stringValue(map.nextMap),
       pickCard: stringValue(map.pickCard),
       banCard: stringValue(map.banCard),
-    });
+    }));
   }
   const normalizedMaps = uniqueMaps.length > 0
     ? uniqueMaps
@@ -1555,13 +1560,14 @@ function crc32(bytes: Uint8Array) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function packageFileBytes(file: { data?: unknown; text?: string }) {
+function packageFileBytes(file: { data?: unknown; text?: string; bytes?: Uint8Array<ArrayBuffer> }) {
+  if (file.bytes) return file.bytes;
   const encoder = new TextEncoder();
   if (typeof file.text === "string") return encoder.encode(file.text);
   return encoder.encode(`${JSON.stringify(file.data, null, 2)}\n`);
 }
 
-function createJsonPackageArchive(files: { filename: string; data?: unknown; text?: string }[]) {
+function createJsonPackageArchive(files: PackageFile[]) {
   const encoder = new TextEncoder();
   const localParts: BlobPart[] = [];
   const centralParts: BlobPart[] = [];
@@ -1621,7 +1627,7 @@ function downloadBlob(blob: Blob, downloadName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 2_000);
 }
 
-function downloadStoredPackage(files: { filename: string; data?: unknown; text?: string }[], downloadName: string) {
+function downloadStoredPackage(files: PackageFile[], downloadName: string) {
   downloadBlob(createJsonPackageArchive(files), downloadName);
 }
 
@@ -1629,7 +1635,7 @@ function downloadTextFile(filename: string, text: string) {
   downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), filename);
 }
 
-function downloadJsonPackage(files: ExportFile[]) {
+function downloadJsonPackage(files: PackageFile[]) {
   downloadStoredPackage(files, "gaming-oasis-production-json.zip");
 }
 
@@ -1638,7 +1644,7 @@ async function writeFilesToFolder(files: ExportFile[]) {
     showDirectoryPicker?: () => Promise<{
       getFileHandle: (name: string, options: { create: boolean }) => Promise<{
         createWritable: () => Promise<{
-          write: (value: string) => Promise<void>;
+          write: (value: string | Uint8Array<ArrayBuffer>) => Promise<void>;
           close: () => Promise<void>;
           abort?: (reason?: unknown) => Promise<void>;
         }>;
@@ -1649,16 +1655,17 @@ async function writeFilesToFolder(files: ExportFile[]) {
 
   if (!picker) return "unsupported" as const;
   const directory = await picker.call(browserWindow);
-  for (const file of files) {
+  const packageFiles: PackageFile[] = await prepareMapExport(files);
+  for (const file of packageFiles) {
     let writable: {
-      write: (value: string) => Promise<void>;
+      write: (value: string | Uint8Array<ArrayBuffer>) => Promise<void>;
       close: () => Promise<void>;
       abort?: (reason?: unknown) => Promise<void>;
     } | null = null;
     try {
       const handle = await directory.getFileHandle(file.filename, { create: true });
       writable = await handle.createWritable();
-      await writable.write(JSON.stringify(file.data, null, 2));
+      await writable.write(file.bytes ?? JSON.stringify(file.data, null, 2));
       await writable.close();
       writable = null;
     } catch (error) {
@@ -2073,6 +2080,33 @@ export default function Home() {
     }
     throw new Error("Writer session expired");
   }, [getWriterToken]);
+
+  const applyMapArtwork = useCallback((before: ValorantMapArtwork | undefined, artwork: ValorantMapArtwork, activate = false) => {
+    if (!isPrimaryTabRef.current) return;
+    setState((current) => {
+      const maps = mergeMapArtwork(current.valorantMapData.maps, before, artwork);
+      if (maps === current.valorantMapData.maps) return current;
+      const valorantMapData = { maps };
+      if (activate) outputActivatedRef.current = true;
+      // Downloading artwork on an untouched launch must not publish default
+      // match data over the existing show package. The first operator edit
+      // activates the ordinary complete-package writer, including these maps.
+      if (!outputActivatedRef.current && !hasOutputRelevantChanges(current, hydratedStateRef.current)) {
+        hydratedStateRef.current = { ...hydratedStateRef.current, valorantMapData };
+      }
+      return { ...current, valorantMapData };
+    });
+  }, []);
+  const ownsMapWriter = useCallback(() => isPrimaryTabRef.current && writerFenceRef.current > 0 && !serverOwnershipBlockedRef.current, []);
+  const mutateMapLibrary = useCallback(async (route: string, body: unknown) => {
+    if (!ownsMapWriter()) throw new Error("This browser does not control the JSON writer");
+    const { response, payload } = await postWriterMutation(`${MAP_API}/${route}`, {
+      ...(body as Record<string, unknown>), writerId: writerIdRef.current, fence: writerFenceRef.current,
+    });
+    if (!response.ok) throw new Error(String(asRecord(payload).error || "Map update failed"));
+    return payload;
+  }, [ownsMapWriter, postWriterMutation]);
+  const mapLibrary = useValorantMapLibrary({ enabled: hydrated && isPrimaryTab, maps: state.valorantMapData.maps, ownsWriter: ownsMapWriter, mutate: mutateMapLibrary, apply: applyMapArtwork });
 
   useEffect(() => {
     if (!hydrated) return;
@@ -3760,15 +3794,15 @@ export default function Home() {
 
   async function exportAll() {
     if (exporting) return;
-    if (typeof (window as Window & { showDirectoryPicker?: unknown }).showDirectoryPicker !== "function") {
-      downloadJsonPackage(manualExportFiles);
-      notify("JSON recovery package downloaded — unzip it to access all 7 files");
-      return;
-    }
     setExporting(true);
     try {
+      if (typeof (window as Window & { showDirectoryPicker?: unknown }).showDirectoryPicker !== "function") {
+        downloadJsonPackage(await prepareMapExport(manualExportFiles));
+        notify("JSON recovery package downloaded with map artwork — unzip all files into one folder");
+        return;
+      }
       if (await writeFilesToFolder(manualExportFiles) === "folder") {
-        notify("7 JSON files written to your selected folder");
+        notify("7 JSON files and generated map artwork written to your selected folder");
         return;
       }
     } catch (error) {
@@ -3877,22 +3911,22 @@ export default function Home() {
   function resetValorantMapPool() {
     requestConfirmation({
       title: "Reset the VALORANT map pool?",
-      description: "This restores the Gaming Oasis defaults, removes custom maps, and clears veto selections for removed maps. This cannot be undone.",
+      description: "This restores the full standard map library and automatic source images, centers all focal points, regenerates artwork, removes custom maps, and clears veto selections for removed maps. This cannot be undone.",
       confirmLabel: "Reset map pool",
       onConfirm: () => {
-        const defaultNames = new Set(VALORANT_MAP_ARTWORK.map((map) => canonicalMapName(map.name)));
-        setState((current) => ({
-          ...current,
-          valorant: {
-            ...current.valorant,
-            bo3: Object.fromEntries(Object.entries(current.valorant.bo3).map(([key, value]) => [key, key.startsWith("side") || !value || defaultNames.has(canonicalMapName(value)) ? value : ""])) as ValorantBo3,
-            bo5: Object.fromEntries(Object.entries(current.valorant.bo5).map(([key, value]) => [key, key.startsWith("side") || !value || defaultNames.has(canonicalMapName(value)) ? value : ""])) as ValorantBo5,
-          },
-          valorantMapData: {
-            maps: VALORANT_MAP_ARTWORK.map((map) => ({ ...map })),
-          },
-        }));
-        notify("VALORANT map pool reset to default");
+        void mapLibrary.resetDefaults((maps) => {
+          const defaultNames = new Set(maps.map((map) => canonicalMapName(map.name)));
+          setState((current) => ({
+            ...current,
+            valorant: {
+              ...current.valorant,
+              bo3: Object.fromEntries(Object.entries(current.valorant.bo3).map(([key, value]) => [key, key.startsWith("side") || !value || defaultNames.has(canonicalMapName(value)) ? value : ""])) as ValorantBo3,
+              bo5: Object.fromEntries(Object.entries(current.valorant.bo5).map(([key, value]) => [key, key.startsWith("side") || !value || defaultNames.has(canonicalMapName(value)) ? value : ""])) as ValorantBo5,
+            },
+            valorantMapData: { maps },
+          }));
+          notify("VALORANT map pool reset to default");
+        });
       },
     });
   }
@@ -4500,13 +4534,15 @@ export default function Home() {
             <div className="card-title-row result-card-heading">
               <div>
                 <h2>Map Pool</h2>
-                <p>Edit names and artwork URLs written to VALORANT MAP DATA.json. Changes save automatically. Picks / bans use this pool.</p>
+                <p>Full standard map library. Sync generates next-map, pick / widget, and ban artwork automatically. Picks / bans use the full library, independent of competitive rotation.</p>
               </div>
               <div className="result-update-controls">
-                <button className="button secondary" type="button" onClick={resetValorantMapPool}>Reset to Default</button>
-                <button className="button primary" type="button" onClick={addValorantMap} disabled={state.valorantMapData.maps.length >= 32}>Add map</button>
+                <button className="button secondary" type="button" disabled={mapLibrary.busy} onClick={resetValorantMapPool}>Reset to Default</button>
+                <button className="button secondary" type="button" onClick={addValorantMap} disabled={state.valorantMapData.maps.length >= 32}>Add map</button>
               </div>
             </div>
+            <ValorantMapLibrary maps={state.valorantMapData.maps} controller={mapLibrary} />
+            <details className="map-library-legacy"><summary>Map names and artwork URL overrides</summary>
             <div className="valorant-map-artwork-list">
               <div className="valorant-map-artwork-head" aria-hidden="true"><span>Map</span><span>Next map</span><span>Pick card / widget background</span><span>Ban card</span><span>Actions</span></div>
               {state.valorantMapData.maps.map((map, index) => (
@@ -4529,6 +4565,7 @@ export default function Home() {
                 </div>
               ))}
             </div>
+            </details>
           </section>
         ) : (
           <section className="panel-card browser-overlay-card browser-overlay-workspace" aria-label={valorantTab === "controls" ? "Overlay controls" : "Browser overlay"}>
@@ -4952,7 +4989,7 @@ export default function Home() {
           <option value="team1">{teamOne.name || "Team 1"}</option>
           <option value="team2">{teamTwo.name || "Team 2"}</option>
         </select>
-        <span className="field-hint">Later games automatically select the previous game's saved loser. Reset the draft to change this after drafting starts.</span>
+        <span className="field-hint">Later games automatically select the previous game&apos;s saved loser. Reset the draft to change this after drafting starts.</span>
       </label>
     );
     const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode, state.leagueOfLegends.draft.firstPickSide);

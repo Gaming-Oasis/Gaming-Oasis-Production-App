@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatSocialHandle } from "../lib/social-handle.mjs";
 import { isLeagueScoreboard } from "../lib/league-scoreboard.mjs";
 import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
+import { createValorantMapStore } from "../lib/valorant-map-store.mjs";
 import {
   mergeRocketLeagueOverlayLive,
   startRocketLeagueStatsApiClient,
@@ -758,6 +759,18 @@ export async function startJsonWriter({
   const leagueAssetMemoryCache = new Map();
   const lastRevisionByWriter = new Map();
   const leagueCacheDir = path.join(outputDir, ".league-cache");
+  const valorantMaps = createValorantMapStore({
+    outputDir,
+    fetchResource: async (url, expectedType) => {
+      const result = await fetchBounded(fetchImpl, url, {
+        headers: { Accept: expectedType === "json" ? "application/json" : "image/png" },
+        expectedType,
+        maximumBytes: expectedType === "json" ? MAX_JSON_RESPONSE_BYTES : MAX_IMAGE_RESPONSE_BYTES,
+      });
+      if (!result.upstream.ok) throw new Error("VALORANT map provider is unavailable");
+      return result;
+    },
+  });
   const rocketLeagueStatsApi = enableRocketLeagueStatsApi
     ? startRocketLeagueStatsApiClient()
     : null;
@@ -1080,6 +1093,9 @@ export async function startJsonWriter({
 
     if (request.method === "OPTIONS") {
       const allowedPath = request.url === "/api/live-json"
+        || request.url === "/api/valorant-maps/save"
+        || request.url === "/api/valorant-maps/complete"
+        || request.url === "/api/valorant-maps/reset"
         || request.url === "/api/live-json/claim"
         || request.url === "/api/rocket-league/match-paused"
         || request.url === "/api/live-json/session";
@@ -1095,6 +1111,44 @@ export async function startJsonWriter({
         return;
       }
       response.writeHead(204).end();
+      return;
+    }
+
+    if (request.url?.startsWith("/api/valorant-maps/")) {
+      try {
+        const url = new URL(request.url, "http://127.0.0.1");
+        const route = url.pathname.slice("/api/valorant-maps/".length);
+        if (request.method === "GET") {
+          if (route === "library" || route === "catalog") {
+            const data = route === "library" ? await valorantMaps.library() : await valorantMaps.catalog(url.searchParams.get("refresh") === "1");
+            response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            response.end(JSON.stringify(data));
+          } else if (route.startsWith("source/")) {
+            const source = await valorantMaps.source(route.slice(7), url.searchParams.get("refresh") === "1");
+            response.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store", "X-Map-Source-Hash": source.hash, "X-Map-Source-Stale": String(source.stale), "Access-Control-Expose-Headers": "X-Map-Source-Hash, X-Map-Source-Stale" });
+            response.end(source.body);
+          } else if (route.startsWith("assets/") || route.startsWith("custom/")) {
+            const custom = route.startsWith("custom/");
+            const body = custom ? await valorantMaps.customImage(route.slice(7)) : await valorantMaps.asset(route.slice(7));
+            response.writeHead(200, { "Content-Type": custom && body[0] === 0xff ? "image/jpeg" : "image/png", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" });
+            response.end(body);
+          } else throw new HttpError(404, "Map resource not found");
+        } else if (request.method === "POST" && ["save", "complete", "reset"].includes(route)) {
+          if (!authorizeMutation(request, response)) return;
+          const payload = await readBody(request, 20_000_000);
+          let result;
+          await enqueueWrite(async () => {
+            if (payload?.fence !== activeFence || payload?.writerId !== activeFenceWriterId || activeFenceExpiresAt <= Date.now()) throw new HttpError(409, "Claim the JSON writer before updating maps");
+            if (route === "save") result = await valorantMaps.save(payload, `http://127.0.0.1:${server.address().port}`);
+            else if (route === "reset") result = await valorantMaps.reset();
+            else result = { lastSync: await valorantMaps.complete() };
+          });
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(JSON.stringify(result));
+        } else throw new HttpError(404, "Map resource not found");
+      } catch (error) {
+        rejectJson(response, error instanceof HttpError ? error.status : error.code === "ENOENT" ? 404 : 422, error.message || "Map update failed");
+      }
       return;
     }
 
@@ -1496,7 +1550,7 @@ export async function startJsonWriter({
         const transactionFiles = await withVmixSponsorLogos(withSocialHandles(nextValorantMapData === undefined
           ? payload.files
           : [...payload.files, { filename: VALORANT_MAP_DATA_FILENAME, data: nextValorantMapData }]));
-        await commitJsonPackage(outputDir, transactionFiles, beforeInstallFile, afterBackupFile);
+        await commitJsonPackage(outputDir, valorantMaps.localizeFiles(transactionFiles), beforeInstallFile, afterBackupFile);
         if (nextValorantOverlay !== undefined) valorantOverlayState = nextValorantOverlay;
         if (nextRocketLeagueOverlay !== undefined) {
           rocketLeagueOverlayState = nextRocketLeagueOverlay;

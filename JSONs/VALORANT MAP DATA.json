@@ -2,81 +2,87 @@
   "maps": [
     {
       "name": "Placeholder",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1SwFGRHOcTuy4eNhdZgoWPk2vRMb-_Xsw",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1bMnszxe7Gul-UHWoyxmFnJW45Ubx_gDs",
-      "banCard": "https://drive.google.com/uc?export=view&id=144YTLCUdiGBHlH7DsrZBVC_t_4R9CoFd"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/public/valorant-map-placeholders/4d86d0097a9a8d840c0b02324d922773f7079fcac88dedae30ab2ad483e21fde-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/public/valorant-map-placeholders/4d86d0097a9a8d840c0b02324d922773f7079fcac88dedae30ab2ad483e21fde-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/public/valorant-map-placeholders/4d86d0097a9a8d840c0b02324d922773f7079fcac88dedae30ab2ad483e21fde-banCard.png"
     },
     {
       "name": "Abyss",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1Ti1L6nQh7o_AyePSO_RZOG0BBCsebHh1",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1TZs7g0XQSHkPVBWWUPMKS4iFfiGgcOOo",
-      "banCard": "https://drive.google.com/uc?export=view&id=1dN8ciDB1m6fSgBnghkcvNDuaQ7LOdm2G"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/30e0efda92dc9eb36848006b7025cc810a71d8a21a0888afd1856edc3cd660a6-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/30e0efda92dc9eb36848006b7025cc810a71d8a21a0888afd1856edc3cd660a6-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/30e0efda92dc9eb36848006b7025cc810a71d8a21a0888afd1856edc3cd660a6-banCard.png"
     },
     {
       "name": "Ascent",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1uIxtH9KXuAd8ZEv8ibMR1LbiWFwrs-8A",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1OPbVx7RmhWL6i0ybArZjwSl8LyTbIUkD",
-      "banCard": "https://drive.google.com/uc?export=view&id=12qoZocfHPIo9mAXfJvjTxKxhA_6vqBwv"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/2097aa567b750391f0ed5c19afb0830df087775bad1c95c66de970a3e4b661a7-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/2097aa567b750391f0ed5c19afb0830df087775bad1c95c66de970a3e4b661a7-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/2097aa567b750391f0ed5c19afb0830df087775bad1c95c66de970a3e4b661a7-banCard.png"
     },
     {
       "name": "Bind",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1-1jwB_WQ7dg0QpvMo0bASMJbpggkGgwS",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1LaAAD4t5j4KGtygHC5IRxZMfHmZaFCHE",
-      "banCard": "https://drive.google.com/uc?export=view&id=1I9CWqTxT-7eBtiM3RTAgYTf-KvpJIChr"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/45677e6b0c258e4975088de9af5a49a5a09944d065850d520c0e35edb6667cb1-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/45677e6b0c258e4975088de9af5a49a5a09944d065850d520c0e35edb6667cb1-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/45677e6b0c258e4975088de9af5a49a5a09944d065850d520c0e35edb6667cb1-banCard.png"
     },
     {
       "name": "Breeze",
-      "nextMap": "https://drive.google.com/uc?export=view&id=10dgkO8pwdNFRr5rNE8vXolBtTMWq_uwJ",
-      "pickCard": "https://drive.google.com/uc?export=view&id=18O9yAGTYIosSSYM8FvyfnU9LrSbOtjUw",
-      "banCard": "https://drive.google.com/uc?export=view&id=1chMUn35DzpWRsYPfsd_kCnuExbUungfq"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/1e40da8e2a4d44679003967fac170ff82a82e303eeeef4df6a1ad81e55041d6f-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/1e40da8e2a4d44679003967fac170ff82a82e303eeeef4df6a1ad81e55041d6f-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/1e40da8e2a4d44679003967fac170ff82a82e303eeeef4df6a1ad81e55041d6f-banCard.png"
     },
     {
       "name": "Fracture",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1dHl6En9cSJlTzJZhN05nQIvKdXOqBCTg",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1OWgqTU92vdtVZSTQz-FL2nonJYLMOIm6",
-      "banCard": "https://drive.google.com/uc?export=view&id=11SdWSDE3TrGNrFlXRZmE3UjvLIVrTVHi"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/a1e7fbb6f89cb7dfa4ed6c8b68f5e1c2ccc762b0bada5713c6bb2311158e3670-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/a1e7fbb6f89cb7dfa4ed6c8b68f5e1c2ccc762b0bada5713c6bb2311158e3670-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/a1e7fbb6f89cb7dfa4ed6c8b68f5e1c2ccc762b0bada5713c6bb2311158e3670-banCard.png"
     },
     {
       "name": "Haven",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1iHiWR_CRAOpgMmIYD2xckwFMFSUKLeV1",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1CCUde2pjSPkl_T9D83T32XBE9sEBT--C",
-      "banCard": "https://drive.google.com/uc?export=view&id=1URNE1Skup9qNvLWk2s8JXSl1Ft2eqSfi"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/bbecb0f3d1523f8048c9904a5c78b399072d6a68fb319b0b70b0dd2e1b1f20a5-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/bbecb0f3d1523f8048c9904a5c78b399072d6a68fb319b0b70b0dd2e1b1f20a5-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/bbecb0f3d1523f8048c9904a5c78b399072d6a68fb319b0b70b0dd2e1b1f20a5-banCard.png"
     },
     {
       "name": "Ice Box",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1vfVFHe4lObLtbq5YWg3YNmxVkMBlmLm-",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1cgvTaUfgZXGNsV37pvipO5qzWvsIlFff",
-      "banCard": "https://drive.google.com/uc?export=view&id=1U2NNVhitt-3t1fJoKJLuCOgq6Ufmi1mM"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/3e273113364496dabfc30ce4cb2914407429ec8ba8100a24f42848dbc0a942b2-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/3e273113364496dabfc30ce4cb2914407429ec8ba8100a24f42848dbc0a942b2-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/3e273113364496dabfc30ce4cb2914407429ec8ba8100a24f42848dbc0a942b2-banCard.png"
     },
     {
       "name": "Lotus",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1RwekxHWMP5dx-IWLqJBN90XSZ1VFB2k6",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1yFKRo3V2frZcjrDtz6Z__IY7arMQ3D9I",
-      "banCard": "https://drive.google.com/uc?export=view&id=19A0BLV7yfuIrLVn_ou3HG-G5p2z0DaXg"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/a31675b9191a44e501b91714edca333f45bdcbff7e38d2bd3bcf029f22a9c218-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/a31675b9191a44e501b91714edca333f45bdcbff7e38d2bd3bcf029f22a9c218-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/a31675b9191a44e501b91714edca333f45bdcbff7e38d2bd3bcf029f22a9c218-banCard.png"
     },
     {
       "name": "Pearl",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1mSzaxXHQvKitOShT2FyjW8I-SCHD7rz7",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1H6kzRROVioVq656EU25JaQOTUFfgpr1f",
-      "banCard": "https://drive.google.com/uc?export=view&id=1nLpE1it5tr2ASPodqV-qUwWhHq4l8-jG"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/3b9420af30ff211e723711e4ec1cc868aa14cbba91729d5d8bb2fbb1e5b836ee-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/3b9420af30ff211e723711e4ec1cc868aa14cbba91729d5d8bb2fbb1e5b836ee-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/3b9420af30ff211e723711e4ec1cc868aa14cbba91729d5d8bb2fbb1e5b836ee-banCard.png"
     },
     {
       "name": "Split",
-      "nextMap": "https://drive.google.com/uc?export=view&id=1pF7CZCBGlHgxJE3yep_fXbruN0j8W8rJ",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1kckgwEzy2AtZbA1jW9DK5MIC05YaFldf",
-      "banCard": "https://drive.google.com/uc?export=view&id=1caenjTynRhUqne1GAPQAWlJ9nsMcQtZO"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/63eb19a7dc38077a93a522f8df8078a72ca4cca2367b5501df0582bd39f5ae53-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/63eb19a7dc38077a93a522f8df8078a72ca4cca2367b5501df0582bd39f5ae53-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/63eb19a7dc38077a93a522f8df8078a72ca4cca2367b5501df0582bd39f5ae53-banCard.png"
     },
     {
       "name": "Sunset",
-      "nextMap": "https://drive.google.com/uc?export=view&id=13WtbDnUxe0kTl8XNfmzhA14RqdOnNAi5",
-      "pickCard": "https://drive.google.com/uc?export=view&id=13oEXeQLxTky5DlKVrM_Y2VEib4XkosqK",
-      "banCard": "https://drive.google.com/uc?export=view&id=1P31K4hDw0ptJxu_pJfVgZsOfq7gzXw37"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/c5ffc74286292274ca514aa22c23c7d6e6c66b53c971c31ab28dfe72d31b8fc4-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/c5ffc74286292274ca514aa22c23c7d6e6c66b53c971c31ab28dfe72d31b8fc4-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/c5ffc74286292274ca514aa22c23c7d6e6c66b53c971c31ab28dfe72d31b8fc4-banCard.png"
     },
     {
       "name": "Corrode",
-      "nextMap": "https://drive.google.com/uc?export=view&id=13fubA3eU8hOFBCnQP5hTerms_ih0WH8v",
-      "pickCard": "https://drive.google.com/uc?export=view&id=1lvAqhmR9mAIooKRF7RVFqP8sbN2l2uPe",
-      "banCard": "https://drive.google.com/uc?export=view&id=1NGTXTelJyWOF3a_gy9OxtuEiT62c3XE1"
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/02862e9a60a6c3d7ff876b78552033920397662b8e705026aff6bf6be6da5c16-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/02862e9a60a6c3d7ff876b78552033920397662b8e705026aff6bf6be6da5c16-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/02862e9a60a6c3d7ff876b78552033920397662b8e705026aff6bf6be6da5c16-banCard.png"
+    },
+    {
+      "name": "Summit",
+      "nextMap": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/0ba4f3f03619502138342017330a86ea6fdd7ae6d57e7c8e60bee0eb7381f67e-nextMap.png",
+      "pickCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/0ba4f3f03619502138342017330a86ea6fdd7ae6d57e7c8e60bee0eb7381f67e-pickCard.png",
+      "banCard": "C:/Repos/Gaming-Oasis-Production-App/JSONs/valorant-maps/0ba4f3f03619502138342017330a86ea6fdd7ae6d57e7c8e60bee0eb7381f67e-banCard.png"
     }
   ]
 }

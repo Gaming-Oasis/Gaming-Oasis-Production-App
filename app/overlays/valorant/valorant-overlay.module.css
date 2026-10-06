@@ -395,6 +395,12 @@
   transform: scale(1.01);
 }
 
+.mapItemGenerated .mapArtwork {
+  object-fit: fill;
+  transform: none;
+  opacity: 1;
+}
+
 .mapItem:last-child {
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%);
 }

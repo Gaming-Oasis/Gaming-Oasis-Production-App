@@ -1,4 +1,5 @@
 "use client";
+import { mapUsesGeneratedArtwork } from "../../../lib/valorant-map-library.mjs";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -176,7 +177,8 @@ function MapWidgetStrip({ widget, teamOne, teamTwo }: { widget: MapWidget; teamO
         return (
           <section
             key={itemKey}
-            className={`${styles.mapItem} ${styles[`mapItem${map.status[0].toUpperCase()}${map.status.slice(1)}`]}`}
+            className={`${styles.mapItem} ${styles[`mapItem${map.status[0].toUpperCase()}${map.status.slice(1)}`]} ${mapUsesGeneratedArtwork({ pickCard: map.background }) ? styles.mapItemGenerated : ""}`}
+            aria-label={map.name}
           >
             <MapArtwork src={map.background} />
             <div className={styles.mapCopy}>
