@@ -15,6 +15,7 @@ The live human brand source is https://gamingoasis.gg/brand. The local Gaming Oa
 - This is a production operator tool. Optimize for speed, clarity, and reliability.
 - Use the exact Gaming Oasis tokens and official assets. Do not invent colors or logo treatments.
 - Browser overlays follow the **Browser overlays color scheme** in `docs/GAMING-OASIS-TOOL-BRAND-GUIDE.md`. Plate fill is `#171717` (score panels, player card, sponsor boxes, map-widget bases). Do not use `#191919`, `#0E1520`, `#222222`, or other invented near-blacks for those fills.
+- Browser overlays render a fixed 1920×1080 canvas for OBS browser sources. Always test `/overlays/*` routes at a 1920×1080 viewport.
 - Keep the UI matte, flat, compact, and structured. Avoid gradients, glows, glass effects, oversized hero sections, decorative charts, and excessive pills.
 - Use the system UI font for operational copy. Limit Oxanium to brand lockups and restrained product labels.
 - Draw Show stays behind `drawShowEnabled` and defaults to disabled.
