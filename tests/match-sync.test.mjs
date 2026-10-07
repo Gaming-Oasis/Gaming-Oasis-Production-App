@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyMatchLookupResult } from "../lib/match-sync.mjs";
+import { applyMatchLookupResult, inferSyncedId } from "../lib/match-sync.mjs";
 
 function makeTeam(name, overrides = {}) {
   return {
@@ -121,4 +121,64 @@ test("whitespace differences in the requested ID are normalized", () => {
   });
   assert.equal(next.syncedId, "match-a");
   assert.equal(next.team1.overrides.name, "Custom");
+});
+
+test("inferSyncedId migrates a pre-upgrade synced draft from its stored match ID", () => {
+  // Drafts saved before syncedId existed keep id + synced team data; refreshing
+  // the same ID must not clear the name overrides.
+  const legacy = makeMatch({ id: "match-a", syncedId: "" });
+  const migrated = inferSyncedId(legacy);
+  assert.equal(migrated, "match-a");
+
+  const next = applyMatchLookupResult(
+    { ...legacy, syncedId: migrated, team1: makeTeam("Alpha", { name: "Custom Alpha" }) },
+    {
+      requestedId: "match-a",
+      league: { name: "League" },
+      team1: makeTeam("Alpha", { name: "Custom Alpha" }),
+      team2: makeTeam("Beta"),
+    },
+  );
+  assert.equal(next.team1.overrides.name, "Custom Alpha");
+});
+
+test("inferSyncedId leaves a typed-but-never-loaded draft ID unsynced", () => {
+  const blankTeam = () => ({
+    sourceName: "",
+    name: "",
+    placement: "",
+    standing: "",
+    seed: "",
+    logo: "",
+    overrides: { name: "" },
+  });
+  const unsynced = {
+    id: "match-a",
+    syncedId: "",
+    team1: blankTeam(),
+    team2: blankTeam(),
+    league: { name: "", logo: "", eventName: "" },
+  };
+  assert.equal(inferSyncedId(unsynced), "");
+
+  // The eventual successful load of that ID still clears the overrides.
+  const next = applyMatchLookupResult(
+    { ...unsynced, team1: { ...blankTeam(), overrides: { name: "Custom" } } },
+    {
+      requestedId: "match-a",
+      league: {},
+      team1: { ...makeTeam("Alpha"), overrides: { name: "Custom" } },
+      team2: makeTeam("Beta"),
+    },
+  );
+  assert.equal(next.team1.overrides.name, "");
+});
+
+test("inferSyncedId keeps an explicit stored syncedId and handles empty input", () => {
+  assert.equal(inferSyncedId({ id: "match-a", syncedId: "match-b" }), "match-b");
+  assert.equal(inferSyncedId({ syncedId: "match-b" }), "match-b");
+  assert.equal(inferSyncedId({ syncedId: "  match-b  " }), "match-b");
+  assert.equal(inferSyncedId({}), "");
+  assert.equal(inferSyncedId({ id: "match-a" }), "");
+  assert.equal(inferSyncedId(null), "");
 });

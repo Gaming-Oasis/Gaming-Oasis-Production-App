@@ -46,20 +46,33 @@ test("normalize caps the list at the preset limit", () => {
 
 test("upsert creates a new preset and updates an existing one by name", () => {
   const created = upsertCasterPreset([], { name: "Joe", social: "@joe" });
-  assert.equal(created.created, true);
+  assert.equal(created.status, "created");
   assert.deepEqual(created.presets, [{ name: "Joe", social: "@joe" }]);
 
   const updated = upsertCasterPreset(created.presets, { name: "JOE", social: "@new" });
-  assert.equal(updated.created, false);
+  assert.equal(updated.status, "updated");
   assert.deepEqual(updated.presets, [{ name: "JOE", social: "@new" }]);
 
   const second = upsertCasterPreset(updated.presets, { name: "Jane", social: "" });
+  assert.equal(second.status, "created");
   assert.equal(second.presets.length, 2);
 });
 
 test("upsert rejects an empty caster name", () => {
-  assert.equal(upsertCasterPreset([], { name: "   ", social: "@x" }), null);
-  assert.equal(upsertCasterPreset([], {}), null);
+  assert.equal(upsertCasterPreset([], { name: "   ", social: "@x" }).status, "empty-name");
+  assert.equal(upsertCasterPreset([], {}).status, "empty-name");
+});
+
+test("upsert at the preset limit rejects new entries but still allows updates", () => {
+  const full = Array.from({ length: CASTER_PRESET_LIMIT }, (_, index) => ({ name: `Caster ${index}`, social: "" }));
+  const blocked = upsertCasterPreset(full, { name: "New Caster" });
+  assert.equal(blocked.status, "limit");
+  assert.equal(blocked.presets, undefined);
+
+  const updated = upsertCasterPreset(full, { name: "caster 0", social: "@updated" });
+  assert.equal(updated.status, "updated");
+  assert.equal(updated.presets.length, CASTER_PRESET_LIMIT);
+  assert.equal(updated.presets[0].social, "@updated");
 });
 
 test("remove deletes by name case-insensitively and tolerates missing presets", () => {
