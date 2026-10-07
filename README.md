@@ -151,6 +151,8 @@ npm run dev
 
 The app runs at `http://localhost:3000` by default. Production drafts and sidebar preferences are saved only in that browser profile on the workstation.
 
+**Upgrading an existing checkout:** if `git pull` reports that local changes to `JSONs/VALORANT MAP DATA.json` would be overwritten, the live writer has already rewritten that file with workstation artwork paths. Copy the file outside the repo, run `git checkout -- "JSONs/VALORANT MAP DATA.json"`, pull, then copy the file back — it is now ignored runtime output, and launch seeding will never overwrite it.
+
 ## Windows distribution
 
 Every push to `main` runs the full test and production-build gate in GitHub Actions, then updates the **Latest main build** GitHub release. The release contains:
