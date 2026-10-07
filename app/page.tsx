@@ -61,6 +61,7 @@ import {
   VALORANT_GAME_COUNT,
   VALORANT_MAP_ARTWORK,
   valorantGameLimit,
+  resetValorantVeto,
 } from "../lib/valorant.mjs";
 import {
   DEFAULT_LEAGUE_CHAMPIONS,
@@ -83,6 +84,14 @@ import {
 } from "../lib/league-of-legends.mjs";
 import { applyProductionDefaults, matchesProductionDefaults } from "../lib/production-defaults.mjs";
 import { clearProductionData } from "../lib/clear-production-data.mjs";
+import { applyMatchLookupResult } from "../lib/match-sync.mjs";
+import {
+  findCasterPreset,
+  loadCasterPresets,
+  removeCasterPreset,
+  saveCasterPresets,
+  upsertCasterPreset,
+} from "../lib/caster-presets.mjs";
 import LeagueScoreboardControls, { type LeagueScoreboardSettings } from "./LeagueScoreboardControls";
 import { normalizeLeagueScoreboard, resetLeagueScoreboardCounts } from "../lib/league-scoreboard.mjs";
 
@@ -137,6 +146,7 @@ type Team = {
 
 type Match = {
   id: string;
+  syncedId: string;
   team1: Team;
   team2: Team;
   league: MatchLeague;
@@ -465,6 +475,8 @@ type PendingConfirmation = {
   onConfirm: () => void;
 };
 
+type CasterPreset = { name: string; social: string };
+
 function hasOutputRelevantChanges(current: ProductionState, saved: ProductionState) {
   return current.general !== saved.general
     || current.rocketLeague !== saved.rocketLeague
@@ -553,6 +565,7 @@ class RequestTimeoutError extends Error {
 }
 
 const STORAGE_KEY = "gaming-oasis-production-v1";
+const CASTER_PRESETS_KEY = `${STORAGE_KEY}-caster-presets`;
 const STORAGE_SCHEMA_VERSION = 2;
 const WRITER_LEASE_KEY = `${STORAGE_KEY}-writer-lease`;
 const WORKSPACE_HANDOFF_CHANNEL = `${STORAGE_KEY}-handoff`;
@@ -691,7 +704,7 @@ const emptyTeam = (): Team => ({
 });
 
 function emptyMatch(): Match {
-  return { id: "", team1: emptyTeam(), team2: emptyTeam(), league: emptyLeague() };
+  return { id: "", syncedId: "", team1: emptyTeam(), team2: emptyTeam(), league: emptyLeague() };
 }
 
 function createDraws(): DrawData {
@@ -1057,6 +1070,7 @@ function mergeMatch(saved?: unknown): Match {
   const source = asRecord(saved);
   return {
     id: stringValue(source.id),
+    syncedId: stringValue(source.syncedId),
     team1: mergeTeam(source.team1),
     team2: mergeTeam(source.team2),
     league: mergeLeague(source.league),
@@ -1962,6 +1976,8 @@ export default function Home() {
   const [rocketLeagueSeriesResetOpen, setRocketLeagueSeriesResetOpen] = useState(false);
   const [valorantSeriesResetOpen, setValorantSeriesResetOpen] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [casterPresets, setCasterPresets] = useState<CasterPreset[]>([]);
+  const [casterPresetSelection, setCasterPresetSelection] = useState<{ main: string; second: string }>({ main: "", second: "" });
   const [hydrated, setHydrated] = useState(false);
   const [outputActivated, setOutputActivated] = useState(false);
   const [isPrimaryTab, setIsPrimaryTab] = useState(false);
@@ -2223,6 +2239,15 @@ export default function Home() {
       controller.abort();
     };
   }, [hydrated, isPrimaryTab]);
+
+  useEffect(() => {
+    const { presets, error } = loadCasterPresets(
+      typeof window === "undefined" ? null : window.localStorage,
+      CASTER_PRESETS_KEY,
+    );
+    setCasterPresets(presets);
+    if (error) notify("Saved caster presets could not be read");
+  }, [notify]);
 
   useEffect(() => {
     tabIdRef.current = createLocalId();
@@ -3009,6 +3034,63 @@ export default function Home() {
     setState((current) => ({ ...current, general: { ...current.general, [key]: value } }));
   }
 
+  function persistCasterPresets(next: CasterPreset[]) {
+    setCasterPresets(next);
+    const stored = saveCasterPresets(
+      typeof window === "undefined" ? null : window.localStorage,
+      CASTER_PRESETS_KEY,
+      next,
+    );
+    if (!stored) notify("Caster presets could not be saved — check browser storage");
+  }
+
+  function applyCasterPreset(slot: "main" | "second", name: string) {
+    setCasterPresetSelection((current) => ({ ...current, [slot]: name }));
+    if (!name) return;
+    const preset = findCasterPreset(casterPresets, name);
+    if (!preset) {
+      notify("Caster preset not found");
+      return;
+    }
+    const nameKey = slot === "main" ? "mainCaster" : "secondCaster";
+    const socialKey = slot === "main" ? "mainCasterSocial" : "secondaryCasterSocial";
+    setState((current) => ({
+      ...current,
+      general: { ...current.general, [nameKey]: preset.name, [socialKey]: preset.social },
+    }));
+    notify(`${slot === "main" ? "Main" : "Second"} caster filled from preset`);
+  }
+
+  function saveCasterPreset(slot: "main" | "second") {
+    const entry = slot === "main"
+      ? { name: state.general.mainCaster, social: state.general.mainCasterSocial }
+      : { name: state.general.secondCaster, social: state.general.secondaryCasterSocial };
+    const result = upsertCasterPreset(casterPresets, entry);
+    if (!result) {
+      notify("Enter a caster name before saving a preset");
+      return;
+    }
+    persistCasterPresets(result.presets);
+    setCasterPresetSelection((current) => ({ ...current, [slot]: result.preset.name }));
+    notify(result.created ? `Caster preset "${result.preset.name}" saved` : `Caster preset "${result.preset.name}" updated`);
+  }
+
+  function removeCasterPresetAction(slot: "main" | "second") {
+    const preset = findCasterPreset(casterPresets, casterPresetSelection[slot]);
+    if (!preset) return;
+    const slotLabel = slot === "main" ? "Main caster" : "Second caster";
+    requestConfirmation({
+      title: `Remove caster preset "${preset.name}"?`,
+      description: `This deletes the saved preset from this workstation. The ${slotLabel} fields keep their current values.`,
+      confirmLabel: "Remove preset",
+      onConfirm: () => {
+        persistCasterPresets(removeCasterPreset(casterPresets, preset.name));
+        setCasterPresetSelection((current) => ({ ...current, [slot]: "" }));
+        notify(`Caster preset "${preset.name}" removed`);
+      },
+    });
+  }
+
   async function copyValorantOverlayLink() {
     try {
       await navigator.clipboard.writeText(VALORANT_OVERLAY_URL);
@@ -3445,6 +3527,25 @@ export default function Home() {
     }));
     setValorantSeriesResetOpen(false);
     notify("VALORANT series results cleared");
+  }
+
+  function resetValorantMapBans() {
+    if (state.valorant.bestOf === "Bo1") return;
+    requestConfirmation({
+      title: `Reset VALORANT ${state.valorant.bestOf} map bans?`,
+      description: `This clears every pick, ban, and decider map selection in the current ${state.valorant.bestOf} veto and updates the production output. Map results, starting sides, ban swap, and series format stay as they are. This cannot be undone.`,
+      confirmLabel: "Reset map bans",
+      onConfirm: () => {
+        setState((current) => {
+          const key = current.valorant.bestOf === "Bo5" ? "bo5" : "bo3";
+          return {
+            ...current,
+            valorant: { ...current.valorant, [key]: resetValorantVeto(current.valorant[key]) },
+          };
+        });
+        notify("VALORANT map bans reset");
+      },
+    });
   }
 
   function updateValorantBo3(key: keyof ValorantBo3, value: string) {
@@ -4001,7 +4102,7 @@ export default function Home() {
           primaryColor: resolved.primaryColor,
           secondaryColor: resolved.secondaryColor,
         }, gameTitle));
-        matches[matchIndex] = { ...matches[matchIndex], team1, team2, league };
+        matches[matchIndex] = applyMatchLookupResult(currentMatch, { requestedId, league, team1, team2 }) as Match;
         return {
           ...current,
           general: {
@@ -4320,6 +4421,25 @@ export default function Home() {
                 <Field label="Main social" value={state.general.mainCasterSocial} onChange={(value) => updateGeneral("mainCasterSocial", value)} maxLength={15} placeholder="@handle" />
                 <Field label="Secondary social" value={state.general.secondaryCasterSocial} onChange={(value) => updateGeneral("secondaryCasterSocial", value)} maxLength={15} placeholder="@handle" />
               </div>
+              <div className="preset-list">
+                <span className="preset-title">Caster presets — saved on this workstation only</span>
+                {(["main", "second"] as const).map((slot) => {
+                  const slotLabel = slot === "main" ? "Main caster" : "Second caster";
+                  return (
+                    <div className="preset-row" key={slot}>
+                      <span><strong>{slotLabel}</strong><small>{casterPresets.length ? "Select a saved preset" : "No presets saved"}</small></span>
+                      <select aria-label={`${slotLabel} preset`} value={casterPresetSelection[slot]} onChange={(event) => applyCasterPreset(slot, event.target.value)}>
+                        <option value="">Select preset</option>
+                        {casterPresets.map((preset) => <option key={preset.name} value={preset.name}>{preset.name}</option>)}
+                      </select>
+                      <div className="preset-actions">
+                        <button className="button secondary" type="button" onClick={() => saveCasterPreset(slot)}>Save preset</button>
+                        <button className="button danger" type="button" disabled={!findCasterPreset(casterPresets, casterPresetSelection[slot])} onClick={() => removeCasterPresetAction(slot)}>Remove</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </section>
             <section className="panel-card">
               <div className="card-title-row"><div><h2>Stream copy</h2></div></div>
@@ -4499,7 +4619,7 @@ export default function Home() {
             ) : (
               <div className="valorant-pickban-grid">
                 <section className="panel-card pickban-card">
-                  <div className="card-title-row"><div><h2>Map selection</h2><p>{state.valorant.bestOf} pick and ban order</p></div></div>
+                  <div className="card-title-row"><div><h2>Map selection</h2><p>{state.valorant.bestOf} pick and ban order</p></div><button className="button danger" type="button" onClick={resetValorantMapBans}>Reset map bans</button></div>
                   <div className="pickban-list">
                     {activeMapRows.map((row, index) => {
                       const previousPhase = index > 0 ? activeMapRows[index - 1].phase : "";
