@@ -84,7 +84,7 @@ import {
 } from "../lib/league-of-legends.mjs";
 import { applyProductionDefaults, matchesProductionDefaults } from "../lib/production-defaults.mjs";
 import { clearProductionData } from "../lib/clear-production-data.mjs";
-import { applyMatchLookupResult, inferSyncedId } from "../lib/match-sync.mjs";
+import { applyMatchLookupResult } from "../lib/match-sync.mjs";
 import {
   CASTER_PRESET_LIMIT,
   findCasterPreset,
@@ -1071,7 +1071,7 @@ function mergeMatch(saved?: unknown): Match {
   const source = asRecord(saved);
   return {
     id: stringValue(source.id),
-    syncedId: inferSyncedId(source),
+    syncedId: stringValue(source.syncedId),
     team1: mergeTeam(source.team1),
     team2: mergeTeam(source.team2),
     league: mergeLeague(source.league),
