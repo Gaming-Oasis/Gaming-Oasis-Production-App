@@ -86,6 +86,7 @@ import { applyProductionDefaults, matchesProductionDefaults } from "../lib/produ
 import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyMatchLookupResult } from "../lib/match-sync.mjs";
 import {
+  CASTER_PRESET_LIMIT,
   findCasterPreset,
   loadCasterPresets,
   removeCasterPreset,
@@ -1942,6 +1943,14 @@ function handleTabListKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
   tabs[nextIndex].click();
 }
 
+function localStorageOrNull(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
   const [state, setState] = useState<ProductionState>(() => createInitialState());
   const [activeSection, setActiveSection] = useState<Section>("welcome");
@@ -2241,10 +2250,7 @@ export default function Home() {
   }, [hydrated, isPrimaryTab]);
 
   useEffect(() => {
-    const { presets, error } = loadCasterPresets(
-      typeof window === "undefined" ? null : window.localStorage,
-      CASTER_PRESETS_KEY,
-    );
+    const { presets, error } = loadCasterPresets(localStorageOrNull(), CASTER_PRESETS_KEY);
     setCasterPresets(presets);
     if (error) notify("Saved caster presets could not be read");
   }, [notify]);
@@ -3035,13 +3041,13 @@ export default function Home() {
   }
 
   function persistCasterPresets(next: CasterPreset[]) {
+    const stored = saveCasterPresets(localStorageOrNull(), CASTER_PRESETS_KEY, next);
+    if (!stored) {
+      notify("Caster presets could not be saved — check browser storage");
+      return false;
+    }
     setCasterPresets(next);
-    const stored = saveCasterPresets(
-      typeof window === "undefined" ? null : window.localStorage,
-      CASTER_PRESETS_KEY,
-      next,
-    );
-    if (!stored) notify("Caster presets could not be saved — check browser storage");
+    return true;
   }
 
   function applyCasterPreset(slot: "main" | "second", name: string) {
@@ -3066,13 +3072,17 @@ export default function Home() {
       ? { name: state.general.mainCaster, social: state.general.mainCasterSocial }
       : { name: state.general.secondCaster, social: state.general.secondaryCasterSocial };
     const result = upsertCasterPreset(casterPresets, entry);
-    if (!result) {
+    if (result.status === "empty-name") {
       notify("Enter a caster name before saving a preset");
       return;
     }
-    persistCasterPresets(result.presets);
+    if (result.status === "limit") {
+      notify(`Caster preset limit reached (${CASTER_PRESET_LIMIT}) — remove a preset first`);
+      return;
+    }
+    if (!persistCasterPresets(result.presets)) return;
     setCasterPresetSelection((current) => ({ ...current, [slot]: result.preset.name }));
-    notify(result.created ? `Caster preset "${result.preset.name}" saved` : `Caster preset "${result.preset.name}" updated`);
+    notify(result.status === "created" ? `Caster preset "${result.preset.name}" saved` : `Caster preset "${result.preset.name}" updated`);
   }
 
   function removeCasterPresetAction(slot: "main" | "second") {
@@ -3084,7 +3094,7 @@ export default function Home() {
       description: `This deletes the saved preset from this workstation. The ${slotLabel} fields keep their current values.`,
       confirmLabel: "Remove preset",
       onConfirm: () => {
-        persistCasterPresets(removeCasterPreset(casterPresets, preset.name));
+        if (!persistCasterPresets(removeCasterPreset(casterPresets, preset.name))) return;
         setCasterPresetSelection((current) => ({ ...current, [slot]: "" }));
         notify(`Caster preset "${preset.name}" removed`);
       },

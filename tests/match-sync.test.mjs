@@ -122,3 +122,33 @@ test("whitespace differences in the requested ID are normalized", () => {
   assert.equal(next.syncedId, "match-a");
   assert.equal(next.team1.overrides.name, "Custom");
 });
+
+test("a legacy draft without a stored syncedId clears overrides on its first successful load", () => {
+  // Drafts saved before syncedId existed hydrate with an empty syncedId. The
+  // stored id is operator-editable and cannot prove which match was last
+  // loaded, so the first post-upgrade lookup clears conservatively; after that
+  // the written syncedId makes same-ID refreshes keep the overrides.
+  const legacy = makeMatch({
+    id: "match-a",
+    syncedId: "",
+    team1: makeTeam("Alpha", { name: "Custom Alpha" }),
+    team2: makeTeam("Beta", { name: "Custom Beta" }),
+  });
+  const next = applyMatchLookupResult(legacy, {
+    requestedId: "match-a",
+    league: { name: "League" },
+    team1: makeTeam("Alpha", { name: "Custom Alpha" }),
+    team2: makeTeam("Beta", { name: "Custom Beta" }),
+  });
+  assert.equal(next.syncedId, "match-a");
+  assert.equal(next.team1.overrides.name, "");
+  assert.equal(next.team2.overrides.name, "");
+
+  const refreshed = applyMatchLookupResult(next, {
+    requestedId: "match-a",
+    league: { name: "League" },
+    team1: { ...makeTeam("Alpha"), overrides: { name: "Again" } },
+    team2: makeTeam("Beta"),
+  });
+  assert.equal(refreshed.team1.overrides.name, "Again");
+});
