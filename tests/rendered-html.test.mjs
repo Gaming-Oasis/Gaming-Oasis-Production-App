@@ -3547,7 +3547,7 @@ test("writes editable VALORANT map artwork beside the unchanged six-file package
 });
 
 test("ships the editable VALORANT map artwork defaults in JSONs", async () => {
-  const shipped = JSON.parse(await readFile(new URL("../JSONs/VALORANT%20MAP%20DATA.json", import.meta.url), "utf8"));
+  const shipped = JSON.parse(await readFile(new URL("../JSONs/templates/VALORANT%20MAP%20DATA.json", import.meta.url), "utf8"));
   assert.deepEqual(shipped, { maps: VALORANT_MAP_ARTWORK });
 });
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { deflateSync } from "node:zlib";
@@ -164,6 +164,25 @@ test("recovery export includes deduplicated PNGs and relative references without
   assert.equal(result[0].data[0].logo, "https://example.com/logo.png");
   assert.ok(result[2].bytes.length);
   await assert.rejects(prepareMapExport(files, async () => new Response("", { status: 404 })), /Reconnect/);
+});
+
+test("app launch seeds portable-resolving map data and preserves existing operator output", async (t) => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "oasis-map-seed-"));
+  t.after(() => rm(outputDir, { recursive: true, force: true }));
+  const writer = await startJsonWriter({ outputDir, port: 0, enableLeagueLiveClient: false, enableRocketLeagueStatsApi: false, seedValorantMapData: true });
+  await writer.close();
+  const seeded = JSON.parse(await readFile(path.join(outputDir, "VALORANT MAP DATA.json"), "utf8"));
+  assert.equal(seeded.maps.length, VALORANT_MAP_ARTWORK.length);
+  const placeholder = seeded.maps.find((map) => map.name === "Placeholder");
+  for (const key of ["nextMap", "pickCard", "banCard"]) assert.ok((await readFile(placeholder[key])).length > 0, `${key} should resolve to a bundled asset`);
+  const ascent = seeded.maps.find((map) => map.name === "Ascent");
+  const expected = VALORANT_MAP_ARTWORK.find((map) => map.name === "Ascent");
+  for (const key of ["nextMap", "pickCard", "banCard"]) assert.equal(ascent[key], expected[key]);
+  const custom = { maps: [{ name: "Custom", nextMap: "a.png", pickCard: "b.png", banCard: "c.png" }] };
+  await writeFile(path.join(outputDir, "VALORANT MAP DATA.json"), JSON.stringify(custom));
+  const restarted = await startJsonWriter({ outputDir, port: 0, enableLeagueLiveClient: false, enableRocketLeagueStatsApi: false, seedValorantMapData: true });
+  await restarted.close();
+  assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, "VALORANT MAP DATA.json"), "utf8")), custom);
 });
 
 test("map routes require the writer owner and keep six-file JSON writes compatible", async (t) => {
