@@ -19,7 +19,7 @@ try {
   const cli = path.resolve(path.dirname(vinextPackagePath), declaredBin);
   if (!existsSync(cli)) throw new Error("Vinext command entry point is missing; run npm ci");
 
-  writer = await startJsonWriter({ outputDir: path.join(root, "JSONs") });
+  writer = await startJsonWriter({ outputDir: path.join(root, "JSONs"), seedValorantMapData: true });
   writeFileSync(pidFile, String(process.pid), "utf8");
   console.log(`Live JSON output: ${writer.outputDir}`);
   app = spawn(process.execPath, [cli, mode], { cwd: root, stdio: "inherit" });

@@ -82,13 +82,13 @@ The VALORANT **Live match indicators** show the current saved map number and nam
 
 ### VALORANT map library
 
-**VALORANT → Map pool → Sync maps** retrieves the full standard map catalog from the unofficial public Valorant-API provider and automatically generates local artwork. The tool checks on startup when the last successful sync is more than 24 hours old, then daily while open. Training and Team Deathmatch maps are excluded; competitive rotation does not limit this library. Summit and source images for all 13 current standard maps are bundled for offline generation.
+**VALORANT → Map pool → Sync maps** retrieves the full standard map catalog from the unofficial public Valorant-API provider and automatically generates local artwork. The tool syncs on every launch to keep the library current, then checks daily while open. Training and Team Deathmatch maps are excluded; competitive rotation does not limit this library. Summit and source images for all 13 current standard maps are bundled for offline generation.
 
 Each map gets a **1920 × 1080 next-map image**, with artwork in the left 617 pixels and transparency throughout the remainder, plus **437 × 93 pick and ban cards**. Only the next-map image includes the map name. Its label matches `next game val.psd`: clockwise vertical Oxanium ExtraBold, white text in Overlay blend mode at full opacity, with the image texture showing through the letters. Its original size and position are retained; long names shrink to fit. Template updates trigger regeneration at the next automatic check or manual sync. The default placeholder is a bundled neutral charcoal panel with a gray map icon and no league branding or text; saved drafts using the former branded default migrate automatically. Pick and ban cards contain artwork only, with grayscale for bans; the browser map widget reuses the color pick card and displays the selected map name as live overlay text.
 
 Open **Edit source and crop** to upload a PNG/JPG or adjust its focal point, then choose **Generate artwork**. These overrides survive automatic sync; **Use automatic source** restores the provider image and centered crop. Existing customized artwork URLs remain intact under **Map names and artwork URL overrides**. **Reset to Default** restores the full standard map list and automatic sources, resets both focal points to 50%, and regenerates all artwork. It also clears custom maps and their saved overrides; cached images remain available for recovery. New maps and changed images publish automatically only after all three PNGs have been saved. Sync never clears picks, bans, or results, and failed updates retain the previous artwork. Offline checks use saved or bundled sources and retry hourly until a complete sync succeeds; **Sync maps** can retry immediately.
 
-Map metadata and cached sources live in `JSONs/.valorant-maps`; generated graphics live in `JSONs/valorant-maps`. Keep both directories when moving a workstation. The legacy map JSON retains its four existing fields. The writer converts generated image references to local paths for vMix, while browser overlays use local asset URLs. Recovery exports include the PNGs alongside the seven JSON files with relative references; unzip or copy the entire package into one folder. An untouched launch can download and prepare maps without replacing existing show JSON; the first production edit activates the normal complete-package writer.
+Map metadata and cached sources live in `JSONs/.valorant-maps`; generated graphics live in `JSONs/valorant-maps`. Keep both directories when moving a workstation. The shipped map defaults live in `JSONs/templates`; the live `VALORANT MAP DATA.json` is runtime output recreated at launch when missing, so localized workstation paths never overwrite the portable template. The legacy map JSON retains its four existing fields. The writer converts generated image references to local paths for vMix, while browser overlays use local asset URLs. Recovery exports include the PNGs alongside the seven JSON files with relative references; unzip or copy the entire package into one folder. An untouched launch can download and prepare maps without replacing existing show JSON; the first production edit activates the normal complete-package writer.
 
 ### Full Fearless setup
 
@@ -150,6 +150,8 @@ npm run dev
 ```
 
 The app runs at `http://localhost:3000` by default. Production drafts and sidebar preferences are saved only in that browser profile on the workstation.
+
+**Upgrading an existing checkout:** if `git pull` reports that local changes to `JSONs/VALORANT MAP DATA.json` would be overwritten, the live writer has already rewritten that file with workstation artwork paths. Copy the file outside the repo, run `git checkout -- "JSONs/VALORANT MAP DATA.json"`, pull, then copy the file back — it is now ignored runtime output, and launch seeding will never overwrite it.
 
 ## Windows distribution
 

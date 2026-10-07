@@ -9,6 +9,7 @@ import { formatSocialHandle } from "../lib/social-handle.mjs";
 import { isLeagueScoreboard } from "../lib/league-scoreboard.mjs";
 import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
 import { createValorantMapStore } from "../lib/valorant-map-store.mjs";
+import { VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
 import {
   mergeRocketLeagueOverlayLive,
   startRocketLeagueStatsApiClient,
@@ -208,6 +209,25 @@ async function recoverInterruptedTransaction(outputDir) {
   await rm(stageDir, { recursive: true, force: true });
   await rm(backupDir, { recursive: true, force: true });
   await unlinkWithRetry(journalPath);
+}
+
+// The shipped defaults live in JSONs/templates and are never a write target.
+// The live file is runtime output, seeded once so a fresh workspace resolves
+// artwork without ever replacing an operator's existing map data.
+async function seedValorantMapDataFile(outputDir, valorantMaps) {
+  const target = path.join(outputDir, VALORANT_MAP_DATA_FILENAME);
+  try {
+    await access(target);
+    return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const [seeded] = valorantMaps.localizeFiles([
+    { filename: VALORANT_MAP_DATA_FILENAME, data: { maps: VALORANT_MAP_ARTWORK } },
+  ]);
+  const temporary = `${target}.${process.pid}-${Date.now()}-${randomBytes(4).toString("hex")}.tmp`;
+  await writeFile(temporary, JSON.stringify(seeded.data, null, 2));
+  await rename(temporary, target);
 }
 
 async function commitJsonPackage(outputDir, files, beforeInstallFile, afterBackupFile) {
@@ -709,6 +729,7 @@ export async function startJsonWriter({
   hubLogoRetryCacheTtlMs = HUB_LOGO_RETRY_CACHE_TTL_MS,
   writerOwnerLeaseMs = WRITER_OWNER_LEASE_MS,
   dnsLookup = defaultDnsLookup,
+  seedValorantMapData = false,
 } = {}) {
   await mkdir(outputDir, { recursive: true });
   await recoverInterruptedTransaction(outputDir);
@@ -771,6 +792,7 @@ export async function startJsonWriter({
       return result;
     },
   });
+  if (seedValorantMapData) await seedValorantMapDataFile(outputDir, valorantMaps);
   const rocketLeagueStatsApi = enableRocketLeagueStatsApi
     ? startRocketLeagueStatsApiClient()
     : null;
@@ -1593,6 +1615,6 @@ export async function startJsonWriter({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const writer = await startJsonWriter();
+  const writer = await startJsonWriter({ seedValorantMapData: true });
   console.log(`Live JSON writer: ${writer.outputDir}`);
 }

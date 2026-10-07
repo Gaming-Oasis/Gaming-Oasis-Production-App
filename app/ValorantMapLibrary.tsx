@@ -34,7 +34,7 @@ async function readSource(url: string) {
 
 export function useValorantMapLibrary(options: Options) {
   const [library, setLibrary] = useState<Library>({ maps: [], lastSync: 0 });
-  const [status, setStatus] = useState("Maps sync daily while the tool is open.");
+  const [status, setStatus] = useState("Maps sync on launch and daily while the tool is open.");
   const [busy, setBusy] = useState(false);
   const [resetRevision, setResetRevision] = useState(0);
   const latest = useRef(options);
@@ -144,15 +144,17 @@ export function useValorantMapLibrary(options: Options) {
   useEffect(() => {
     if (!options.enabled) return;
     let active = true;
-    const check = async () => {
+    // Launch always runs the pull sync so artwork is current before a show;
+    // in-session checks still respect the daily interval and bounded retry.
+    const check = async (launch = false) => {
       if (busyRef.current || !latest.current.ownsWriter()) return;
       try {
         const data = await load();
         const outdated = data.maps.some((entry) => !entry.id.startsWith("custom-") && entry.templateVersion !== MAP_TEMPLATE_VERSION);
-        if (active && mapSyncDue(outdated ? 0 : data.lastSync, attemptedAt.current)) await sync();
+        if (active && (launch || mapSyncDue(outdated ? 0 : data.lastSync, attemptedAt.current))) await sync();
       } catch { if (active) setStatus("Map writer offline. Existing artwork is retained; reconnect or select Sync maps."); }
     };
-    void check();
+    void check(true);
     const timer = window.setInterval(check, 60_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [options.enabled, load, sync]);
@@ -231,7 +233,7 @@ function MapRow({ map, entry, controller }: { map: MapArtwork; entry?: Entry; co
 export function ValorantMapLibrary({ maps, controller }: { maps: MapArtwork[]; controller: Controller }) {
   return <div className="map-library">
     <div className="card-title-row">
-      <div><p role="status">{controller.status}</p><small>Last synced: {controller.library.lastSync ? new Date(controller.library.lastSync).toLocaleString() : "Not yet"} · Automatic checks every 24 hours</small></div>
+      <div><p role="status">{controller.status}</p><small>Last synced: {controller.library.lastSync ? new Date(controller.library.lastSync).toLocaleString() : "Not yet"} · Automatic checks on launch and every 24 hours</small></div>
       <button className="button primary" type="button" disabled={controller.busy} onClick={() => void controller.sync(true)}>{controller.busy ? "Syncing maps…" : "Sync maps"}</button>
     </div>
     {maps.filter((map) => mapNameKey(map.name) !== "placeholder").map((map) => {
