@@ -2465,7 +2465,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/game-results-layout/g) ?? []).length, 3);
   assert.equal((page.match(/<h2>Scoreboard setup<\/h2>/g) ?? []).length, 3);
   assert.equal((page.match(/<GameAutoAcceptControl /g) ?? []).length, 3);
-  assert.equal((page.match(/<GameFlipSidesControl /g) ?? []).length, 3);
+  assert.equal((page.match(/<GameFlipSidesControl /g) ?? []).length, 2);
   assert.equal((page.match(/<GameLiveMatchIndicators /g) ?? []).length, 3);
   assert.match(page, /<h2>Live Match Indicators<\/h2>/);
   assert.match(page, /function resetRocketLeagueSeries\(\)/);
