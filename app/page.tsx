@@ -5180,11 +5180,6 @@ export default function Home() {
     const leagueSelectionLocked = state.leagueOfLegends.draft.currentStep > 0;
     const selectionHolder = state.leagueOfLegends.firstSelectionTeam;
     const seedHolder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
-    const holderTeam = selectionHolder === "team1" ? teamOne : teamTwo;
-    const opponentTeam = selectionHolder === "team1" ? teamTwo : teamOne;
-    const opponentKey = selectionHolder ? leagueOtherTeam(selectionHolder) : "";
-    const holderName = holderTeam.name || (selectionHolder === "team2" ? "Team 2" : "Team 1");
-    const opponentName = opponentTeam.name || (selectionHolder === "team1" ? "Team 2" : "Team 1");
     const holderReason = !selectionHolder
       ? state.leagueOfLegends.currentGame === 1
         ? "No distinct seeds — run the witnessed coin toss in match chat, then record the winner here."
@@ -5192,20 +5187,9 @@ export default function Home() {
       : state.leagueOfLegends.currentGame === 1
         ? selectionHolder === seedHolder ? "Higher seed." : "Recorded coin-toss winner."
         : selectionHolder === previousLoser ? `Lost Game ${state.leagueOfLegends.currentGame - 1}.` : "Operator override.";
-    const selectionEntitlement = state.leagueOfLegends.firstSelectionEntitlement || "order";
-    const holderOrderPick = state.leagueOfLegends.firstPickTeam === selectionHolder ? "first" : "second";
-    const opponentOrderPick = state.leagueOfLegends.firstPickTeam && state.leagueOfLegends.firstPickTeam !== selectionHolder ? "first" : "second";
-    const holderMapSide = state.leagueOfLegends.blueTeam === selectionHolder ? "blue" : "red";
-    const opponentMapSide = state.leagueOfLegends.blueTeam === selectionHolder ? "red" : "blue";
     const leagueSelectionSummary = selectionHolder && state.leagueOfLegends.firstPickTeam
       ? `${blueTeam.name || "Blue team"}: Blue side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "First" : "Second"} pick — ${redTeam.name || "Red team"}: Red side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "Second" : "First"} pick`
       : "Resolve the holder above; the expected assignment fills in here.";
-    const updateLeagueEntitlement = (entitlement: "side" | "order") => {
-      if (!selectionHolder || !opponentKey) return;
-      updateLeagueSideConfig(entitlement === "order"
-        ? { firstSelectionEntitlement: "order", firstPickTeam: selectionHolder, blueTeam: opponentKey as LeagueOfLegends["blueTeam"] }
-        : { firstSelectionEntitlement: "side", blueTeam: selectionHolder, firstPickTeam: opponentKey as LeagueOfLegends["firstPickTeam"] });
-    };
     const firstSelectionSetup = (
       <section className="league-first-selection" aria-label="First Selection and draft order">
         <div className="card-title-row"><div><h3>First Selection · Game {state.leagueOfLegends.currentGame}</h3><p>Confirm the side assignment and draft order in match chat before locking a champion.</p></div></div>
@@ -5218,44 +5202,32 @@ export default function Home() {
             </select>
             <span className="field-hint">{holderReason}</span>
           </label>
-          <label className="field"><span className="field-label">{holderName} takes</span>
-            <select disabled={leagueSelectionLocked || !selectionHolder} value={selectionEntitlement} onChange={(event) => updateLeagueEntitlement(event.target.value as "side" | "order")}>
-              <option value="order">Draft order</option>
-              <option value="side">Map side</option>
-            </select>
-          </label>
-          {selectionEntitlement === "order" ? (
-            <>
-              <label className="field"><span className="field-label">{holderName}&apos;s draft order</span>
-                <select disabled={leagueSelectionLocked || !selectionHolder} value={holderOrderPick} onChange={(event) => updateLeagueSideConfig({ firstPickTeam: event.target.value === "first" ? selectionHolder : opponentKey as LeagueOfLegends["firstPickTeam"] })}>
-                  <option value="first">First pick</option>
-                  <option value="second">Second pick</option>
-                </select>
-              </label>
-              <label className="field"><span className="field-label">{opponentName}&apos;s map side</span>
-                <select disabled={leagueSelectionLocked || !selectionHolder} value={opponentMapSide} onChange={(event) => updateLeagueSideConfig({ blueTeam: event.target.value === "blue" ? opponentKey as LeagueOfLegends["blueTeam"] : selectionHolder as LeagueOfLegends["blueTeam"] })}>
-                  <option value="blue">Blue</option>
-                  <option value="red">Red</option>
-                </select>
-              </label>
-            </>
-          ) : (
-            <>
-              <label className="field"><span className="field-label">{holderName}&apos;s map side</span>
-                <select disabled={leagueSelectionLocked || !selectionHolder} value={holderMapSide} onChange={(event) => updateLeagueSideConfig({ blueTeam: event.target.value === "blue" ? selectionHolder as LeagueOfLegends["blueTeam"] : opponentKey as LeagueOfLegends["blueTeam"] })}>
-                  <option value="blue">Blue</option>
-                  <option value="red">Red</option>
-                </select>
-              </label>
-              <label className="field"><span className="field-label">{opponentName}&apos;s draft order</span>
-                <select disabled={leagueSelectionLocked || !selectionHolder} value={opponentOrderPick} onChange={(event) => updateLeagueSideConfig({ firstPickTeam: event.target.value === "first" ? opponentKey as LeagueOfLegends["firstPickTeam"] : selectionHolder })}>
-                  <option value="first">First pick</option>
-                  <option value="second">Second pick</option>
-                </select>
-              </label>
-            </>
-          )}
           <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
+        </div>
+        <div className="league-selection-teams">
+          {(["team1", "team2"] as const).map((teamKey) => {
+            const team = teamKey === "team1" ? teamOne : teamTwo;
+            const teamSide = state.leagueOfLegends.blueTeam === teamKey ? "blue" : "red";
+            const teamOrder = state.leagueOfLegends.firstPickTeam === teamKey ? "first" : "second";
+            const otherKey = leagueOtherTeam(teamKey) as LeagueOfLegends["blueTeam"];
+            return (
+              <div className="league-selection-team" key={teamKey}>
+                <strong>{team.name || (teamKey === "team1" ? "Team 1" : "Team 2")}{selectionHolder === teamKey ? " · holds First Selection" : ""}</strong>
+                <label className="field"><span className="field-label">Side</span>
+                  <select disabled={leagueSelectionLocked} value={teamSide} onChange={(event) => updateLeagueSideConfig({ blueTeam: event.target.value === "blue" ? teamKey : otherKey })}>
+                    <option value="blue">Blue</option>
+                    <option value="red">Red</option>
+                  </select>
+                </label>
+                <label className="field"><span className="field-label">Pick order</span>
+                  <select disabled={leagueSelectionLocked} value={teamOrder} onChange={(event) => updateLeagueSideConfig({ firstPickTeam: event.target.value === "first" ? teamKey : otherKey })}>
+                    <option value="first">First pick</option>
+                    <option value="second">Second pick</option>
+                  </select>
+                </label>
+              </div>
+            );
+          })}
         </div>
         <p className="field-hint" role="status">{leagueSelectionSummary}</p>
       </section>

@@ -500,6 +500,10 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
 .league-first-selection h3 { margin: 0; font-size: 13px; font-weight: 600; }
 .league-first-selection .card-title-row p { margin: 4px 0 0; }
 .league-first-selection > .field-hint { margin: 0; }
+.league-selection-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.league-selection-team { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 5px; background: #272727; }
+.league-selection-team > strong { font-size: 12px; font-weight: 600; }
+.league-selection-team .field { margin: 0; }
 .league-active-step { margin-top: var(--space-4); padding: 14px; display: grid; grid-template-columns: 1fr; gap: 12px; border: 1px solid color-mix(in srgb, var(--brand) 48%, var(--border)); border-radius: 6px; background: #222222; }
 .league-active-step > div { display: flex; flex-direction: column; gap: 5px; }
 .league-active-step > div span { color: var(--muted); font-size: 9px; }
