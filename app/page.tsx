@@ -277,6 +277,7 @@ type LeagueLivePreview = {
 type WriterLiveDataStatus = {
   checked: boolean;
   reachable: boolean;
+  outputDir: string | null;
   rocketLeagueStatsApi: null | {
     connected: boolean;
     lastEventAt: string | null;
@@ -1990,6 +1991,7 @@ export default function Home() {
   const [writerLiveDataStatus, setWriterLiveDataStatus] = useState<WriterLiveDataStatus>({
     checked: false,
     reachable: false,
+    outputDir: null,
     rocketLeagueStatsApi: null,
     leagueOfLegends: null,
   });
@@ -2180,12 +2182,13 @@ export default function Home() {
         setWriterLiveDataStatus({
           checked: true,
           reachable: true,
+          outputDir: typeof payload.outputDir === "string" ? payload.outputDir : null,
           rocketLeagueStatsApi: payload.rocketLeagueStatsApi ?? null,
           leagueOfLegends: payload.leagueOfLegends ?? null,
         });
       } catch {
         if (active) {
-          setWriterLiveDataStatus({ checked: true, reachable: false, rocketLeagueStatsApi: null, leagueOfLegends: null });
+          setWriterLiveDataStatus({ checked: true, reachable: false, outputDir: null, rocketLeagueStatsApi: null, leagueOfLegends: null });
         }
       } finally {
         requestActive = false;
@@ -3185,6 +3188,17 @@ export default function Home() {
       notify(`${label} overlay link copied`);
     } catch {
       notify("Could not copy the overlay link");
+    }
+  }
+
+  async function copyJsonOutputPath() {
+    const outputDir = writerLiveDataStatus.outputDir;
+    if (!outputDir) return;
+    try {
+      await navigator.clipboard.writeText(outputDir);
+      notify("JSON output folder path copied");
+    } catch {
+      notify("Could not copy the output folder path");
     }
   }
 
@@ -4305,7 +4319,11 @@ export default function Home() {
         <section className="activity-strip">
           <div><span className={`status-dot ${liveSync === "synced" ? "live" : ""}`} /><p><strong>Live JSON</strong>{liveSyncLongLabel(liveSync)}</p></div>
           <div><span className={`status-dot ${connection === "connected" ? "live" : ""}`} /><p><strong>League Hub</strong>{connection === "connected" ? "Match data synced" : connection === "error" ? "Last sync failed" : "Ready for a match ID"}</p></div>
-          <div><span className="status-dot live" /><p><strong>Output folder</strong>Local JSONs directory</p></div>
+          <div>
+            <span className={`status-dot ${writerLiveDataStatus.outputDir ? "live" : ""}`} />
+            <p><strong>Output folder</strong><span className="output-path">{writerLiveDataStatus.outputDir ?? "Local JSONs directory"}</span></p>
+            {writerLiveDataStatus.outputDir ? <button className="button compact copy-output-path" type="button" onClick={copyJsonOutputPath}>Copy</button> : null}
+          </div>
         </section>
       </div>
     );
