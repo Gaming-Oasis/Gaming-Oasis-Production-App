@@ -5197,9 +5197,9 @@ export default function Home() {
     const opponentOrderPick = state.leagueOfLegends.firstPickTeam && state.leagueOfLegends.firstPickTeam !== selectionHolder ? "first" : "second";
     const holderMapSide = state.leagueOfLegends.blueTeam === selectionHolder ? "blue" : "red";
     const opponentMapSide = state.leagueOfLegends.blueTeam === selectionHolder ? "red" : "blue";
-    const leagueSelectionSummary = state.leagueOfLegends.firstPickTeam
+    const leagueSelectionSummary = selectionHolder && state.leagueOfLegends.firstPickTeam
       ? `${blueTeam.name || "Blue team"}: Blue side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "First" : "Second"} pick — ${redTeam.name || "Red team"}: Red side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "Second" : "First"} pick`
-      : "Configure the holder above; the expected assignment fills in here.";
+      : "Resolve the holder above; the expected assignment fills in here.";
     const updateLeagueEntitlement = (entitlement: "side" | "order") => {
       if (!selectionHolder || !opponentKey) return;
       updateLeagueSideConfig(entitlement === "order"
