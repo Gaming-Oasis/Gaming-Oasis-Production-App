@@ -3351,7 +3351,9 @@ export default function Home() {
         ? expectedLeagueSelection(holder)
         : null;
       const expected = rawExpected && current.leagueOfLegends.sideControl === "manual" ? { firstPickTeam: rawExpected.firstPickTeam } : rawExpected;
-      const nextBlueTeam = expected?.blueTeam ?? current.leagueOfLegends.blueTeam;
+      const nextBlueTeam = current.leagueOfLegends.sideControl === "manual"
+        ? current.leagueOfLegends.blueTeam
+        : rawExpected?.blueTeam ?? current.leagueOfLegends.blueTeam;
       const nextFirstPickTeam = expected?.firstPickTeam ?? current.leagueOfLegends.firstPickTeam;
       return {
         ...current,
@@ -5172,6 +5174,7 @@ export default function Home() {
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
     const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
     const leagueSelectionLocked = state.leagueOfLegends.draft.currentStep > 0;
+    const sideControl = state.leagueOfLegends.sideControl;
     const seedHolder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
     const leagueSelectionSummary = state.leagueOfLegends.firstPickTeam
       ? `${blueTeam.name || "Blue team"}: Blue side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "First" : "Second"} pick — ${redTeam.name || "Red team"}: Red side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "Second" : "First"} pick`
@@ -5188,7 +5191,7 @@ export default function Home() {
               <div className="league-selection-team" key={teamKey}>
                 <strong>{team.name || (teamKey === "team1" ? "Team 1" : "Team 2")}</strong>
                 <label className="field"><span className="field-label">Side</span>
-                  <select disabled={leagueSelectionLocked} value={teamSide} onChange={(event) => updateLeagueSideConfig({ blueTeam: event.target.value === "blue" ? teamKey : otherKey })}>
+                  <select disabled={leagueSelectionLocked || sideControl === "manual"} value={teamSide} onChange={(event) => updateLeagueSideConfig({ blueTeam: event.target.value === "blue" ? teamKey : otherKey })}>
                     <option value="blue">Blue</option>
                     <option value="red">Red</option>
                   </select>
@@ -5200,6 +5203,7 @@ export default function Home() {
             );
           })}
         </div>
+        {sideControl === "manual" ? <p className="field-hint">Sides are set manually with Flip Sides (Results &amp; setup).</p> : null}
         <div className="form-grid">
           <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
         </div>
@@ -5402,12 +5406,12 @@ export default function Home() {
                     hint={state.leagueOfLegends.scoreboardHeader.trim() ? `On-air: ${leagueHeader}` : "Leave blank to use General Info event name."}
                   />
                   <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
+                  <label className="field"><span className="field-label">Side control</span><select value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueOfLegends({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{sideControl === "draft" ? "Sides follow the Draft tab each game." : "Flip Sides sets sides; saves still set pick order."}</span></label>
                 </div>
-                <label className="field"><span className="field-label">Side control</span><select value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueOfLegends({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{state.leagueOfLegends.sideControl === "draft" ? "The draft's Sides & pick order block drives the side assignment each game." : "Flip sides manually; result saves still drive draft order only."}</span></label>
                 <div className="valorant-toggle-list">
-                  <p className="field-hint" role="status">{leagueSelectionSummary}{state.leagueOfLegends.sideControl === "draft" ? " — set on the Draft tab." : " — manual mode."}</p>
-                  <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
                   <GameFlipSidesControl gameName="League of Legends" disabled={state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0} checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1" })} />
+                  <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
+                  <p className="field-hint" role="status">{leagueSelectionSummary}</p>
                 </div>
               </section>
               <GameLiveMatchIndicators gameName="League of Legends" indicators={[

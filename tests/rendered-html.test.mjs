@@ -395,6 +395,12 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /current\.general\.eventName === previousResolved\.eventName[\s\S]{0,300}eventName: shouldRestoreSourceEvent/);
   assert.match(page, /eventName: matchIndex === 0 && updatesEventName \? resolved\.eventName : current\.general\.eventName/);
   assert.match(page, /eventName: shouldRestoreSourceEvent \? resolved\.eventName : current\.general\.eventName/);
+  assert.match(page, /const sideControl = state\.leagueOfLegends\.sideControl;/);
+  assert.match(page, /<select disabled=\{leagueSelectionLocked \|\| sideControl === "manual"\}/);
+  assert.match(page, /Sides are set manually with Flip Sides \(Results &amp; setup\)\./);
+  assert.match(page, /Sides follow the Draft tab each game\./);
+  assert.match(page, /Flip Sides sets sides; saves still set pick order\./);
+  assert.match(page, /<GameFlipSidesControl gameName="League of Legends"[\s\S]*<GameAutoAcceptControl gameName="League of Legends"[\s\S]*<p className="field-hint" role="status">\{leagueSelectionSummary\}<\/p>/);
   assert.doesNotMatch(page, /allowEmptyLiveWrite|liveWriteReady/);
   assert.match(html, /Export JSON package/);
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
