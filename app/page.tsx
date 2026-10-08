@@ -289,6 +289,8 @@ type WriterLiveDataStatus = {
 };
 
 type LeagueOfLegends = {
+  /** Who owns the map-side assignment: the draft drive (default) or the manual Flip Sides switch. */
+  sideControl: "draft" | "manual";
   firstPickTeam: "" | "team1" | "team2";
   scoreboardHeader: string;
   scoreboard: LeagueScoreboardSettings;
@@ -818,6 +820,7 @@ function createInitialState(): ProductionState {
       bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
     },
     leagueOfLegends: {
+      sideControl: "draft",
       firstPickTeam: "",
       scoreboardHeader: "",
       scoreboard: normalizeLeagueScoreboard() as LeagueScoreboardSettings,
@@ -1209,6 +1212,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       bestOf: savedLeagueBestOf,
       draftMode: savedLeague.draftMode === "standard" ? "standard" : savedLeague.draftMode === "online" ? "online" : "fearless",
       currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
+      sideControl: savedLeague.sideControl === "manual" ? "manual" : "draft",
       firstPickTeam: resolveLeagueFirstPickTeam(savedLeague),
       blueTeam: savedLeague.blueTeam === "team2" ? "team2" : "team1",
       autoAcceptLiveResults: booleanValue(savedLeague.autoAcceptLiveResults, false),
@@ -1796,10 +1800,12 @@ function GameFlipSidesControl({
   gameName,
   checked,
   onChange,
+  disabled = false,
 }: {
   gameName: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="valorant-toggle-row">
@@ -1808,7 +1814,7 @@ function GameFlipSidesControl({
         <p>Swap Team 1 and Team 2 across the scoreboard and live graphics. Saved results stay in Team 1/Team 2 order.</p>
       </div>
       <label className="switch large">
-        <input aria-label={`Flip ${gameName} team sides`} type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+        <input aria-label={`Flip ${gameName} team sides`} type="checkbox" disabled={disabled} checked={checked} onChange={(event) => onChange(event.target.checked)} />
         <span />
       </label>
     </div>
@@ -3205,7 +3211,9 @@ export default function Home() {
   function updateLeagueBestOf(bestOf: LeagueOfLegends["bestOf"]) {
     setState((current) => {
       const holder = resolveLeagueFirstSelection(current.leagueOfLegends, current.leagueOfLegends.confirmedGames, bestOf);
-      const expected = current.leagueOfLegends.draft.currentStep === 0 ? expectedLeagueSelection(holder) : null;
+      // Manual side control keeps the operator's sides; draft order still follows the holder.
+      const raw = current.leagueOfLegends.draft.currentStep === 0 ? expectedLeagueSelection(holder) : null;
+      const expected = raw && current.leagueOfLegends.sideControl === "manual" ? { firstPickTeam: raw.firstPickTeam } : raw;
       return {
         ...current,
         leagueOfLegends: {
@@ -3339,9 +3347,10 @@ export default function Home() {
       const gameAdvanced = currentGame !== current.leagueOfLegends.currentGame;
       // A new game re-drives the expected assignment for the previous loser; a corrected winner does too, but never mid-draft.
       const holder = resolveLeagueFirstSelection(current.leagueOfLegends, confirmedGames);
-      const expected = (gameAdvanced || (currentResultChanged && current.leagueOfLegends.draft.currentStep === 0))
+      const rawExpected = (gameAdvanced || (currentResultChanged && current.leagueOfLegends.draft.currentStep === 0))
         ? expectedLeagueSelection(holder)
         : null;
+      const expected = rawExpected && current.leagueOfLegends.sideControl === "manual" ? { firstPickTeam: rawExpected.firstPickTeam } : rawExpected;
       const nextBlueTeam = expected?.blueTeam ?? current.leagueOfLegends.blueTeam;
       const nextFirstPickTeam = expected?.firstPickTeam ?? current.leagueOfLegends.firstPickTeam;
       return {
@@ -3375,7 +3384,8 @@ export default function Home() {
   useEffect(() => {
     if (!hydrated || state.leagueOfLegends.currentGame !== 1 || state.leagueOfLegends.firstPickTeam) return;
     const holder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
-    const expected = holder ? expectedLeagueSelection(holder) : null;
+    const raw = holder ? expectedLeagueSelection(holder) : null;
+    const expected = raw && state.leagueOfLegends.sideControl === "manual" ? { firstPickTeam: raw.firstPickTeam } : raw;
     if (!expected) return;
     setState((current) => {
       if (current.leagueOfLegends.currentGame !== 1 || current.leagueOfLegends.firstPickTeam || current.leagueOfLegends.draft.currentStep > 0) return current;
@@ -3388,7 +3398,7 @@ export default function Home() {
         },
       };
     });
-  }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstPickTeam]);
+  }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstPickTeam, state.leagueOfLegends.sideControl]);
 
   function resetLeagueSeries() {
     if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool.")) return;
@@ -3397,6 +3407,7 @@ export default function Home() {
       leagueOfLegends: {
         ...current.leagueOfLegends,
         currentGame: 1,
+        sideControl: "draft",
         firstPickTeam: "",
         blueTeam: "team1",
         scoreboard: resetLeagueScoreboardCounts(current.leagueOfLegends.scoreboard) as LeagueScoreboardSettings,
@@ -5392,9 +5403,11 @@ export default function Home() {
                   />
                   <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
                 </div>
+                <label className="field"><span className="field-label">Side control</span><select value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueOfLegends({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{state.leagueOfLegends.sideControl === "draft" ? "The draft's Sides & pick order block drives the side assignment each game." : "Flip sides manually; result saves still drive draft order only."}</span></label>
                 <div className="valorant-toggle-list">
-                  <p className="field-hint" role="status">{leagueSelectionSummary} — set on the Draft tab.</p>
+                  <p className="field-hint" role="status">{leagueSelectionSummary}{state.leagueOfLegends.sideControl === "draft" ? " — set on the Draft tab." : " — manual mode."}</p>
                   <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
+                  <GameFlipSidesControl gameName="League of Legends" disabled={state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0} checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1" })} />
                 </div>
               </section>
               <GameLiveMatchIndicators gameName="League of Legends" indicators={[
