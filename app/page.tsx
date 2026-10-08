@@ -289,8 +289,6 @@ type WriterLiveDataStatus = {
 };
 
 type LeagueOfLegends = {
-  firstSelectionTeam: "" | "team1" | "team2";
-  firstSelectionEntitlement: "" | "side" | "order";
   firstPickTeam: "" | "team1" | "team2";
   scoreboardHeader: string;
   scoreboard: LeagueScoreboardSettings;
@@ -820,8 +818,6 @@ function createInitialState(): ProductionState {
       bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
     },
     leagueOfLegends: {
-      firstSelectionTeam: "",
-      firstSelectionEntitlement: "",
       firstPickTeam: "",
       scoreboardHeader: "",
       scoreboard: normalizeLeagueScoreboard() as LeagueScoreboardSettings,
@@ -1213,8 +1209,6 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       bestOf: savedLeagueBestOf,
       draftMode: savedLeague.draftMode === "standard" ? "standard" : savedLeague.draftMode === "online" ? "online" : "fearless",
       currentGame: calculateLeagueCurrentGame(savedLeagueConfirmedGames, savedLeagueBestOf),
-      firstSelectionTeam: resolveLeagueFirstSelection(savedLeague, savedLeagueConfirmedGames, savedLeagueBestOf),
-      firstSelectionEntitlement: savedLeague.firstSelectionEntitlement === "side" || savedLeague.firstSelectionEntitlement === "order" ? savedLeague.firstSelectionEntitlement : "",
       firstPickTeam: resolveLeagueFirstPickTeam(savedLeague),
       blueTeam: savedLeague.blueTeam === "team2" ? "team2" : "team1",
       autoAcceptLiveResults: booleanValue(savedLeague.autoAcceptLiveResults, false),
@@ -3208,20 +3202,15 @@ export default function Home() {
     });
   }
 
-  /** A new holder drives the expected assignment: they take First Pick, their opponent takes Blue. */
-  function updateLeagueSelectionHolder(holder: LeagueOfLegends["firstSelectionTeam"]) {
-    updateLeagueSideConfig(expectedLeagueSelection(holder) ?? { firstSelectionTeam: "" });
-  }
-
   function updateLeagueBestOf(bestOf: LeagueOfLegends["bestOf"]) {
     setState((current) => {
-      const firstSelectionTeam = resolveLeagueFirstSelection(current.leagueOfLegends, current.leagueOfLegends.confirmedGames, bestOf);
-      const expected = current.leagueOfLegends.draft.currentStep === 0 ? expectedLeagueSelection(firstSelectionTeam) : null;
+      const holder = resolveLeagueFirstSelection(current.leagueOfLegends, current.leagueOfLegends.confirmedGames, bestOf);
+      const expected = current.leagueOfLegends.draft.currentStep === 0 ? expectedLeagueSelection(holder) : null;
       return {
         ...current,
         leagueOfLegends: {
           ...current.leagueOfLegends,
-          ...(expected ?? { firstSelectionTeam }),
+          ...(expected ?? {}),
           bestOf,
           currentGame: calculateLeagueCurrentGame(current.leagueOfLegends.confirmedGames, bestOf),
         },
@@ -3348,10 +3337,10 @@ export default function Home() {
         !== (current.leagueOfLegends.results[current.leagueOfLegends.currentGame - 1]?.winner ?? "");
       const currentGame = calculateLeagueCurrentGame(confirmedGames, current.leagueOfLegends.bestOf);
       const gameAdvanced = currentGame !== current.leagueOfLegends.currentGame;
-      const firstSelectionTeam = resolveLeagueFirstSelection(current.leagueOfLegends, confirmedGames);
-      // A new game re-drives the expected assignment; a corrected winner does too, but never mid-draft.
+      // A new game re-drives the expected assignment for the previous loser; a corrected winner does too, but never mid-draft.
+      const holder = resolveLeagueFirstSelection(current.leagueOfLegends, confirmedGames);
       const expected = (gameAdvanced || (currentResultChanged && current.leagueOfLegends.draft.currentStep === 0))
-        ? expectedLeagueSelection(firstSelectionTeam)
+        ? expectedLeagueSelection(holder)
         : null;
       const nextBlueTeam = expected?.blueTeam ?? current.leagueOfLegends.blueTeam;
       const nextFirstPickTeam = expected?.firstPickTeam ?? current.leagueOfLegends.firstPickTeam;
@@ -3362,8 +3351,6 @@ export default function Home() {
           confirmedGames,
           results: leagueResultsFromConfirmedGames(confirmedGames),
           currentGame,
-          firstSelectionTeam,
-          firstSelectionEntitlement: expected?.firstSelectionEntitlement ?? current.leagueOfLegends.firstSelectionEntitlement,
           firstPickTeam: nextFirstPickTeam,
           blueTeam: nextBlueTeam,
           scoreboard: gameAdvanced
@@ -3384,14 +3371,14 @@ export default function Home() {
     saveLeagueResults();
   }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id]);
 
-  // Game 1 drives First Selection from the imported seeds; equal or missing seeds wait for the coin toss.
+  // Game 1 applies the expected assignment to the higher seed; equal or missing seeds wait for the coin toss.
   useEffect(() => {
-    if (!hydrated || state.leagueOfLegends.currentGame !== 1 || state.leagueOfLegends.firstSelectionTeam) return;
+    if (!hydrated || state.leagueOfLegends.currentGame !== 1 || state.leagueOfLegends.firstPickTeam) return;
     const holder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
     const expected = holder ? expectedLeagueSelection(holder) : null;
     if (!expected) return;
     setState((current) => {
-      if (current.leagueOfLegends.currentGame !== 1 || current.leagueOfLegends.firstSelectionTeam || current.leagueOfLegends.draft.currentStep > 0) return current;
+      if (current.leagueOfLegends.currentGame !== 1 || current.leagueOfLegends.firstPickTeam || current.leagueOfLegends.draft.currentStep > 0) return current;
       const merged = { ...current.leagueOfLegends, ...expected };
       return {
         ...current,
@@ -3401,7 +3388,7 @@ export default function Home() {
         },
       };
     });
-  }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstSelectionTeam]);
+  }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstPickTeam]);
 
   function resetLeagueSeries() {
     if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool.")) return;
@@ -3410,8 +3397,6 @@ export default function Home() {
       leagueOfLegends: {
         ...current.leagueOfLegends,
         currentGame: 1,
-        firstSelectionTeam: "",
-        firstSelectionEntitlement: "",
         firstPickTeam: "",
         blueTeam: "team1",
         scoreboard: resetLeagueScoreboardCounts(current.leagueOfLegends.scoreboard) as LeagueScoreboardSettings,
@@ -5175,59 +5160,37 @@ export default function Home() {
     const teamTwo = resolveTeam(state.general.matches[0].team2);
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
     const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
-    const previousWinner = leagueConfirmedGames.find((game) => game.gameNumber === state.leagueOfLegends.currentGame - 1)?.winner;
-    const previousLoser = previousWinner === "team1" ? "team2" : previousWinner === "team2" ? "team1" : "";
     const leagueSelectionLocked = state.leagueOfLegends.draft.currentStep > 0;
-    const selectionHolder = state.leagueOfLegends.firstSelectionTeam;
     const seedHolder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
-    const holderReason = !selectionHolder
-      ? state.leagueOfLegends.currentGame === 1
-        ? "No distinct seeds — run the witnessed coin toss in match chat, then record the winner here."
-        : "Save the previous game's result to identify the team holding First Selection."
-      : state.leagueOfLegends.currentGame === 1
-        ? selectionHolder === seedHolder ? "Higher seed." : "Recorded coin-toss winner."
-        : selectionHolder === previousLoser ? `Lost Game ${state.leagueOfLegends.currentGame - 1}.` : "Operator override.";
-    const leagueSelectionSummary = selectionHolder && state.leagueOfLegends.firstPickTeam
+    const leagueSelectionSummary = state.leagueOfLegends.firstPickTeam
       ? `${blueTeam.name || "Blue team"}: Blue side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "First" : "Second"} pick — ${redTeam.name || "Red team"}: Red side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "Second" : "First"} pick`
-      : "Resolve the holder above; the expected assignment fills in here.";
+      : "Set each team's side and pick order.";
     const firstSelectionSetup = (
-      <section className="league-first-selection" aria-label="First Selection and draft order">
-        <div className="card-title-row"><div><h3>First Selection · Game {state.leagueOfLegends.currentGame}</h3><p>Confirm the side assignment and draft order in match chat before locking a champion.</p></div></div>
-        <div className="form-grid">
-          <label className="field"><span className="field-label">Holds First Selection</span>
-            <select disabled={leagueSelectionLocked} value={selectionHolder} onChange={(event) => updateLeagueSelectionHolder(event.target.value as LeagueOfLegends["firstSelectionTeam"])}>
-              <option value="" disabled>Select team</option>
-              <option value="team1">{teamOne.name || "Team 1"}</option>
-              <option value="team2">{teamTwo.name || "Team 2"}</option>
-            </select>
-            <span className="field-hint">{holderReason}</span>
-          </label>
-          <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
-        </div>
+      <section className="league-first-selection" aria-label="Side and draft order">
+        <div className="card-title-row"><div><h3>Sides &amp; pick order · Game {state.leagueOfLegends.currentGame}</h3><p>Confirm the side assignment and draft order in match chat before locking a champion.{state.leagueOfLegends.currentGame === 1 && !seedHolder ? " No distinct seeds — run the witnessed coin toss in match chat, then set the agreed assignment." : ""}</p></div></div>
         <div className="league-selection-teams">
           {(["team1", "team2"] as const).map((teamKey) => {
             const team = teamKey === "team1" ? teamOne : teamTwo;
             const teamSide = state.leagueOfLegends.blueTeam === teamKey ? "blue" : "red";
-            const teamOrder = state.leagueOfLegends.firstPickTeam === teamKey ? "first" : "second";
             const otherKey = leagueOtherTeam(teamKey) as LeagueOfLegends["blueTeam"];
             return (
               <div className="league-selection-team" key={teamKey}>
-                <strong>{team.name || (teamKey === "team1" ? "Team 1" : "Team 2")}{selectionHolder === teamKey ? " · holds First Selection" : ""}</strong>
+                <strong>{team.name || (teamKey === "team1" ? "Team 1" : "Team 2")}</strong>
                 <label className="field"><span className="field-label">Side</span>
                   <select disabled={leagueSelectionLocked} value={teamSide} onChange={(event) => updateLeagueSideConfig({ blueTeam: event.target.value === "blue" ? teamKey : otherKey })}>
                     <option value="blue">Blue</option>
                     <option value="red">Red</option>
                   </select>
                 </label>
-                <label className="field"><span className="field-label">Pick order</span>
-                  <select disabled={leagueSelectionLocked} value={teamOrder} onChange={(event) => updateLeagueSideConfig({ firstPickTeam: event.target.value === "first" ? teamKey : otherKey })}>
-                    <option value="first">First pick</option>
-                    <option value="second">Second pick</option>
-                  </select>
+                <label className="league-first-pick-toggle"><span className="field-label">First pick</span>
+                  <span className="switch large"><input aria-label={`${team.name || "Team"} has first pick`} type="checkbox" disabled={leagueSelectionLocked} checked={state.leagueOfLegends.firstPickTeam === teamKey} onChange={(event) => updateLeagueSideConfig({ firstPickTeam: event.target.checked ? teamKey : otherKey })} /><span /></span>
                 </label>
               </div>
             );
           })}
+        </div>
+        <div className="form-grid">
+          <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
         </div>
         <p className="field-hint" role="status">{leagueSelectionSummary}</p>
       </section>
@@ -5321,7 +5284,7 @@ export default function Home() {
                 <div className="league-active-step">
                   <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
                   <label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
-                  <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion || !selectionHolder} title={selectionHolder ? undefined : "Set the First Selection holder before drafting"}>Lock {activeStep.action}</button>
+                  <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button>
                 </div>
               ) : <div className="league-draft-complete"><strong>Draft complete</strong><span>Review the role order below, then verify the spectator feed in Debug.</span></div>}
               <div className="league-draft-actions">

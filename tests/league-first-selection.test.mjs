@@ -17,18 +17,8 @@ test("leagueSeedHolder only picks a holder when seeds are distinct numbers", () 
 });
 
 test("expectedLeagueSelection drives the holder to first pick and the opponent to blue", () => {
-  assert.deepEqual(expectedLeagueSelection("team2"), {
-    firstSelectionTeam: "team2",
-    firstSelectionEntitlement: "order",
-    firstPickTeam: "team2",
-    blueTeam: "team1",
-  });
-  assert.deepEqual(expectedLeagueSelection("team1"), {
-    firstSelectionTeam: "team1",
-    firstSelectionEntitlement: "order",
-    firstPickTeam: "team1",
-    blueTeam: "team2",
-  });
+  assert.deepEqual(expectedLeagueSelection("team2"), { firstPickTeam: "team2", blueTeam: "team1" });
+  assert.deepEqual(expectedLeagueSelection("team1"), { firstPickTeam: "team1", blueTeam: "team2" });
   assert.equal(expectedLeagueSelection(""), null);
 });
 
