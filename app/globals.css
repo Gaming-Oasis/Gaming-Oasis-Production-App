@@ -81,6 +81,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .game-live-data-monitor strong { font-size: 12px; font-weight: 600; }
 .game-live-data-monitor p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .game-live-data-monitor small { text-align: right; white-space: nowrap; }
+.game-live-data-monitor .game-live-data-side { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.game-live-data-help { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--border); }
+.game-live-data-help summary { color: var(--muted); font-size: 10px; font-weight: 600; cursor: pointer; }
+.game-live-data-help summary:hover { color: var(--foreground); }
+.game-live-data-help ol { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.game-live-data-help code { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-elevated); font-size: 9px; }
+.game-live-data-help strong { font-size: 10px; }
 
 .button { min-height: 40px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
 .button:disabled { cursor: wait; opacity: .55; }
@@ -630,6 +637,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
   .heading-action, .heading-action .button { width: 100%; }
   .game-live-data-monitor { grid-template-columns: 8px 1fr; }
   .game-live-data-monitor p, .game-live-data-monitor small { grid-column: 2; text-align: left; white-space: normal; }
+  .game-live-data-monitor .game-live-data-side { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
   .activity-strip, .form-grid.three, .pool-grid, .import-grid, .holding-chips { grid-template-columns: 1fr; }
   .activity-strip > div + div { border-left: 0; border-top: 1px solid var(--border); }
   .sponsor-overview { align-items: flex-start; flex-direction: column; }
