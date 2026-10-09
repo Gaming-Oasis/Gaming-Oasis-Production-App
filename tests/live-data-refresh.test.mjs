@@ -52,18 +52,22 @@ test("Rocket League stats client refresh bypasses reconnect backoff", async () =
   }
 });
 
+function leagueSnapshot() {
+  return {
+    activePlayer: null,
+    allPlayers: [{ riotId: "Blue#GO", team: "ORDER", scores: { kills: 0 } }],
+    events: { Events: [] },
+    gameData: { gameTime: 1, gameMode: "CLASSIC", mapName: "Map11", mapNumber: 11, mapTerrain: "Default" },
+  };
+}
+
 test("League live client refresh polls immediately", async () => {
   const requests = [];
   const client = startLeagueLiveClient({
     intervalMs: 60_000,
     requestJson: async (url) => {
       requests.push(url);
-      return {
-        activePlayer: null,
-        allPlayers: [{ riotId: "Blue#GO", team: "ORDER", scores: { kills: 0 } }],
-        events: { Events: [] },
-        gameData: { gameTime: 1, gameMode: "CLASSIC", mapName: "Map11", mapNumber: 11, mapTerrain: "Default" },
-      };
+      return leagueSnapshot();
     },
   });
   try {
@@ -76,9 +80,67 @@ test("League live client refresh polls immediately", async () => {
   }
 });
 
+test("League live client refresh awaits the in-flight snapshot request", async () => {
+  const pending = [];
+  const client = startLeagueLiveClient({
+    intervalMs: 60_000,
+    requestJson: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+  });
+  try {
+    assert.equal(pending.length, 1); // initial poll is in flight
+
+    // Refresh while a request is running stays pending on that attempt — no extra request.
+    let settled = 0;
+    const first = client.refresh().then(() => { settled += 1; });
+    const second = client.refresh().then(() => { settled += 1; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(settled, 0);
+    assert.equal(pending.length, 1);
+
+    pending[0].resolve(leagueSnapshot());
+    await Promise.all([first, second]);
+    assert.equal(settled, 2);
+    assert.equal(client.getFeed().connection?.connected, true);
+
+    // A failed attempt resolves refresh as well, reporting disconnected state.
+    const failed = client.refresh();
+    assert.equal(pending.length, 2);
+    pending[1].reject(new Error("connection refused"));
+    await failed;
+    assert.equal(client.getFeed().connection?.connected, false);
+  } finally {
+    client.stop();
+  }
+});
+
+function fakeLiveClient() {
+  return {
+    feed: { connection: { connected: false, lastEventAt: null, stale: false } },
+    recoverOnRefresh: false,
+    refreshCount: 0,
+    getFeed() { return this.feed; },
+    async refresh() {
+      this.refreshCount += 1;
+      if (this.recoverOnRefresh) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        this.feed.connection.connected = true;
+        this.feed.connection.lastEventAt = new Date().toISOString();
+      }
+    },
+    stop() {},
+  };
+}
+
 test("live data refresh endpoint retries game API connections", async () => {
   const outputDir = await mkdtemp(path.join(tmpdir(), "go-refresh-"));
-  const writer = await startJsonWriter({ port: 0, outputDir });
+  const rocketLeague = fakeLiveClient();
+  const league = fakeLiveClient();
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    createRocketLeagueStatsApiClient: () => rocketLeague,
+    createLeagueLiveClient: () => league,
+  });
   try {
     const origin = "http://localhost:3000";
     const session = await fetch(`${writer.url}/api/live-json/session`, { headers: { Origin: origin } });
@@ -102,17 +164,30 @@ test("live data refresh endpoint retries game API connections", async () => {
     const invalid = await post({ game: "valorant" });
     assert.equal(invalid.status, 422);
 
+    // Per-game selection, still disconnected.
     const rocketOnly = await post({ game: "rocketLeague" });
     assert.equal(rocketOnly.status, 200);
     const rocketPayload = await rocketOnly.json();
     assert.deepEqual(Object.keys(rocketPayload.results), ["rocketLeague"]);
     assert.equal(rocketPayload.results.rocketLeague.connected, false);
+    assert.equal(rocketLeague.refreshCount, 1);
+    assert.equal(league.refreshCount, 0);
 
+    // Recovery: Rocket League comes up during the endpoint's wait window.
+    rocketLeague.recoverOnRefresh = true;
     const all = await post({ game: "all" });
     assert.equal(all.status, 200);
     const allPayload = await all.json();
-    assert.equal(allPayload.results.rocketLeague.connected, false);
+    assert.equal(allPayload.results.rocketLeague.connected, true);
+    assert.ok(allPayload.results.rocketLeague.lastEventAt);
     assert.equal(allPayload.results.leagueOfLegends.connected, false);
+    assert.equal(allPayload.results.leagueOfLegends.stale, false);
+
+    const leagueOnly = await post({ game: "leagueOfLegends" });
+    const leaguePayload = await leagueOnly.json();
+    assert.deepEqual(Object.keys(leaguePayload.results), ["leagueOfLegends"]);
+    assert.equal(league.refreshCount, 2);
+    assert.equal(rocketLeague.refreshCount, 2);
   } finally {
     await writer.close();
     await rm(outputDir, { recursive: true, force: true });

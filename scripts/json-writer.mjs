@@ -730,6 +730,8 @@ export async function startJsonWriter({
   writerOwnerLeaseMs = WRITER_OWNER_LEASE_MS,
   dnsLookup = defaultDnsLookup,
   seedValorantMapData = false,
+  createRocketLeagueStatsApiClient = startRocketLeagueStatsApiClient,
+  createLeagueLiveClient = startLeagueLiveClient,
 } = {}) {
   await mkdir(outputDir, { recursive: true });
   await recoverInterruptedTransaction(outputDir);
@@ -794,9 +796,9 @@ export async function startJsonWriter({
   });
   if (seedValorantMapData) await seedValorantMapDataFile(outputDir, valorantMaps);
   const rocketLeagueStatsApi = enableRocketLeagueStatsApi
-    ? startRocketLeagueStatsApiClient()
+    ? createRocketLeagueStatsApiClient()
     : null;
-  const leagueLiveClient = enableLeagueLiveClient ? startLeagueLiveClient() : null;
+  const leagueLiveClient = enableLeagueLiveClient ? createLeagueLiveClient() : null;
 
   async function getMapArtwork(artworkId) {
     const cached = getLru(mapArtworkCache, artworkId);
