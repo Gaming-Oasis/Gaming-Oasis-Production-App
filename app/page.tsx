@@ -590,6 +590,7 @@ const LIVE_JSON_SESSION_ENDPOINT = "http://127.0.0.1:4877/api/live-json/session"
 const LIVE_JSON_STATUS_ENDPOINT = "http://127.0.0.1:4877/api/live-json/status";
 const ROCKET_LEAGUE_LIVE_OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/rocket-league";
 const ROCKET_LEAGUE_MATCH_PAUSED_ENDPOINT = "http://127.0.0.1:4877/api/rocket-league/match-paused";
+const LIVE_DATA_REFRESH_ENDPOINT = "http://127.0.0.1:4877/api/live-data/refresh";
 const VALORANT_MAP_DATA_FILENAME = "VALORANT MAP DATA.json";
 const VALORANT_OVERLAY_URL = "http://localhost:3000/overlays/valorant";
 const VALORANT_VS_OVERLAY_URL = "http://localhost:3000/overlays/valorant/vs";
@@ -1891,12 +1892,18 @@ function GameLiveDataMonitor({
   detail,
   tone,
   lastEventAt,
+  onRetry,
+  retrying = false,
+  help,
 }: {
   gameName: string;
   label: string;
   detail: string;
   tone: LiveDataTone;
   lastEventAt?: string | null;
+  onRetry?: () => void;
+  retrying?: boolean;
+  help?: React.ReactNode;
 }) {
   return (
     <section className={`game-live-data-monitor ${tone}`} aria-label={`${gameName} live data connection`} aria-live="polite">
@@ -1906,7 +1913,15 @@ function GameLiveDataMonitor({
         <strong>{label}</strong>
       </div>
       <p>{detail}</p>
-      {tone !== "manual" ? <small>{lastDataLabel(lastEventAt)}</small> : null}
+      <div className="game-live-data-side">
+        {tone !== "manual" ? <small>{lastDataLabel(lastEventAt)}</small> : null}
+        {onRetry ? (
+          <button className="button compact" type="button" onClick={onRetry} disabled={retrying}>
+            {retrying ? "Retrying…" : "Retry connection"}
+          </button>
+        ) : null}
+      </div>
+      {help ? <div className="game-live-data-help">{help}</div> : null}
     </section>
   );
 }
@@ -1995,6 +2010,7 @@ export default function Home() {
     rocketLeagueStatsApi: null,
     leagueOfLegends: null,
   });
+  const [liveDataRetrying, setLiveDataRetrying] = useState<"" | "rocketLeague" | "leagueOfLegends">("");
   const [toast, setToast] = useState("");
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
   const [rocketLeagueSeriesResetOpen, setRocketLeagueSeriesResetOpen] = useState(false);
@@ -3436,6 +3452,33 @@ export default function Home() {
     notify("League of Legends series reset");
   }
 
+  async function refreshLiveDataApi(game: "rocketLeague" | "leagueOfLegends") {
+    if (liveDataRetrying) return;
+    setLiveDataRetrying(game);
+    try {
+      const { response, payload: rawPayload } = await postWriterMutation(LIVE_DATA_REFRESH_ENDPOINT, { game });
+      const payload = asRecord(rawPayload);
+      if (!response.ok || payload?.ok !== true) {
+        notify(String(payload?.error || "Live data refresh failed"));
+        return;
+      }
+      const results = asRecord(payload.results);
+      setWriterLiveDataStatus((current) => ({
+        ...current,
+        rocketLeagueStatsApi: results.rocketLeague === undefined
+          ? current.rocketLeagueStatsApi
+          : (results.rocketLeague as WriterLiveDataStatus["rocketLeagueStatsApi"]),
+        leagueOfLegends: results.leagueOfLegends === undefined
+          ? current.leagueOfLegends
+          : (results.leagueOfLegends as WriterLiveDataStatus["leagueOfLegends"]),
+      }));
+    } catch {
+      notify("Could not refresh live data — is the JSON writer online?");
+    } finally {
+      setLiveDataRetrying("");
+    }
+  }
+
   async function setRocketLeagueMatchPaused(paused: boolean) {
     try {
       const { response, payload: rawPayload } = await postWriterMutation(ROCKET_LEAGUE_MATCH_PAUSED_ENDPOINT, { paused });
@@ -4835,15 +4878,18 @@ export default function Home() {
     const overlayRightGameSide = "Orange";
     const rlApi = writerLiveDataStatus.rocketLeagueStatsApi;
     const rlReceiving = Boolean(rlApi?.connected && receivedRecently(rlApi.lastEventAt));
-    const rlMonitor = !writerLiveDataStatus.checked
-      ? { label: "Checking connection", detail: "Checking the local writer and Rocket League Game Data API.", tone: "waiting" as LiveDataTone }
-      : !writerLiveDataStatus.reachable
-        ? { label: "Writer offline", detail: "Start Production OS with run.bat to monitor Rocket League data.", tone: "offline" as LiveDataTone }
-        : !rlApi?.connected
-          ? { label: "API disconnected", detail: "Rocket League is not connected to the local writer. Verify PacketSendRate and restart the game.", tone: "offline" as LiveDataTone }
-          : rlReceiving
-            ? { label: "Receiving game data", detail: "Rocket League match data is updating the browser overlays.", tone: "live" as LiveDataTone }
-            : { label: "Connected · waiting for match", detail: "The Game Data API is connected. Start or spectate a match to receive live statistics.", tone: "waiting" as LiveDataTone };
+    const rlRetrying = liveDataRetrying === "rocketLeague";
+    const rlMonitor = rlRetrying
+      ? { label: "Retrying connection", detail: "The writer is attempting a fresh Rocket League Game Data API connection.", tone: "waiting" as LiveDataTone }
+      : !writerLiveDataStatus.checked
+        ? { label: "Checking connection", detail: "Checking the local writer and Rocket League Game Data API.", tone: "waiting" as LiveDataTone }
+        : !writerLiveDataStatus.reachable
+          ? { label: "Writer offline", detail: "Start Production OS with run.bat to monitor Rocket League data.", tone: "offline" as LiveDataTone }
+          : !rlApi?.connected
+            ? { label: "API disconnected", detail: "Rocket League is not connected to the local writer. Enable the Game Data API below, then restart the game.", tone: "offline" as LiveDataTone }
+            : rlReceiving
+              ? { label: "Receiving game data", detail: "Rocket League match data is updating the browser overlays.", tone: "live" as LiveDataTone }
+              : { label: "Connected · waiting for match", detail: "The Game Data API is connected. Start or spectate a match to receive live statistics.", tone: "waiting" as LiveDataTone };
 
     return (
       <div className="page-stack rocket-league-page">
@@ -4852,7 +4898,24 @@ export default function Home() {
           title="Rocket League"
           description="Enter game results and configure the scoreboard. Match 1 supplies the team names used here."
         />
-        <GameLiveDataMonitor gameName="Rocket League" {...rlMonitor} lastEventAt={rlApi?.lastEventAt} />
+        <GameLiveDataMonitor
+          gameName="Rocket League"
+          {...rlMonitor}
+          lastEventAt={rlApi?.lastEventAt}
+          onRetry={writerLiveDataStatus.reachable && !rlApi?.connected ? () => void refreshLiveDataApi("rocketLeague") : undefined}
+          retrying={rlRetrying}
+          help={writerLiveDataStatus.reachable && !rlApi?.connected ? (
+            <details>
+              <summary>Enable the Rocket League Game Data API</summary>
+              <ol>
+                <li>Quit Rocket League.</li>
+                <li>Open <code>Documents\My Games\Rocket League\TAGame\Config\TAStatsAPI.ini</code> (or <code>DefaultStatsAPI.ini</code>) in a text editor.</li>
+                <li>Under <code>[TAGame.MatchStatsExporter_TA]</code> set <code>PacketSendRate=30</code>, <code>Port=49123</code>, and <code>WebPort=49124</code>.</li>
+                <li>Save the file, relaunch Rocket League, and spectate the match — the writer connects automatically.</li>
+              </ol>
+            </details>
+          ) : undefined}
+        />
         <div className="tabs" role="tablist" aria-label="Rocket League views" onKeyDown={handleTabListKeyDown}>
           <button role="tab" aria-selected={rocketLeagueTab === "results"} tabIndex={rocketLeagueTab === "results" ? 0 : -1} className={rocketLeagueTab === "results" ? "active" : ""} onClick={() => setRocketLeagueTab("results")}>Results & setup</button>
           <button role="tab" aria-selected={rocketLeagueTab === "admin"} tabIndex={rocketLeagueTab === "admin" ? 0 : -1} className={rocketLeagueTab === "admin" ? "active" : ""} onClick={() => setRocketLeagueTab("admin")}>Admin control</button>
@@ -5243,17 +5306,20 @@ export default function Home() {
     const formatClock = (seconds: number) => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds) % 60)).padStart(2, "0")}`;
     const leagueApi = writerLiveDataStatus.leagueOfLegends;
     const leagueReceiving = Boolean(leagueApi?.connected && !leagueApi.stale && receivedRecently(leagueApi.lastEventAt));
-    const leagueMonitor = !writerLiveDataStatus.checked
-      ? { label: "Checking connection", detail: "Checking the local writer and League Live Client Data API.", tone: "waiting" as LiveDataTone }
-      : !writerLiveDataStatus.reachable
-        ? { label: "Writer offline", detail: "Start Production OS with run.bat to monitor League data.", tone: "offline" as LiveDataTone }
-        : leagueApi?.stale
-          ? { label: "Game data stale", detail: "The last valid League snapshot is no longer current.", tone: "offline" as LiveDataTone }
-          : leagueReceiving
-            ? { label: "Receiving game data", detail: "League spectator data is updating the browser overlays.", tone: "live" as LiveDataTone }
-            : leagueApi?.connected
-              ? { label: "Connected · waiting for game", detail: "The League client is reachable, but current spectator data has not arrived.", tone: "waiting" as LiveDataTone }
-              : { label: "Client disconnected", detail: "Start or spectate a League game on this Windows PC to receive live statistics.", tone: "offline" as LiveDataTone };
+    const leagueRetrying = liveDataRetrying === "leagueOfLegends";
+    const leagueMonitor = leagueRetrying
+      ? { label: "Retrying connection", detail: "The writer is checking the League Live Client Data API now.", tone: "waiting" as LiveDataTone }
+      : !writerLiveDataStatus.checked
+        ? { label: "Checking connection", detail: "Checking the local writer and League Live Client Data API.", tone: "waiting" as LiveDataTone }
+        : !writerLiveDataStatus.reachable
+          ? { label: "Writer offline", detail: "Start Production OS with run.bat to monitor League data.", tone: "offline" as LiveDataTone }
+          : leagueApi?.stale
+            ? { label: "Game data stale", detail: "The last valid League snapshot is no longer current.", tone: "offline" as LiveDataTone }
+            : leagueReceiving
+              ? { label: "Receiving game data", detail: "League spectator data is updating the browser overlays.", tone: "live" as LiveDataTone }
+              : leagueApi?.connected
+                ? { label: "Connected · waiting for game", detail: "The League client is reachable, but current spectator data has not arrived.", tone: "waiting" as LiveDataTone }
+                : { label: "Client disconnected", detail: "Start or spectate a League game on this PC to receive live statistics.", tone: "offline" as LiveDataTone };
 
     return (
       <div className="page-stack league-page">
@@ -5262,7 +5328,23 @@ export default function Home() {
           title="League of Legends"
           description="Run champion select, verify the local spectator feed, and confirm each game before it changes the series. Match 1 supplies team and league branding."
         />
-        <GameLiveDataMonitor gameName="League of Legends" {...leagueMonitor} lastEventAt={leagueApi?.lastEventAt} />
+        <GameLiveDataMonitor
+          gameName="League of Legends"
+          {...leagueMonitor}
+          lastEventAt={leagueApi?.lastEventAt}
+          onRetry={writerLiveDataStatus.reachable && !leagueReceiving ? () => void refreshLiveDataApi("leagueOfLegends") : undefined}
+          retrying={leagueRetrying}
+          help={writerLiveDataStatus.reachable && (!leagueApi?.connected || leagueApi?.stale) ? (
+            <details>
+              <summary>Get live League data on this PC</summary>
+              <ol>
+                <li>Start or spectate a League of Legends match on this PC — the client only serves live data while a game is running.</li>
+                <li>The match must run on this same machine; the Live Client Data API (<code>127.0.0.1:2999</code>) cannot be reached from another PC.</li>
+                <li>If a match is live and this still shows disconnected, use <strong>Retry connection</strong> or restart the game client.</li>
+              </ol>
+            </details>
+          ) : undefined}
+        />
         <div className="tabs" role="tablist" aria-label="League of Legends views">
           <button className={leagueTab === "results" ? "active" : ""} onClick={() => setLeagueTab("results")}>Results & setup</button>
           <button className={leagueTab === "draft" ? "active" : ""} onClick={() => setLeagueTab("draft")}>Draft</button>

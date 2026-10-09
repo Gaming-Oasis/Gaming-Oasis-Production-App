@@ -69,6 +69,8 @@ WebPort=49124
 
 The writer connects to TCP `127.0.0.1:49123` first (brace-delimited JSON; `Data` is often a stringified JSON blob), then falls back to WebSocket `ws://127.0.0.1:49124`. Override with `ROCKET_LEAGUE_STATS_WS_URL`, `ROCKET_LEAGUE_STATS_TCP_HOST`, and `ROCKET_LEAGUE_STATS_TCP_PORT` if needed.
 
+The workspace **Live data** monitor expands these INI steps inline while the API is disconnected and offers a **Retry connection** action (`POST /api/live-data/refresh`) that drops the current socket and reconnects immediately instead of waiting out reconnect backoff.
+
 ### Broadcast setup commands (outbound)
 
 When **Auto broadcast camera** is enabled (default), the writer sends Stats API commands on the same socket:
