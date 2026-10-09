@@ -1119,6 +1119,7 @@ export async function startJsonWriter({
         || request.url === "/api/valorant-maps/complete"
         || request.url === "/api/valorant-maps/reset"
         || request.url === "/api/live-json/claim"
+        || request.url === "/api/live-data/refresh"
         || request.url === "/api/rocket-league/match-paused"
         || request.url === "/api/live-json/session";
       const requestedMethod = String(request.headers["access-control-request-method"] ?? "").toUpperCase();
@@ -1445,6 +1446,58 @@ export async function startJsonWriter({
         }));
       } catch (error) {
         rejectJson(response, error instanceof HttpError ? error.status : 500, error.message || "Pause request failed");
+      }
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/api/live-data/refresh") {
+      if (!authorizeMutation(request, response)) return;
+      try {
+        const payload = await readBody(request);
+        if (!isPlainObject(payload) || !hasExactKeys(payload, ["game"])) {
+          throw new HttpError(422, "Expected a JSON object with a game field");
+        }
+        const game = String(payload.game ?? "");
+        if (!["rocketLeague", "leagueOfLegends", "all"].includes(game)) {
+          throw new HttpError(422, "game must be rocketLeague, leagueOfLegends, or all");
+        }
+        const refreshRocketLeague = game === "all" || game === "rocketLeague";
+        const refreshLeague = game === "all" || game === "leagueOfLegends";
+        const results = {};
+
+        if (refreshRocketLeague) {
+          if (!rocketLeagueStatsApi) {
+            results.rocketLeague = null;
+          } else {
+            rocketLeagueStatsApi.refresh?.();
+            const deadline = Date.now() + 1500;
+            while (Date.now() < deadline && !rocketLeagueStatsApi.getFeed().connection?.connected) {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            results.rocketLeague = {
+              connected: Boolean(rocketLeagueStatsApi.getFeed().connection?.connected),
+              lastEventAt: rocketLeagueStatsApi.getFeed().connection?.lastEventAt ?? null,
+            };
+          }
+        }
+
+        if (refreshLeague) {
+          if (!leagueLiveClient) {
+            results.leagueOfLegends = null;
+          } else {
+            await leagueLiveClient.refresh?.();
+            results.leagueOfLegends = {
+              connected: Boolean(leagueLiveClient.getFeed().connection?.connected),
+              lastEventAt: leagueLiveClient.getFeed().connection?.lastEventAt ?? null,
+              stale: Boolean(leagueLiveClient.getFeed().connection?.stale),
+            };
+          }
+        }
+
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ ok: true, results }));
+      } catch (error) {
+        rejectJson(response, error instanceof HttpError ? error.status : 500, error.message || "Live data refresh failed");
       }
       return;
     }
