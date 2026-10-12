@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { applyProductionDefaults } from "../lib/production-defaults.mjs";
+import { acceptHubCollection, hubIdentity, hubLeagueResultMetadata, normalizeHubCollection, projectHubGame } from "../lib/hub-draft.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { calculateRocketLeagueSeries, formatRocketLeagueScore, proposeRocketLeagueLiveResult } from "../lib/rocket-league.mjs";
 import { buildRocketLeagueOverlayState, resolveRocketLeagueLiveTeamColor, resolveRocketLeagueSideTeams } from "../lib/rocket-league-live.mjs";
@@ -385,7 +386,7 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /function GameLiveDataMonitor/);
   assert.match(page, /Receiving game data/);
   assert.match(page, /Connected · waiting for match/);
-  assert.match(page, /No VALORANT live-data API is configured/);
+  assert.match(page, /League Hub fills the veto and reported lineups/);
   assert.match(page, /setInterval\(pollWriterLiveDataStatus, 2_000\)/);
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /\.game-live-data-monitor\.live \{ border-left-color: var\(--status-success\)/);
@@ -2460,7 +2461,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.match(page, /Array\.isArray\(savedValorant\.savedGames\)[\s\S]{0,120}savedValorant\.games/);
   assert.match(page, /savedRocketLeagueGames\.forEach/);
   assert.match(page, /games: savedValorantGames/);
-  assert.equal((page.match(/Update results/g) ?? []).length, 3);
+  assert.equal((page.match(/>Update results<\/button>/g) ?? []).length, 3);
   assert.equal((page.match(/Reset series/g) ?? []).length, 5);
   assert.equal((page.match(/>Results & setup</g) ?? []).length, 3);
   assert.equal((page.match(/>Browser overlay links</g) ?? []).length, 3);
@@ -2470,7 +2471,8 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/setLeagueTab\("live"\)\}>Debug</g) ?? []).length, 1);
   assert.equal((page.match(/game-results-layout/g) ?? []).length, 3);
   assert.equal((page.match(/<h2>Scoreboard setup<\/h2>/g) ?? []).length, 3);
-  assert.equal((page.match(/<GameAutoAcceptControl /g) ?? []).length, 3);
+  assert.equal((page.match(/<GameAutoAcceptControl /g) ?? []).length, 2);
+  assert.doesNotMatch(page, /<GameAutoAcceptControl gameName="VALORANT"/);
   assert.equal((page.match(/<GameFlipSidesControl /g) ?? []).length, 3);
   assert.equal((page.match(/<GameLiveMatchIndicators /g) ?? []).length, 3);
   assert.match(page, /<h2>Live Match Indicators<\/h2>/);
@@ -2891,7 +2893,7 @@ test("proxies public League Hub matches without credentials", async () => {
     enableLeagueLiveClient: false,
     fetchImpl: async (url, options) => {
       requestedUrl = String(url);
-      assert.deepEqual(options?.headers, { Accept: "application/json" });
+      assert.deepEqual(options?.headers, { Accept: "application/json", "Cache-Control": "no-cache" });
       return new Response(JSON.stringify({ match: { id: matchId } }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -2906,10 +2908,115 @@ test("proxies public League Hub matches without credentials", async () => {
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("access-control-allow-origin"), "http://localhost:3000");
     assert.match(requestedUrl, new RegExp(`${matchId}$`));
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), { match: { id: matchId } });
   } finally {
     await writer.close();
   }
+});
+
+test("Hub draft revisions publish complete six-file packages while score fields stay manual", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-hub-draft-"));
+  const installed = [];
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    beforeInstallFile: (filename) => installed.push(filename) });
+  let game = { bestOf: "Bo3", draftMode: "fearless", currentGame: 1, blueTeam: "team1", draft: createLeagueDraftState(),
+    confirmedGames: [], results: [], hubDraft: { mode: "live", matchId: "demo-match-league", collection: null } };
+  const files = await productionFileFixtures("Hub fixture test");
+  try {
+    for (const name of ["league-01-live-pick-ban", "league-02-one-team-confirmed", "league-03-revealed-lineups", "league-04-game-2-fearless"]) {
+      const raw = JSON.parse(await readFile(new URL(`fixtures/hub-drafts/${name}.match.json`, import.meta.url), "utf8"));
+      const collection = normalizeHubCollection(raw, { syncedId: raw.match.id, hubIdentity: hubIdentity(raw) });
+      game = acceptHubCollection(game, "leagueOfLegends", collection);
+      const overlay = buildLeagueOverlayState(game, { name: "Aurora" }, { name: "Tempest" });
+      const saved = await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends: overlay } });
+      assert.equal(saved.status, 200, await saved.text());
+      assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+      for (const file of files.filter((f) => f.filename !== "sponsors.json")) {
+        assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, file.filename), "utf8")), file.data);
+      }
+      const displayed = await (await fetch(`${writer.url}/api/overlays/league-of-legends`)).json();
+      assert.equal(displayed.draft.currentStep, game.draft.currentStep);
+      assert.equal(displayed.draft.hub.rolesRevealed, game.hubPresentation.rolesRevealed);
+      assert.equal(displayed.blueTeam.seriesScore, "0");
+      assert.equal(displayed.currentGame, 1);
+      assert.equal(displayed.draft.hub.fearlessChampions.length, 0);
+    }
+  } finally { await writer.close(); }
+});
+
+test("saving a partial Hub Standard draft publishes its manual winner and five-slot metadata", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-hub-standard-"));
+  const installed = [];
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    beforeInstallFile: (filename) => installed.push(filename) });
+  const raw = JSON.parse(await readFile(new URL("fixtures/hub-drafts/league-01-live-pick-ban.match.json", import.meta.url), "utf8"));
+  for (const session of [raw.draft.session, raw.draft.currentSession, ...raw.draft.gameSessions]) session.snapshot.profile.availability = "standard";
+  raw.games = [{ team1Score: 1, team2Score: 0 }]; // Reference winner deliberately differs from the operator's choice.
+  const collection = normalizeHubCollection(raw, { syncedId: raw.match.id, hubIdentity: hubIdentity(raw) });
+  let game = acceptHubCollection({ bestOf: "Bo3", draftMode: "standard", currentGame: 1, blueTeam: "team1", draft: createLeagueDraftState(),
+    confirmedGames: [], results: [], hubDraft: { mode: "live", matchId: raw.match.id, collection: null } }, "leagueOfLegends", collection);
+  const files = await productionFileFixtures("Partial Standard regression");
+  try {
+    for (const saveResult of [false, true]) {
+      if (saveResult) game = projectHubGame({ ...game, confirmedGames: [{ gameNumber: 1, winner: "team2", ...hubLeagueResultMetadata(collection, 1) }] }, "leagueOfLegends");
+      const saved = await postWriter(writer, "/api/live-json", { files, overlays: { leagueOfLegends: buildLeagueOverlayState(game, {}, {}) } });
+      assert.equal(saved.status, 200, await saved.text());
+      assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+      const overlay = await (await fetch(`${writer.url}/api/overlays/league-of-legends`)).json();
+      assert.equal(overlay.currentGame, saveResult ? 2 : 1);
+      assert.equal(overlay.teamOne.seriesScore, "0");
+      assert.equal(overlay.teamTwo.seriesScore, saveResult ? "1" : "0");
+      if (saveResult) {
+        assert.deepEqual(overlay.confirmedGames[0].bluePicks, ["Aatrox", "", "", "", ""]);
+        assert.deepEqual(overlay.confirmedGames[0].redPicks, ["Ahri", "Sejuani", "", "", ""]);
+        assert.equal(overlay.draft.hub.progress, "Waiting for Hub draft");
+      }
+    }
+  } finally { await writer.close(); }
+});
+
+test("VALORANT Hub veto changes and resets write all six legacy files without importing scores or agents", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-hub-valorant-"));
+  const installed = [];
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    beforeInstallFile: (filename) => installed.push(filename) });
+  const manualScores = Array.from({ length: 5 }, () => ({ home: "", away: "" }));
+  const files = await productionFileFixtures("VALORANT Hub regression");
+  let game = { bestOf: "Bo3", games: manualScores, savedGames: [], banSwap: false, flipSides: false,
+    bo3: { ban1: "", ban2: "", pick1: "", pick2: "", ban3: "", ban4: "", decider: "", side1: "", side2: "", side3: "" },
+    bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
+    hubDraft: { mode: "live", matchId: "demo-match-valorant", collection: null } };
+  try {
+    for (const name of ["valorant-01-live-map-veto", "valorant-02-maps-ready-agents-pending", "valorant-03-game-1-reported", "reset"]) {
+      let collection;
+      if (name === "reset") collection = { ...game.hubDraft.collection, revision: 100, required: false, sessions: [], veto: null };
+      else {
+        const raw = JSON.parse(await readFile(new URL(`fixtures/hub-drafts/${name}.match.json`, import.meta.url), "utf8"));
+        collection = normalizeHubCollection(raw, { syncedId: raw.match.id, hubIdentity: hubIdentity(raw) });
+      }
+      game = acceptHubCollection(game, "valorant", collection);
+      const fields = buildValorantFields(game, { logo: "team-one.png" }, { logo: "team-two.png" }, []);
+      Object.assign(files.find((f) => f.filename === "FinalOutput.json").data[0], fields);
+      const saved = await postWriter(writer, "/api/live-json", { files });
+      assert.equal(saved.status, 200, await saved.text());
+      assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+      const output = JSON.parse(await readFile(path.join(outputDir, "FinalOutput.json"), "utf8"))[0];
+      assert.deepEqual(Object.keys(output).sort(), [...FINAL_OUTPUT_KEYS].sort());
+      assert.equal(output.valscore1, "X - X");
+      assert.equal(output.valseriesscore1, "0");
+      assert.equal(output.valseriesscore2, "0");
+      assert.equal(output.valorantroundnumber, "1");
+      assert.equal(output.valbo3map1winnerlogo, "");
+      assert.equal(output.valbo3map1name, name === "reset" ? "" : "ASCENT");
+      assert.equal(output.valbo3map1teamlogo, "team-one.png");
+      assert.equal(game.games, manualScores);
+      if (name !== "reset") assert.ok(output.valbo3mapimage3); // Existing placeholder even without local artwork.
+      for (const file of files.filter((f) => !["sponsors.json", "FinalOutput.json"].includes(f.filename))) {
+        assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, file.filename), "utf8")), file.data);
+      }
+    }
+  } finally { await writer.close(); }
 });
 
 test("proxies remote sponsor logos for vMix without fetching private hosts", async () => {

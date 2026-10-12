@@ -73,6 +73,7 @@ export type OverlayData = {
   draft: {
     bluePicks: string[]; redPicks: string[]; blueBans: string[]; redBans: string[];
     bluePickOrder?: number[]; redPickOrder?: number[];
+    hub?: { gameNumber: number; progress: string; activeSelection: boolean; rolesRevealed: boolean; sidesReady: boolean; fearlessChampions: string[] };
     currentStep: number; timer: number; firstPickSide?: "ORDER" | "CHAOS";
   };
   confirmedGames: Array<{ gameNumber: number; bluePicks: string[]; redPicks: string[] }>;
@@ -198,7 +199,8 @@ function FearlessStrip({ data }: { data: OverlayData }) {
 }
 
 export function DraftOverlay({ data }: { data: OverlayData }) {
-  const active = leagueDraftSteps(data.draftMode, data.draft.firstPickSide)[data.draft.currentStep];
+  const active = data.draft.hub && !data.draft.hub.activeSelection ? undefined : leagueDraftSteps(data.draftMode, data.draft.firstPickSide)[data.draft.currentStep];
+  const showRoles = !data.draft.hub || data.draft.hub.rolesRevealed;
   return <div className={styles.draftStage}>
     {data.vsScreenEnabled ? <VsSceneBackdrop leftTeam={data.blueTeam} rightTeam={data.redTeam} /> : null}
     <FearlessStrip data={data} />
@@ -221,7 +223,7 @@ export function DraftOverlay({ data }: { data: OverlayData }) {
           return <div key={slot} className={styles.pickSlot} style={{ transform: `translateX(${firstPickX + slot * pickStride - card.portrait[0]}px)` }} data-pick-slot={`${side}-${slot}`}>
             <div className={styles.pick} style={{ ...box(card.portrait), "--pick-accent": team.color } as CSSProperties} data-source-box={card.portrait.join(",")} data-active={selecting}>
               {champion ? <StableArtwork key={champion} src={assetUrl(data.assetVersion, champion, true)} fallback={assetUrl(data.assetVersion, champion)} label={champion} /> : <div className={styles.upcomingPick} data-selecting={selecting} aria-label={`${team.name} pick ${slot + 1}: ${selecting ? "selecting" : "upcoming"}`}>
-                <span className={styles.upcomingPickIcon}><Icon name={"role-" + side + "-" + roleName.toLowerCase()} /></span>
+                {showRoles ? <span className={styles.upcomingPickIcon}><Icon name={"role-" + side + "-" + roleName.toLowerCase()} /></span> : null}
                 <strong>{selecting ? "SELECTING" : "UPCOMING"}</strong>
                 <span className={styles.upcomingPickNumber}>{String(slot + 1).padStart(2, "0")}</span>
                 <span className={styles.upcomingPickAccent} />
@@ -230,7 +232,7 @@ export function DraftOverlay({ data }: { data: OverlayData }) {
             <div className={styles.namePlate} style={box(card.namePlate)} data-source-box={card.namePlate.join(",")} />
             <SourceText value={(champion || "Pick " + (slot + 1)).toUpperCase()} rect={[card.name[0], card.portrait[1] + 10, card.name[2], card.portrait[3] - 20]} fontSize={21 * 0.944721609750746} weight={400} vertical />
             <div className={styles.rolePlate} style={box(card.rolePlate)} data-source-box={card.rolePlate.join(",")} />
-            <span aria-label={roleName}><SourceIcon name={"role-" + side + "-" + roleName.toLowerCase()} rect={card.roles[roleName]} /></span>
+            {showRoles ? <span aria-label={roleName}><SourceIcon name={"role-" + side + "-" + roleName.toLowerCase()} rect={card.roles[roleName]} /></span> : null}
           </div>;
         })}
         <div className={styles.banPlate} style={box(art.banPlate)} data-source-box={art.banPlate.join(",")} />

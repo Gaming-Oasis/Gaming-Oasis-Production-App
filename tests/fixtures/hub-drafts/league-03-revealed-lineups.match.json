@@ -1,0 +1,2628 @@
+{
+  "league": {
+    "id": "demo-league",
+    "name": "Example League",
+    "slug": "example-league"
+  },
+  "season": {
+    "id": "demo-season",
+    "name": "Example Season",
+    "slug": "example-season",
+    "status": "active",
+    "gameTitles": [
+      "League of Legends",
+      "VALORANT"
+    ]
+  },
+  "event": {
+    "id": "demo-event-league",
+    "name": "League of Legends Example Playoffs",
+    "slug": "league-example-playoffs",
+    "gameTitle": "League of Legends",
+    "visibility": "active",
+    "status": "active"
+  },
+  "stage": {
+    "id": "demo-stage-league",
+    "name": "Playoffs",
+    "type": "single_elim",
+    "status": "active",
+    "order": 1
+  },
+  "match": {
+    "id": "demo-match-league",
+    "round": 1,
+    "roundLabel": "Semifinals",
+    "sortOrder": 1,
+    "matchNumber": 1,
+    "matchPhase": "waiting_for_results",
+    "hubStatus": "live",
+    "scheduledAt": "2026-10-12T00:00:00.000Z",
+    "bestOf": 3,
+    "isBye": false,
+    "team1": {
+      "teamId": "demo-team-aurora",
+      "name": "Aurora",
+      "seed": 1,
+      "score": 0
+    },
+    "team2": {
+      "teamId": "demo-team-tempest",
+      "name": "Tempest",
+      "seed": 2,
+      "score": 0
+    },
+    "stream": {
+      "channelName": "Example Main Stream",
+      "streamUrl": null
+    }
+  },
+  "games": [],
+  "rosters": {
+    "team1": [
+      {
+        "id": "demo-player-1-1",
+        "name": "Alex A",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-2",
+        "name": "Blair B",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-3",
+        "name": "Casey C",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-4",
+        "name": "Devon D",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-5",
+        "name": "Emery E",
+        "role": "player"
+      }
+    ],
+    "team2": [
+      {
+        "id": "demo-player-2-1",
+        "name": "Finley F",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-2",
+        "name": "Gray G",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-3",
+        "name": "Harper H",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-4",
+        "name": "Indigo I",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-5",
+        "name": "Jules J",
+        "role": "player"
+      }
+    ]
+  },
+  "standings": {
+    "scope": "stage",
+    "stageId": "demo-stage-league",
+    "stageName": "Playoffs",
+    "team1": null,
+    "team2": null
+  },
+  "matchLabel": "Semifinals - Match 1",
+  "draft": {
+    "required": true,
+    "collectionRevision": 27,
+    "currentGameIndex": 1,
+    "session": {
+      "id": "demo-league-game-1",
+      "revision": 26,
+      "status": "complete",
+      "snapshot": {
+        "profile": {
+          "kind": "champions",
+          "id": "league_fearless",
+          "version": 2,
+          "gameTitle": "League of Legends",
+          "scope": "game",
+          "availability": "fearless",
+          "sideOptions": [
+            "blue",
+            "red"
+          ],
+          "steps": [
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 1
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 2
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 3
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 4
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 5
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 6
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 7
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 8
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 9
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 10
+            }
+          ]
+        },
+        "bestOf": 3,
+        "gameIndex": 1,
+        "team1Id": "demo-team-aurora",
+        "team2Id": "demo-team-tempest",
+        "team1Seed": 1,
+        "team2Seed": 2,
+        "priorityTeamId": "demo-team-aurora",
+        "items": [
+          {
+            "id": "90001",
+            "name": "Akali",
+            "imageUrl": null
+          },
+          {
+            "id": "90002",
+            "name": "LeBlanc",
+            "imageUrl": null
+          },
+          {
+            "id": "90003",
+            "name": "Draven",
+            "imageUrl": null
+          },
+          {
+            "id": "90004",
+            "name": "Kalista",
+            "imageUrl": null
+          },
+          {
+            "id": "90005",
+            "name": "Vi",
+            "imageUrl": null
+          },
+          {
+            "id": "90006",
+            "name": "Nocturne",
+            "imageUrl": null
+          },
+          {
+            "id": "90007",
+            "name": "Aatrox",
+            "imageUrl": null
+          },
+          {
+            "id": "90008",
+            "name": "Ahri",
+            "imageUrl": null
+          },
+          {
+            "id": "90009",
+            "name": "Sejuani",
+            "imageUrl": null
+          },
+          {
+            "id": "90010",
+            "name": "Orianna",
+            "imageUrl": null
+          },
+          {
+            "id": "90011",
+            "name": "Jinx",
+            "imageUrl": null
+          },
+          {
+            "id": "90012",
+            "name": "Nautilus",
+            "imageUrl": null
+          },
+          {
+            "id": "90013",
+            "name": "Gnar",
+            "imageUrl": null
+          },
+          {
+            "id": "90014",
+            "name": "Renekton",
+            "imageUrl": null
+          },
+          {
+            "id": "90015",
+            "name": "Blitzcrank",
+            "imageUrl": null
+          },
+          {
+            "id": "90016",
+            "name": "Thresh",
+            "imageUrl": null
+          },
+          {
+            "id": "90017",
+            "name": "Ornn",
+            "imageUrl": null
+          },
+          {
+            "id": "90018",
+            "name": "Maokai",
+            "imageUrl": null
+          },
+          {
+            "id": "90019",
+            "name": "Rakan",
+            "imageUrl": null
+          },
+          {
+            "id": "90020",
+            "name": "Aphelios",
+            "imageUrl": null
+          },
+          {
+            "id": "90021",
+            "name": "Alistar",
+            "imageUrl": null
+          },
+          {
+            "id": "90022",
+            "name": "Amumu",
+            "imageUrl": null
+          },
+          {
+            "id": "90023",
+            "name": "Annie",
+            "imageUrl": null
+          },
+          {
+            "id": "90024",
+            "name": "Ashe",
+            "imageUrl": null
+          },
+          {
+            "id": "90025",
+            "name": "Azir",
+            "imageUrl": null
+          },
+          {
+            "id": "90026",
+            "name": "Caitlyn",
+            "imageUrl": null
+          },
+          {
+            "id": "90027",
+            "name": "Camille",
+            "imageUrl": null
+          },
+          {
+            "id": "90028",
+            "name": "Cassiopeia",
+            "imageUrl": null
+          },
+          {
+            "id": "90029",
+            "name": "Corki",
+            "imageUrl": null
+          },
+          {
+            "id": "90030",
+            "name": "Darius",
+            "imageUrl": null
+          },
+          {
+            "id": "90031",
+            "name": "Diana",
+            "imageUrl": null
+          },
+          {
+            "id": "90032",
+            "name": "Ekko",
+            "imageUrl": null
+          },
+          {
+            "id": "90033",
+            "name": "Elise",
+            "imageUrl": null
+          },
+          {
+            "id": "90034",
+            "name": "Evelynn",
+            "imageUrl": null
+          },
+          {
+            "id": "90035",
+            "name": "Ezreal",
+            "imageUrl": null
+          },
+          {
+            "id": "90036",
+            "name": "Fiddlesticks",
+            "imageUrl": null
+          },
+          {
+            "id": "90037",
+            "name": "Fiora",
+            "imageUrl": null
+          },
+          {
+            "id": "90038",
+            "name": "Fizz",
+            "imageUrl": null
+          },
+          {
+            "id": "90039",
+            "name": "Galio",
+            "imageUrl": null
+          },
+          {
+            "id": "90040",
+            "name": "Gangplank",
+            "imageUrl": null
+          },
+          {
+            "id": "90041",
+            "name": "Garen",
+            "imageUrl": null
+          },
+          {
+            "id": "90042",
+            "name": "Gragas",
+            "imageUrl": null
+          },
+          {
+            "id": "90043",
+            "name": "Graves",
+            "imageUrl": null
+          },
+          {
+            "id": "90044",
+            "name": "Hecarim",
+            "imageUrl": null
+          },
+          {
+            "id": "90045",
+            "name": "Heimerdinger",
+            "imageUrl": null
+          },
+          {
+            "id": "90046",
+            "name": "Illaoi",
+            "imageUrl": null
+          },
+          {
+            "id": "90047",
+            "name": "Irelia",
+            "imageUrl": null
+          },
+          {
+            "id": "90048",
+            "name": "Ivern",
+            "imageUrl": null
+          },
+          {
+            "id": "90049",
+            "name": "Janna",
+            "imageUrl": null
+          },
+          {
+            "id": "90050",
+            "name": "Jarvan IV",
+            "imageUrl": null
+          },
+          {
+            "id": "90051",
+            "name": "Jax",
+            "imageUrl": null
+          },
+          {
+            "id": "90052",
+            "name": "Jayce",
+            "imageUrl": null
+          },
+          {
+            "id": "90053",
+            "name": "Jhin",
+            "imageUrl": null
+          },
+          {
+            "id": "90054",
+            "name": "Karma",
+            "imageUrl": null
+          },
+          {
+            "id": "90055",
+            "name": "Karthus",
+            "imageUrl": null
+          },
+          {
+            "id": "90056",
+            "name": "Kassadin",
+            "imageUrl": null
+          },
+          {
+            "id": "90057",
+            "name": "Katarina",
+            "imageUrl": null
+          },
+          {
+            "id": "90058",
+            "name": "Kayle",
+            "imageUrl": null
+          },
+          {
+            "id": "90059",
+            "name": "Kayn",
+            "imageUrl": null
+          },
+          {
+            "id": "90060",
+            "name": "Kennen",
+            "imageUrl": null
+          }
+        ],
+        "priorGames": []
+      },
+      "state": {
+        "phase": "complete",
+        "stepIndex": 20,
+        "priorityTeamId": "demo-team-aurora",
+        "roles": {
+          "A": "demo-team-aurora",
+          "B": "demo-team-tempest"
+        },
+        "maps": [],
+        "bannedItemIds": [
+          "90001",
+          "90002",
+          "90003",
+          "90004",
+          "90005",
+          "90006",
+          "90013",
+          "90014",
+          "90015",
+          "90016"
+        ],
+        "deciderProposal": null,
+        "champions": [
+          {
+            "pickNumber": 1,
+            "teamId": "demo-team-aurora",
+            "itemId": "90007"
+          },
+          {
+            "pickNumber": 2,
+            "teamId": "demo-team-tempest",
+            "itemId": "90008"
+          },
+          {
+            "pickNumber": 3,
+            "teamId": "demo-team-tempest",
+            "itemId": "90009"
+          },
+          {
+            "pickNumber": 4,
+            "teamId": "demo-team-aurora",
+            "itemId": "90010"
+          },
+          {
+            "pickNumber": 5,
+            "teamId": "demo-team-aurora",
+            "itemId": "90011"
+          },
+          {
+            "pickNumber": 6,
+            "teamId": "demo-team-tempest",
+            "itemId": "90012"
+          },
+          {
+            "pickNumber": 7,
+            "teamId": "demo-team-tempest",
+            "itemId": "90017"
+          },
+          {
+            "pickNumber": 8,
+            "teamId": "demo-team-aurora",
+            "itemId": "90018"
+          },
+          {
+            "pickNumber": 9,
+            "teamId": "demo-team-aurora",
+            "itemId": "90019"
+          },
+          {
+            "pickNumber": 10,
+            "teamId": "demo-team-tempest",
+            "itemId": "90020"
+          }
+        ],
+        "league": {
+          "sides": {
+            "blue": "demo-team-aurora",
+            "red": "demo-team-tempest"
+          },
+          "firstSelectionChoice": "order",
+          "setupConfirmedTeamIds": [],
+          "finalConfirmedTeamIds": [
+            "demo-team-aurora",
+            "demo-team-tempest"
+          ],
+          "assignments": {
+            "demo-team-aurora": [
+              {
+                "role": "top",
+                "championId": "90007",
+                "playerId": "demo-player-1-1"
+              },
+              {
+                "role": "jungle",
+                "championId": "90018",
+                "playerId": "demo-player-1-2"
+              },
+              {
+                "role": "mid",
+                "championId": "90010",
+                "playerId": "demo-player-1-3"
+              },
+              {
+                "role": "bot",
+                "championId": "90011",
+                "playerId": "demo-player-1-4"
+              },
+              {
+                "role": "support",
+                "championId": "90019",
+                "playerId": "demo-player-1-5"
+              }
+            ],
+            "demo-team-tempest": [
+              {
+                "role": "top",
+                "championId": "90017",
+                "playerId": "demo-player-2-1"
+              },
+              {
+                "role": "jungle",
+                "championId": "90009",
+                "playerId": "demo-player-2-2"
+              },
+              {
+                "role": "mid",
+                "championId": "90008",
+                "playerId": "demo-player-2-3"
+              },
+              {
+                "role": "bot",
+                "championId": "90020",
+                "playerId": "demo-player-2-4"
+              },
+              {
+                "role": "support",
+                "championId": "90012",
+                "playerId": "demo-player-2-5"
+              }
+            ]
+          }
+        }
+      },
+      "history": [
+        {
+          "type": "choose_order",
+          "teamId": "demo-team-aurora",
+          "role": "A"
+        },
+        {
+          "type": "choose_map_side",
+          "teamId": "demo-team-tempest",
+          "side": "red"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90001"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90002"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90003"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90004"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90005"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90006"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90007"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90008"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90009"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90010"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90011"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90012"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90013"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90014"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90015"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90016"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90017"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90018"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90019"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90020"
+        },
+        {
+          "type": "assign_lineup",
+          "teamId": "demo-team-aurora",
+          "assignments": [
+            {
+              "role": "top",
+              "championId": "90007",
+              "playerId": "demo-player-1-1"
+            },
+            {
+              "role": "jungle",
+              "championId": "90018",
+              "playerId": "demo-player-1-2"
+            },
+            {
+              "role": "mid",
+              "championId": "90010",
+              "playerId": "demo-player-1-3"
+            },
+            {
+              "role": "bot",
+              "championId": "90011",
+              "playerId": "demo-player-1-4"
+            },
+            {
+              "role": "support",
+              "championId": "90019",
+              "playerId": "demo-player-1-5"
+            }
+          ]
+        },
+        {
+          "type": "assign_lineup",
+          "teamId": "demo-team-tempest",
+          "assignments": [
+            {
+              "role": "top",
+              "championId": "90017",
+              "playerId": "demo-player-2-1"
+            },
+            {
+              "role": "jungle",
+              "championId": "90009",
+              "playerId": "demo-player-2-2"
+            },
+            {
+              "role": "mid",
+              "championId": "90008",
+              "playerId": "demo-player-2-3"
+            },
+            {
+              "role": "bot",
+              "championId": "90020",
+              "playerId": "demo-player-2-4"
+            },
+            {
+              "role": "support",
+              "championId": "90012",
+              "playerId": "demo-player-2-5"
+            }
+          ]
+        },
+        {
+          "type": "confirm_draft",
+          "teamId": "demo-team-aurora"
+        },
+        {
+          "type": "confirm_draft",
+          "teamId": "demo-team-tempest"
+        }
+      ],
+      "currentStep": null,
+      "availableItemIds": [
+        "90021",
+        "90022",
+        "90023",
+        "90024",
+        "90025",
+        "90026",
+        "90027",
+        "90028",
+        "90029",
+        "90030",
+        "90031",
+        "90032",
+        "90033",
+        "90034",
+        "90035",
+        "90036",
+        "90037",
+        "90038",
+        "90039",
+        "90040",
+        "90041",
+        "90042",
+        "90043",
+        "90044",
+        "90045",
+        "90046",
+        "90047",
+        "90048",
+        "90049",
+        "90050",
+        "90051",
+        "90052",
+        "90053",
+        "90054",
+        "90055",
+        "90056",
+        "90057",
+        "90058",
+        "90059",
+        "90060"
+      ],
+      "catalogVersion": "example-champions-v1",
+      "assignmentPlayers": [
+        {
+          "id": "demo-player-1-1",
+          "name": "Alex A"
+        },
+        {
+          "id": "demo-player-1-2",
+          "name": "Blair B"
+        },
+        {
+          "id": "demo-player-1-3",
+          "name": "Casey C"
+        },
+        {
+          "id": "demo-player-1-4",
+          "name": "Devon D"
+        },
+        {
+          "id": "demo-player-1-5",
+          "name": "Emery E"
+        },
+        {
+          "id": "demo-player-2-1",
+          "name": "Finley F"
+        },
+        {
+          "id": "demo-player-2-2",
+          "name": "Gray G"
+        },
+        {
+          "id": "demo-player-2-3",
+          "name": "Harper H"
+        },
+        {
+          "id": "demo-player-2-4",
+          "name": "Indigo I"
+        },
+        {
+          "id": "demo-player-2-5",
+          "name": "Jules J"
+        }
+      ]
+    },
+    "currentSession": {
+      "id": "demo-league-game-1",
+      "revision": 26,
+      "status": "complete",
+      "snapshot": {
+        "profile": {
+          "kind": "champions",
+          "id": "league_fearless",
+          "version": 2,
+          "gameTitle": "League of Legends",
+          "scope": "game",
+          "availability": "fearless",
+          "sideOptions": [
+            "blue",
+            "red"
+          ],
+          "steps": [
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 1
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 2
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 3
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 4
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 5
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 6
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 7
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 8
+            },
+            {
+              "type": "champion_pick",
+              "role": "A",
+              "pickNumber": 9
+            },
+            {
+              "type": "champion_pick",
+              "role": "B",
+              "pickNumber": 10
+            }
+          ]
+        },
+        "bestOf": 3,
+        "gameIndex": 1,
+        "team1Id": "demo-team-aurora",
+        "team2Id": "demo-team-tempest",
+        "team1Seed": 1,
+        "team2Seed": 2,
+        "priorityTeamId": "demo-team-aurora",
+        "items": [
+          {
+            "id": "90001",
+            "name": "Akali",
+            "imageUrl": null
+          },
+          {
+            "id": "90002",
+            "name": "LeBlanc",
+            "imageUrl": null
+          },
+          {
+            "id": "90003",
+            "name": "Draven",
+            "imageUrl": null
+          },
+          {
+            "id": "90004",
+            "name": "Kalista",
+            "imageUrl": null
+          },
+          {
+            "id": "90005",
+            "name": "Vi",
+            "imageUrl": null
+          },
+          {
+            "id": "90006",
+            "name": "Nocturne",
+            "imageUrl": null
+          },
+          {
+            "id": "90007",
+            "name": "Aatrox",
+            "imageUrl": null
+          },
+          {
+            "id": "90008",
+            "name": "Ahri",
+            "imageUrl": null
+          },
+          {
+            "id": "90009",
+            "name": "Sejuani",
+            "imageUrl": null
+          },
+          {
+            "id": "90010",
+            "name": "Orianna",
+            "imageUrl": null
+          },
+          {
+            "id": "90011",
+            "name": "Jinx",
+            "imageUrl": null
+          },
+          {
+            "id": "90012",
+            "name": "Nautilus",
+            "imageUrl": null
+          },
+          {
+            "id": "90013",
+            "name": "Gnar",
+            "imageUrl": null
+          },
+          {
+            "id": "90014",
+            "name": "Renekton",
+            "imageUrl": null
+          },
+          {
+            "id": "90015",
+            "name": "Blitzcrank",
+            "imageUrl": null
+          },
+          {
+            "id": "90016",
+            "name": "Thresh",
+            "imageUrl": null
+          },
+          {
+            "id": "90017",
+            "name": "Ornn",
+            "imageUrl": null
+          },
+          {
+            "id": "90018",
+            "name": "Maokai",
+            "imageUrl": null
+          },
+          {
+            "id": "90019",
+            "name": "Rakan",
+            "imageUrl": null
+          },
+          {
+            "id": "90020",
+            "name": "Aphelios",
+            "imageUrl": null
+          },
+          {
+            "id": "90021",
+            "name": "Alistar",
+            "imageUrl": null
+          },
+          {
+            "id": "90022",
+            "name": "Amumu",
+            "imageUrl": null
+          },
+          {
+            "id": "90023",
+            "name": "Annie",
+            "imageUrl": null
+          },
+          {
+            "id": "90024",
+            "name": "Ashe",
+            "imageUrl": null
+          },
+          {
+            "id": "90025",
+            "name": "Azir",
+            "imageUrl": null
+          },
+          {
+            "id": "90026",
+            "name": "Caitlyn",
+            "imageUrl": null
+          },
+          {
+            "id": "90027",
+            "name": "Camille",
+            "imageUrl": null
+          },
+          {
+            "id": "90028",
+            "name": "Cassiopeia",
+            "imageUrl": null
+          },
+          {
+            "id": "90029",
+            "name": "Corki",
+            "imageUrl": null
+          },
+          {
+            "id": "90030",
+            "name": "Darius",
+            "imageUrl": null
+          },
+          {
+            "id": "90031",
+            "name": "Diana",
+            "imageUrl": null
+          },
+          {
+            "id": "90032",
+            "name": "Ekko",
+            "imageUrl": null
+          },
+          {
+            "id": "90033",
+            "name": "Elise",
+            "imageUrl": null
+          },
+          {
+            "id": "90034",
+            "name": "Evelynn",
+            "imageUrl": null
+          },
+          {
+            "id": "90035",
+            "name": "Ezreal",
+            "imageUrl": null
+          },
+          {
+            "id": "90036",
+            "name": "Fiddlesticks",
+            "imageUrl": null
+          },
+          {
+            "id": "90037",
+            "name": "Fiora",
+            "imageUrl": null
+          },
+          {
+            "id": "90038",
+            "name": "Fizz",
+            "imageUrl": null
+          },
+          {
+            "id": "90039",
+            "name": "Galio",
+            "imageUrl": null
+          },
+          {
+            "id": "90040",
+            "name": "Gangplank",
+            "imageUrl": null
+          },
+          {
+            "id": "90041",
+            "name": "Garen",
+            "imageUrl": null
+          },
+          {
+            "id": "90042",
+            "name": "Gragas",
+            "imageUrl": null
+          },
+          {
+            "id": "90043",
+            "name": "Graves",
+            "imageUrl": null
+          },
+          {
+            "id": "90044",
+            "name": "Hecarim",
+            "imageUrl": null
+          },
+          {
+            "id": "90045",
+            "name": "Heimerdinger",
+            "imageUrl": null
+          },
+          {
+            "id": "90046",
+            "name": "Illaoi",
+            "imageUrl": null
+          },
+          {
+            "id": "90047",
+            "name": "Irelia",
+            "imageUrl": null
+          },
+          {
+            "id": "90048",
+            "name": "Ivern",
+            "imageUrl": null
+          },
+          {
+            "id": "90049",
+            "name": "Janna",
+            "imageUrl": null
+          },
+          {
+            "id": "90050",
+            "name": "Jarvan IV",
+            "imageUrl": null
+          },
+          {
+            "id": "90051",
+            "name": "Jax",
+            "imageUrl": null
+          },
+          {
+            "id": "90052",
+            "name": "Jayce",
+            "imageUrl": null
+          },
+          {
+            "id": "90053",
+            "name": "Jhin",
+            "imageUrl": null
+          },
+          {
+            "id": "90054",
+            "name": "Karma",
+            "imageUrl": null
+          },
+          {
+            "id": "90055",
+            "name": "Karthus",
+            "imageUrl": null
+          },
+          {
+            "id": "90056",
+            "name": "Kassadin",
+            "imageUrl": null
+          },
+          {
+            "id": "90057",
+            "name": "Katarina",
+            "imageUrl": null
+          },
+          {
+            "id": "90058",
+            "name": "Kayle",
+            "imageUrl": null
+          },
+          {
+            "id": "90059",
+            "name": "Kayn",
+            "imageUrl": null
+          },
+          {
+            "id": "90060",
+            "name": "Kennen",
+            "imageUrl": null
+          }
+        ],
+        "priorGames": []
+      },
+      "state": {
+        "phase": "complete",
+        "stepIndex": 20,
+        "priorityTeamId": "demo-team-aurora",
+        "roles": {
+          "A": "demo-team-aurora",
+          "B": "demo-team-tempest"
+        },
+        "maps": [],
+        "bannedItemIds": [
+          "90001",
+          "90002",
+          "90003",
+          "90004",
+          "90005",
+          "90006",
+          "90013",
+          "90014",
+          "90015",
+          "90016"
+        ],
+        "deciderProposal": null,
+        "champions": [
+          {
+            "pickNumber": 1,
+            "teamId": "demo-team-aurora",
+            "itemId": "90007"
+          },
+          {
+            "pickNumber": 2,
+            "teamId": "demo-team-tempest",
+            "itemId": "90008"
+          },
+          {
+            "pickNumber": 3,
+            "teamId": "demo-team-tempest",
+            "itemId": "90009"
+          },
+          {
+            "pickNumber": 4,
+            "teamId": "demo-team-aurora",
+            "itemId": "90010"
+          },
+          {
+            "pickNumber": 5,
+            "teamId": "demo-team-aurora",
+            "itemId": "90011"
+          },
+          {
+            "pickNumber": 6,
+            "teamId": "demo-team-tempest",
+            "itemId": "90012"
+          },
+          {
+            "pickNumber": 7,
+            "teamId": "demo-team-tempest",
+            "itemId": "90017"
+          },
+          {
+            "pickNumber": 8,
+            "teamId": "demo-team-aurora",
+            "itemId": "90018"
+          },
+          {
+            "pickNumber": 9,
+            "teamId": "demo-team-aurora",
+            "itemId": "90019"
+          },
+          {
+            "pickNumber": 10,
+            "teamId": "demo-team-tempest",
+            "itemId": "90020"
+          }
+        ],
+        "league": {
+          "sides": {
+            "blue": "demo-team-aurora",
+            "red": "demo-team-tempest"
+          },
+          "firstSelectionChoice": "order",
+          "setupConfirmedTeamIds": [],
+          "finalConfirmedTeamIds": [
+            "demo-team-aurora",
+            "demo-team-tempest"
+          ],
+          "assignments": {
+            "demo-team-aurora": [
+              {
+                "role": "top",
+                "championId": "90007",
+                "playerId": "demo-player-1-1"
+              },
+              {
+                "role": "jungle",
+                "championId": "90018",
+                "playerId": "demo-player-1-2"
+              },
+              {
+                "role": "mid",
+                "championId": "90010",
+                "playerId": "demo-player-1-3"
+              },
+              {
+                "role": "bot",
+                "championId": "90011",
+                "playerId": "demo-player-1-4"
+              },
+              {
+                "role": "support",
+                "championId": "90019",
+                "playerId": "demo-player-1-5"
+              }
+            ],
+            "demo-team-tempest": [
+              {
+                "role": "top",
+                "championId": "90017",
+                "playerId": "demo-player-2-1"
+              },
+              {
+                "role": "jungle",
+                "championId": "90009",
+                "playerId": "demo-player-2-2"
+              },
+              {
+                "role": "mid",
+                "championId": "90008",
+                "playerId": "demo-player-2-3"
+              },
+              {
+                "role": "bot",
+                "championId": "90020",
+                "playerId": "demo-player-2-4"
+              },
+              {
+                "role": "support",
+                "championId": "90012",
+                "playerId": "demo-player-2-5"
+              }
+            ]
+          }
+        }
+      },
+      "history": [
+        {
+          "type": "choose_order",
+          "teamId": "demo-team-aurora",
+          "role": "A"
+        },
+        {
+          "type": "choose_map_side",
+          "teamId": "demo-team-tempest",
+          "side": "red"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90001"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90002"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90003"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90004"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90005"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90006"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90007"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90008"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90009"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90010"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90011"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90012"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90013"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90014"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "90015"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "90016"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90017"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90018"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "90019"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-tempest",
+          "itemId": "90020"
+        },
+        {
+          "type": "assign_lineup",
+          "teamId": "demo-team-aurora",
+          "assignments": [
+            {
+              "role": "top",
+              "championId": "90007",
+              "playerId": "demo-player-1-1"
+            },
+            {
+              "role": "jungle",
+              "championId": "90018",
+              "playerId": "demo-player-1-2"
+            },
+            {
+              "role": "mid",
+              "championId": "90010",
+              "playerId": "demo-player-1-3"
+            },
+            {
+              "role": "bot",
+              "championId": "90011",
+              "playerId": "demo-player-1-4"
+            },
+            {
+              "role": "support",
+              "championId": "90019",
+              "playerId": "demo-player-1-5"
+            }
+          ]
+        },
+        {
+          "type": "assign_lineup",
+          "teamId": "demo-team-tempest",
+          "assignments": [
+            {
+              "role": "top",
+              "championId": "90017",
+              "playerId": "demo-player-2-1"
+            },
+            {
+              "role": "jungle",
+              "championId": "90009",
+              "playerId": "demo-player-2-2"
+            },
+            {
+              "role": "mid",
+              "championId": "90008",
+              "playerId": "demo-player-2-3"
+            },
+            {
+              "role": "bot",
+              "championId": "90020",
+              "playerId": "demo-player-2-4"
+            },
+            {
+              "role": "support",
+              "championId": "90012",
+              "playerId": "demo-player-2-5"
+            }
+          ]
+        },
+        {
+          "type": "confirm_draft",
+          "teamId": "demo-team-aurora"
+        },
+        {
+          "type": "confirm_draft",
+          "teamId": "demo-team-tempest"
+        }
+      ],
+      "currentStep": null,
+      "availableItemIds": [
+        "90021",
+        "90022",
+        "90023",
+        "90024",
+        "90025",
+        "90026",
+        "90027",
+        "90028",
+        "90029",
+        "90030",
+        "90031",
+        "90032",
+        "90033",
+        "90034",
+        "90035",
+        "90036",
+        "90037",
+        "90038",
+        "90039",
+        "90040",
+        "90041",
+        "90042",
+        "90043",
+        "90044",
+        "90045",
+        "90046",
+        "90047",
+        "90048",
+        "90049",
+        "90050",
+        "90051",
+        "90052",
+        "90053",
+        "90054",
+        "90055",
+        "90056",
+        "90057",
+        "90058",
+        "90059",
+        "90060"
+      ],
+      "catalogVersion": "example-champions-v1",
+      "assignmentPlayers": [
+        {
+          "id": "demo-player-1-1",
+          "name": "Alex A"
+        },
+        {
+          "id": "demo-player-1-2",
+          "name": "Blair B"
+        },
+        {
+          "id": "demo-player-1-3",
+          "name": "Casey C"
+        },
+        {
+          "id": "demo-player-1-4",
+          "name": "Devon D"
+        },
+        {
+          "id": "demo-player-1-5",
+          "name": "Emery E"
+        },
+        {
+          "id": "demo-player-2-1",
+          "name": "Finley F"
+        },
+        {
+          "id": "demo-player-2-2",
+          "name": "Gray G"
+        },
+        {
+          "id": "demo-player-2-3",
+          "name": "Harper H"
+        },
+        {
+          "id": "demo-player-2-4",
+          "name": "Indigo I"
+        },
+        {
+          "id": "demo-player-2-5",
+          "name": "Jules J"
+        }
+      ]
+    },
+    "gameSessions": [
+      {
+        "id": "demo-league-game-1",
+        "revision": 26,
+        "status": "complete",
+        "snapshot": {
+          "profile": {
+            "kind": "champions",
+            "id": "league_fearless",
+            "version": 2,
+            "gameTitle": "League of Legends",
+            "scope": "game",
+            "availability": "fearless",
+            "sideOptions": [
+              "blue",
+              "red"
+            ],
+            "steps": [
+              {
+                "type": "ban",
+                "role": "A"
+              },
+              {
+                "type": "ban",
+                "role": "B"
+              },
+              {
+                "type": "ban",
+                "role": "A"
+              },
+              {
+                "type": "ban",
+                "role": "B"
+              },
+              {
+                "type": "ban",
+                "role": "A"
+              },
+              {
+                "type": "ban",
+                "role": "B"
+              },
+              {
+                "type": "champion_pick",
+                "role": "A",
+                "pickNumber": 1
+              },
+              {
+                "type": "champion_pick",
+                "role": "B",
+                "pickNumber": 2
+              },
+              {
+                "type": "champion_pick",
+                "role": "B",
+                "pickNumber": 3
+              },
+              {
+                "type": "champion_pick",
+                "role": "A",
+                "pickNumber": 4
+              },
+              {
+                "type": "champion_pick",
+                "role": "A",
+                "pickNumber": 5
+              },
+              {
+                "type": "champion_pick",
+                "role": "B",
+                "pickNumber": 6
+              },
+              {
+                "type": "ban",
+                "role": "B"
+              },
+              {
+                "type": "ban",
+                "role": "A"
+              },
+              {
+                "type": "ban",
+                "role": "B"
+              },
+              {
+                "type": "ban",
+                "role": "A"
+              },
+              {
+                "type": "champion_pick",
+                "role": "B",
+                "pickNumber": 7
+              },
+              {
+                "type": "champion_pick",
+                "role": "A",
+                "pickNumber": 8
+              },
+              {
+                "type": "champion_pick",
+                "role": "A",
+                "pickNumber": 9
+              },
+              {
+                "type": "champion_pick",
+                "role": "B",
+                "pickNumber": 10
+              }
+            ]
+          },
+          "bestOf": 3,
+          "gameIndex": 1,
+          "team1Id": "demo-team-aurora",
+          "team2Id": "demo-team-tempest",
+          "team1Seed": 1,
+          "team2Seed": 2,
+          "priorityTeamId": "demo-team-aurora",
+          "items": [
+            {
+              "id": "90001",
+              "name": "Akali",
+              "imageUrl": null
+            },
+            {
+              "id": "90002",
+              "name": "LeBlanc",
+              "imageUrl": null
+            },
+            {
+              "id": "90003",
+              "name": "Draven",
+              "imageUrl": null
+            },
+            {
+              "id": "90004",
+              "name": "Kalista",
+              "imageUrl": null
+            },
+            {
+              "id": "90005",
+              "name": "Vi",
+              "imageUrl": null
+            },
+            {
+              "id": "90006",
+              "name": "Nocturne",
+              "imageUrl": null
+            },
+            {
+              "id": "90007",
+              "name": "Aatrox",
+              "imageUrl": null
+            },
+            {
+              "id": "90008",
+              "name": "Ahri",
+              "imageUrl": null
+            },
+            {
+              "id": "90009",
+              "name": "Sejuani",
+              "imageUrl": null
+            },
+            {
+              "id": "90010",
+              "name": "Orianna",
+              "imageUrl": null
+            },
+            {
+              "id": "90011",
+              "name": "Jinx",
+              "imageUrl": null
+            },
+            {
+              "id": "90012",
+              "name": "Nautilus",
+              "imageUrl": null
+            },
+            {
+              "id": "90013",
+              "name": "Gnar",
+              "imageUrl": null
+            },
+            {
+              "id": "90014",
+              "name": "Renekton",
+              "imageUrl": null
+            },
+            {
+              "id": "90015",
+              "name": "Blitzcrank",
+              "imageUrl": null
+            },
+            {
+              "id": "90016",
+              "name": "Thresh",
+              "imageUrl": null
+            },
+            {
+              "id": "90017",
+              "name": "Ornn",
+              "imageUrl": null
+            },
+            {
+              "id": "90018",
+              "name": "Maokai",
+              "imageUrl": null
+            },
+            {
+              "id": "90019",
+              "name": "Rakan",
+              "imageUrl": null
+            },
+            {
+              "id": "90020",
+              "name": "Aphelios",
+              "imageUrl": null
+            },
+            {
+              "id": "90021",
+              "name": "Alistar",
+              "imageUrl": null
+            },
+            {
+              "id": "90022",
+              "name": "Amumu",
+              "imageUrl": null
+            },
+            {
+              "id": "90023",
+              "name": "Annie",
+              "imageUrl": null
+            },
+            {
+              "id": "90024",
+              "name": "Ashe",
+              "imageUrl": null
+            },
+            {
+              "id": "90025",
+              "name": "Azir",
+              "imageUrl": null
+            },
+            {
+              "id": "90026",
+              "name": "Caitlyn",
+              "imageUrl": null
+            },
+            {
+              "id": "90027",
+              "name": "Camille",
+              "imageUrl": null
+            },
+            {
+              "id": "90028",
+              "name": "Cassiopeia",
+              "imageUrl": null
+            },
+            {
+              "id": "90029",
+              "name": "Corki",
+              "imageUrl": null
+            },
+            {
+              "id": "90030",
+              "name": "Darius",
+              "imageUrl": null
+            },
+            {
+              "id": "90031",
+              "name": "Diana",
+              "imageUrl": null
+            },
+            {
+              "id": "90032",
+              "name": "Ekko",
+              "imageUrl": null
+            },
+            {
+              "id": "90033",
+              "name": "Elise",
+              "imageUrl": null
+            },
+            {
+              "id": "90034",
+              "name": "Evelynn",
+              "imageUrl": null
+            },
+            {
+              "id": "90035",
+              "name": "Ezreal",
+              "imageUrl": null
+            },
+            {
+              "id": "90036",
+              "name": "Fiddlesticks",
+              "imageUrl": null
+            },
+            {
+              "id": "90037",
+              "name": "Fiora",
+              "imageUrl": null
+            },
+            {
+              "id": "90038",
+              "name": "Fizz",
+              "imageUrl": null
+            },
+            {
+              "id": "90039",
+              "name": "Galio",
+              "imageUrl": null
+            },
+            {
+              "id": "90040",
+              "name": "Gangplank",
+              "imageUrl": null
+            },
+            {
+              "id": "90041",
+              "name": "Garen",
+              "imageUrl": null
+            },
+            {
+              "id": "90042",
+              "name": "Gragas",
+              "imageUrl": null
+            },
+            {
+              "id": "90043",
+              "name": "Graves",
+              "imageUrl": null
+            },
+            {
+              "id": "90044",
+              "name": "Hecarim",
+              "imageUrl": null
+            },
+            {
+              "id": "90045",
+              "name": "Heimerdinger",
+              "imageUrl": null
+            },
+            {
+              "id": "90046",
+              "name": "Illaoi",
+              "imageUrl": null
+            },
+            {
+              "id": "90047",
+              "name": "Irelia",
+              "imageUrl": null
+            },
+            {
+              "id": "90048",
+              "name": "Ivern",
+              "imageUrl": null
+            },
+            {
+              "id": "90049",
+              "name": "Janna",
+              "imageUrl": null
+            },
+            {
+              "id": "90050",
+              "name": "Jarvan IV",
+              "imageUrl": null
+            },
+            {
+              "id": "90051",
+              "name": "Jax",
+              "imageUrl": null
+            },
+            {
+              "id": "90052",
+              "name": "Jayce",
+              "imageUrl": null
+            },
+            {
+              "id": "90053",
+              "name": "Jhin",
+              "imageUrl": null
+            },
+            {
+              "id": "90054",
+              "name": "Karma",
+              "imageUrl": null
+            },
+            {
+              "id": "90055",
+              "name": "Karthus",
+              "imageUrl": null
+            },
+            {
+              "id": "90056",
+              "name": "Kassadin",
+              "imageUrl": null
+            },
+            {
+              "id": "90057",
+              "name": "Katarina",
+              "imageUrl": null
+            },
+            {
+              "id": "90058",
+              "name": "Kayle",
+              "imageUrl": null
+            },
+            {
+              "id": "90059",
+              "name": "Kayn",
+              "imageUrl": null
+            },
+            {
+              "id": "90060",
+              "name": "Kennen",
+              "imageUrl": null
+            }
+          ],
+          "priorGames": []
+        },
+        "state": {
+          "phase": "complete",
+          "stepIndex": 20,
+          "priorityTeamId": "demo-team-aurora",
+          "roles": {
+            "A": "demo-team-aurora",
+            "B": "demo-team-tempest"
+          },
+          "maps": [],
+          "bannedItemIds": [
+            "90001",
+            "90002",
+            "90003",
+            "90004",
+            "90005",
+            "90006",
+            "90013",
+            "90014",
+            "90015",
+            "90016"
+          ],
+          "deciderProposal": null,
+          "champions": [
+            {
+              "pickNumber": 1,
+              "teamId": "demo-team-aurora",
+              "itemId": "90007"
+            },
+            {
+              "pickNumber": 2,
+              "teamId": "demo-team-tempest",
+              "itemId": "90008"
+            },
+            {
+              "pickNumber": 3,
+              "teamId": "demo-team-tempest",
+              "itemId": "90009"
+            },
+            {
+              "pickNumber": 4,
+              "teamId": "demo-team-aurora",
+              "itemId": "90010"
+            },
+            {
+              "pickNumber": 5,
+              "teamId": "demo-team-aurora",
+              "itemId": "90011"
+            },
+            {
+              "pickNumber": 6,
+              "teamId": "demo-team-tempest",
+              "itemId": "90012"
+            },
+            {
+              "pickNumber": 7,
+              "teamId": "demo-team-tempest",
+              "itemId": "90017"
+            },
+            {
+              "pickNumber": 8,
+              "teamId": "demo-team-aurora",
+              "itemId": "90018"
+            },
+            {
+              "pickNumber": 9,
+              "teamId": "demo-team-aurora",
+              "itemId": "90019"
+            },
+            {
+              "pickNumber": 10,
+              "teamId": "demo-team-tempest",
+              "itemId": "90020"
+            }
+          ],
+          "league": {
+            "sides": {
+              "blue": "demo-team-aurora",
+              "red": "demo-team-tempest"
+            },
+            "firstSelectionChoice": "order",
+            "setupConfirmedTeamIds": [],
+            "finalConfirmedTeamIds": [
+              "demo-team-aurora",
+              "demo-team-tempest"
+            ],
+            "assignments": {
+              "demo-team-aurora": [
+                {
+                  "role": "top",
+                  "championId": "90007",
+                  "playerId": "demo-player-1-1"
+                },
+                {
+                  "role": "jungle",
+                  "championId": "90018",
+                  "playerId": "demo-player-1-2"
+                },
+                {
+                  "role": "mid",
+                  "championId": "90010",
+                  "playerId": "demo-player-1-3"
+                },
+                {
+                  "role": "bot",
+                  "championId": "90011",
+                  "playerId": "demo-player-1-4"
+                },
+                {
+                  "role": "support",
+                  "championId": "90019",
+                  "playerId": "demo-player-1-5"
+                }
+              ],
+              "demo-team-tempest": [
+                {
+                  "role": "top",
+                  "championId": "90017",
+                  "playerId": "demo-player-2-1"
+                },
+                {
+                  "role": "jungle",
+                  "championId": "90009",
+                  "playerId": "demo-player-2-2"
+                },
+                {
+                  "role": "mid",
+                  "championId": "90008",
+                  "playerId": "demo-player-2-3"
+                },
+                {
+                  "role": "bot",
+                  "championId": "90020",
+                  "playerId": "demo-player-2-4"
+                },
+                {
+                  "role": "support",
+                  "championId": "90012",
+                  "playerId": "demo-player-2-5"
+                }
+              ]
+            }
+          }
+        },
+        "history": [
+          {
+            "type": "choose_order",
+            "teamId": "demo-team-aurora",
+            "role": "A"
+          },
+          {
+            "type": "choose_map_side",
+            "teamId": "demo-team-tempest",
+            "side": "red"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-aurora",
+            "itemId": "90001"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-tempest",
+            "itemId": "90002"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-aurora",
+            "itemId": "90003"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-tempest",
+            "itemId": "90004"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-aurora",
+            "itemId": "90005"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-tempest",
+            "itemId": "90006"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-aurora",
+            "itemId": "90007"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-tempest",
+            "itemId": "90008"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-tempest",
+            "itemId": "90009"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-aurora",
+            "itemId": "90010"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-aurora",
+            "itemId": "90011"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-tempest",
+            "itemId": "90012"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-tempest",
+            "itemId": "90013"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-aurora",
+            "itemId": "90014"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-tempest",
+            "itemId": "90015"
+          },
+          {
+            "type": "ban",
+            "teamId": "demo-team-aurora",
+            "itemId": "90016"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-tempest",
+            "itemId": "90017"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-aurora",
+            "itemId": "90018"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-aurora",
+            "itemId": "90019"
+          },
+          {
+            "type": "pick",
+            "teamId": "demo-team-tempest",
+            "itemId": "90020"
+          },
+          {
+            "type": "assign_lineup",
+            "teamId": "demo-team-aurora",
+            "assignments": [
+              {
+                "role": "top",
+                "championId": "90007",
+                "playerId": "demo-player-1-1"
+              },
+              {
+                "role": "jungle",
+                "championId": "90018",
+                "playerId": "demo-player-1-2"
+              },
+              {
+                "role": "mid",
+                "championId": "90010",
+                "playerId": "demo-player-1-3"
+              },
+              {
+                "role": "bot",
+                "championId": "90011",
+                "playerId": "demo-player-1-4"
+              },
+              {
+                "role": "support",
+                "championId": "90019",
+                "playerId": "demo-player-1-5"
+              }
+            ]
+          },
+          {
+            "type": "assign_lineup",
+            "teamId": "demo-team-tempest",
+            "assignments": [
+              {
+                "role": "top",
+                "championId": "90017",
+                "playerId": "demo-player-2-1"
+              },
+              {
+                "role": "jungle",
+                "championId": "90009",
+                "playerId": "demo-player-2-2"
+              },
+              {
+                "role": "mid",
+                "championId": "90008",
+                "playerId": "demo-player-2-3"
+              },
+              {
+                "role": "bot",
+                "championId": "90020",
+                "playerId": "demo-player-2-4"
+              },
+              {
+                "role": "support",
+                "championId": "90012",
+                "playerId": "demo-player-2-5"
+              }
+            ]
+          },
+          {
+            "type": "confirm_draft",
+            "teamId": "demo-team-aurora"
+          },
+          {
+            "type": "confirm_draft",
+            "teamId": "demo-team-tempest"
+          }
+        ],
+        "currentStep": null,
+        "availableItemIds": [
+          "90021",
+          "90022",
+          "90023",
+          "90024",
+          "90025",
+          "90026",
+          "90027",
+          "90028",
+          "90029",
+          "90030",
+          "90031",
+          "90032",
+          "90033",
+          "90034",
+          "90035",
+          "90036",
+          "90037",
+          "90038",
+          "90039",
+          "90040",
+          "90041",
+          "90042",
+          "90043",
+          "90044",
+          "90045",
+          "90046",
+          "90047",
+          "90048",
+          "90049",
+          "90050",
+          "90051",
+          "90052",
+          "90053",
+          "90054",
+          "90055",
+          "90056",
+          "90057",
+          "90058",
+          "90059",
+          "90060"
+        ],
+        "catalogVersion": "example-champions-v1",
+        "assignmentPlayers": [
+          {
+            "id": "demo-player-1-1",
+            "name": "Alex A"
+          },
+          {
+            "id": "demo-player-1-2",
+            "name": "Blair B"
+          },
+          {
+            "id": "demo-player-1-3",
+            "name": "Casey C"
+          },
+          {
+            "id": "demo-player-1-4",
+            "name": "Devon D"
+          },
+          {
+            "id": "demo-player-1-5",
+            "name": "Emery E"
+          },
+          {
+            "id": "demo-player-2-1",
+            "name": "Finley F"
+          },
+          {
+            "id": "demo-player-2-2",
+            "name": "Gray G"
+          },
+          {
+            "id": "demo-player-2-3",
+            "name": "Harper H"
+          },
+          {
+            "id": "demo-player-2-4",
+            "name": "Indigo I"
+          },
+          {
+            "id": "demo-player-2-5",
+            "name": "Jules J"
+          }
+        ]
+      }
+    ]
+  }
+}

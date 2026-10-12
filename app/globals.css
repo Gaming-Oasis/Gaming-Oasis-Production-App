@@ -768,3 +768,51 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
   .map-library-previews { grid-template-columns: 1fr; }
   .map-library-editor { grid-template-columns: 1fr; }
 }
+/* League Hub controls share the operational panel and field tokens. */
+.hub-draft-panel { grid-column: 1 / -1; min-width: 0; padding: var(--space-4); }
+.hub-api-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.hub-api-heading > div:first-child { min-width: 0; }
+.hub-api-heading h2 { margin: 0; font-size: 16px; }
+.hub-match-teams { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
+.hub-match-teams span { color: var(--muted); font-weight: 400; margin: 0 4px; }
+.hub-api-actions { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.hub-live-control { display: flex; align-items: center; gap: 12px; min-height: 40px; cursor: pointer; }
+.hub-live-label { font-size: 13px; font-weight: 600; }
+.hub-live-label small { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.hub-match-link { display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.hub-match-link code { font: inherit; margin-left: 6px; overflow-wrap: anywhere; }
+.hub-match-link > span { min-width: 0; }
+.hub-text-button, .hub-match-link a { display: inline-flex; align-items: center; min-height: 38px; border: 0; padding: 0; background: none; color: var(--foreground); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.hub-text-button:hover, .hub-match-link a:hover { color: var(--brand); }
+.hub-connection-row { display: flex; justify-content: space-between; align-items: center; gap: 10px 24px; margin-top: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.hub-connection-row p { display: grid; gap: 4px; margin: 0; font-size: 13px; }
+.hub-connection-row p > span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.hub-connection-row[data-tone="error"] p > strong { color: var(--status-error); }
+.hub-refresh-time { flex-shrink: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hub-draft-progress { display: grid; gap: 6px; padding: 12px 0; font-size: 13px; border-top: 1px solid var(--border); }
+.hub-results-note { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; color: var(--muted); }
+.hub-results-note p { margin: 0; line-height: 1.5; }
+.hub-results-note button { flex-shrink: 0; }
+.hub-draft-panel p { overflow-wrap: anywhere; }
+.hub-draft-panel details { margin-top: 8px; border-top: 1px solid var(--border); }
+.hub-draft-panel summary { cursor: pointer; padding: 12px 0; min-height: 38px; font-size: 13px; }
+.hub-draft-panel summary > span { margin-left: 10px; font-size: 12px; color: var(--muted); }
+.hub-lineups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+.hub-lineups table, .hub-reference-scores { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.hub-lineups caption, .hub-reference-scores caption { text-align: left; font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+.hub-lineups th, .hub-lineups td, .hub-reference-scores th, .hub-reference-scores td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.hub-lineups th, .hub-reference-scores th { color: var(--muted); font-weight: 500; }
+.hub-api-notice { border-left: 3px solid var(--brand); padding-left: 10px; }
+.hub-import-value { text-align: right; overflow-wrap: anywhere; font-size: 14px; font-weight: 600; }
+.hub-import-value.pending { color: var(--muted); font-size: 12px; font-weight: 400; }
+.hub-import-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.league-draft-control .card-title-row > div:first-child { display: block; }
+.league-draft-control .card-title-row p { margin-top: 6px; }
+@media (max-width: 700px) {
+  .hub-lineups { grid-template-columns: 1fr; }
+  .hub-draft-panel { padding: var(--space-3); }
+  .hub-api-heading, .hub-connection-row { align-items: stretch; flex-direction: column; }
+  .hub-api-actions { justify-content: space-between; }
+  .hub-results-note { align-items: flex-start; flex-direction: column; gap: 0; }
+  .hub-match-link > span { flex-basis: 100%; }
+}
