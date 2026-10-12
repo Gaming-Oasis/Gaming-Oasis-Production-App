@@ -130,6 +130,8 @@ The panel separates connection health from draft progress. **Connected** with **
 
 **Scores remain manual.** Hub results appear only as reference text and never fill or publish result rows. Enter scores/winners and select **Update results** as usual. When Hub advances before production, the tool holds the current game's draft and lineup until the operator saves its result. A missing next-game session displays a waiting state. League's Fearless pool uses only the selected session's earlier picks; previous bans are available again.
 
+League's **Reset series** also clears the imported draft and turns Live off for the current match. It stays off after reload; turn Live on explicitly to import that match again.
+
 League player/champion/role assignments remain hidden until both teams confirm. Once revealed, compact operator tables show player names, and existing Pick/Ban role icons follow the confirmed assignments without changing champion pick order. VALORANT lineups become visible after the Hub score and agent report; pending agent reporting is not a live agent draft. Earlier lineups are available under expandable game history. Corrections and reverts replace the public snapshot and remove withdrawn assignments. Player names and agent lineups are not added to the browser overlay layouts.
 
 All applied changes continue through the complete six-file local writer transaction. Legacy JSON shapes, manual export, and local spectator data remain available. League supports Bo1/Bo3/Bo5 drafts; VALORANT supports Bo3/Bo5 map vetoes. Unsupported Hub formats show an error and retain the last valid state.

@@ -21,6 +21,7 @@ export type HubSource = { mode: "manual" | "live"; matchId: string; collection: 
 export type HubPresentation = { gameNumber: number; progress: string; activeSelection: boolean; rolesRevealed: boolean; sidesReady: boolean; fearlessChampions: string[] };
 export function hubIdentity(payload: unknown): HubIdentity | null;
 export function emptyHubSource(): HubSource;
+export function resetHubSource(match: HubMatch, key: HubGameKey): HubSource;
 export function hubEligibility(match: HubMatch, game: string): string;
 export function normalizeHubCollection(payload: unknown, match: HubMatch): HubCollection;
 export function selectHubSession(collection: HubCollection | null | undefined, gameNumber: number): HubSession | null;

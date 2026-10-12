@@ -91,7 +91,7 @@ import { applyProductionDefaults, matchesProductionDefaults } from "../lib/produ
 import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyMatchLookupResult } from "../lib/match-sync.mjs";
 import { HubDraftControls, useHubDraftSync } from "./HubDraftControls";
-import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, reconcileHubMatch, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, reconcileHubMatch, resetHubSource, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
 import {
   CASTER_PRESET_LIMIT,
   findCasterPreset,
@@ -3496,12 +3496,12 @@ export default function Home() {
   }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstPickTeam, state.leagueOfLegends.sideControl, state.leagueOfLegends.hubDraft.mode]);
 
   function resetLeagueSeries() {
-    if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool, and returns the draft to Manual.")) return;
+    if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool, and turns Live off for this match.")) return;
     setState((current) => ({
       ...current,
       leagueOfLegends: {
         ...current.leagueOfLegends,
-        hubDraft: emptyHubSource(),
+        hubDraft: resetHubSource(current.general.matches[0], "leagueOfLegends"),
         hubPresentation: undefined,
         currentGame: 1,
         sideControl: "draft",

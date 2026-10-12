@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, normalizeHubCollection, projectHubGame, reconcileHubMatch, selectHubSession, setHubMode } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, normalizeHubCollection, projectHubGame, reconcileHubMatch, resetHubSource, selectHubSession, setHubMode } from "../lib/hub-draft.mjs";
 import { buildLeagueOverlayState, createLeagueDraftState, draftSlots } from "../lib/league-of-legends.mjs";
 import { leagueFearlessChampions } from "../lib/league-overlay.mjs";
 import { buildValorantFields, getValorantCurrentSides } from "../lib/valorant.mjs";
@@ -63,6 +63,29 @@ test("turning Live off is retained across reconciliation and reload, even before
       assert.equal(setHubMode(off, key, "live", match.id).hubDraft.mode, "live");
     }
   }
+});
+
+test("an operator reset stays Off through reconciliation and reload until explicitly re-enabled", () => {
+  const match = matchFor(payloads[2]);
+  const imported = acceptHubCollection(league(), "leagueOfLegends", collections[2]);
+  for (const mode of ["live", "manual"]) {
+    const game = setHubMode(imported, "leagueOfLegends", mode, match.id);
+    const reset = { ...clearHubGame(game, "leagueOfLegends"), hubDraft: resetHubSource(match, "leagueOfLegends") };
+    assert.deepEqual(reset.hubDraft, { mode: "manual", matchId: match.id, collection: null });
+    assert.strictEqual(reconcileHubMatch(reset, "leagueOfLegends", match), reset);
+    assert.ok(reset.draft.selections.every((selection) => selection === ""));
+    assert.equal(reset.hubPresentation, undefined);
+    assert.strictEqual(acceptHubCollection(reset, "leagueOfLegends", collections[2]), reset, "reject late reply from before reset");
+    const reloaded = { ...reset, hubDraft: hydrateHubSource(JSON.parse(JSON.stringify(reset.hubDraft))) };
+    assert.strictEqual(reconcileHubMatch(reloaded, "leagueOfLegends", match), reloaded);
+    assert.strictEqual(acceptHubCollection(reloaded, "leagueOfLegends", collections[2]), reloaded);
+    const resumed = setHubMode(reloaded, "leagueOfLegends", "live", match.id);
+    assert.equal(acceptHubCollection(resumed, "leagueOfLegends", collections[2]).draft.currentStep, 20);
+    const nextMatch = { ...match, id: "new-match", syncedId: "new-match" };
+    assert.equal(reconcileHubMatch(reloaded, "leagueOfLegends", nextMatch).hubDraft.mode, "live");
+  }
+  assert.deepEqual(resetHubSource({ ...match, id: "not-synced" }, "leagueOfLegends"), emptyHubSource());
+  assert.deepEqual(resetHubSource(matchFor(payloads[4]), "leagueOfLegends"), emptyHubSource());
 });
 
 test("a different synced Match 1 enables Live and clears the old import without publishing scores", () => {
