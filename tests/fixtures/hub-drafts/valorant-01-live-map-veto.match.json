@@ -1,0 +1,623 @@
+{
+  "league": {
+    "id": "demo-league",
+    "name": "Example League",
+    "slug": "example-league"
+  },
+  "season": {
+    "id": "demo-season",
+    "name": "Example Season",
+    "slug": "example-season",
+    "status": "active",
+    "gameTitles": [
+      "League of Legends",
+      "VALORANT"
+    ]
+  },
+  "event": {
+    "id": "demo-event-valorant",
+    "name": "VALORANT Example Playoffs",
+    "slug": "valorant-example-playoffs",
+    "gameTitle": "VALORANT",
+    "visibility": "active",
+    "status": "active"
+  },
+  "stage": {
+    "id": "demo-stage-valorant",
+    "name": "Playoffs",
+    "type": "single_elim",
+    "status": "active",
+    "order": 1
+  },
+  "match": {
+    "id": "demo-match-valorant",
+    "round": 1,
+    "roundLabel": "Semifinals",
+    "sortOrder": 1,
+    "matchNumber": 1,
+    "matchPhase": "drafting",
+    "hubStatus": "live",
+    "scheduledAt": "2026-10-12T00:00:00.000Z",
+    "bestOf": 3,
+    "isBye": false,
+    "team1": {
+      "teamId": "demo-team-aurora",
+      "name": "Aurora",
+      "seed": 1,
+      "score": 0
+    },
+    "team2": {
+      "teamId": "demo-team-tempest",
+      "name": "Tempest",
+      "seed": 2,
+      "score": 0
+    },
+    "stream": {
+      "channelName": "Example Main Stream",
+      "streamUrl": null
+    }
+  },
+  "games": [],
+  "rosters": {
+    "team1": [
+      {
+        "id": "demo-player-1-1",
+        "name": "Alex A",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-2",
+        "name": "Blair B",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-3",
+        "name": "Casey C",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-4",
+        "name": "Devon D",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-1-5",
+        "name": "Emery E",
+        "role": "player"
+      }
+    ],
+    "team2": [
+      {
+        "id": "demo-player-2-1",
+        "name": "Finley F",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-2",
+        "name": "Gray G",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-3",
+        "name": "Harper H",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-4",
+        "name": "Indigo I",
+        "role": "player"
+      },
+      {
+        "id": "demo-player-2-5",
+        "name": "Jules J",
+        "role": "player"
+      }
+    ]
+  },
+  "standings": {
+    "scope": "stage",
+    "stageId": "demo-stage-valorant",
+    "stageName": "Playoffs",
+    "team1": null,
+    "team2": null
+  },
+  "matchLabel": "Semifinals - Match 1",
+  "draft": {
+    "required": true,
+    "collectionRevision": 5,
+    "currentGameIndex": null,
+    "session": {
+      "id": "demo-valorant-series-veto",
+      "revision": 4,
+      "status": "drafting",
+      "snapshot": {
+        "profile": {
+          "id": "valorant_maps_bo3",
+          "version": 2,
+          "gameTitle": "VALORANT",
+          "scope": "series",
+          "availability": "standard",
+          "sideOptions": [
+            "attack",
+            "defense"
+          ],
+          "steps": [
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "pick",
+              "role": "A",
+              "mapNumber": 1
+            },
+            {
+              "type": "pick",
+              "role": "B",
+              "mapNumber": 2
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "decider",
+              "mapNumber": 3
+            },
+            {
+              "type": "side",
+              "role": "B",
+              "mapNumber": 1
+            },
+            {
+              "type": "side",
+              "role": "A",
+              "mapNumber": 2
+            },
+            {
+              "type": "side",
+              "role": "A",
+              "mapNumber": 3
+            }
+          ]
+        },
+        "bestOf": 3,
+        "gameIndex": null,
+        "team1Id": "demo-team-aurora",
+        "team2Id": "demo-team-tempest",
+        "team1Seed": 1,
+        "team2Seed": 2,
+        "priorityTeamId": "demo-team-aurora",
+        "items": [
+          {
+            "id": "demo-map-bind",
+            "name": "Bind",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-breeze",
+            "name": "Breeze",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-ascent",
+            "name": "Ascent",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-haven",
+            "name": "Haven",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-icebox",
+            "name": "Icebox",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-lotus",
+            "name": "Lotus",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-split",
+            "name": "Split",
+            "imageUrl": null
+          }
+        ],
+        "priorGames": [],
+        "agentCatalog": {
+          "version": "example-agents-v1",
+          "items": [
+            {
+              "id": "demo-agent-1",
+              "name": "Jett",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-duelist",
+                "name": "Duelist",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-2",
+              "name": "Sova",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-initiator",
+                "name": "Initiator",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-3",
+              "name": "Omen",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-controller",
+                "name": "Controller",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-4",
+              "name": "Killjoy",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-sentinel",
+                "name": "Sentinel",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-5",
+              "name": "KAY/O",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-initiator",
+                "name": "Initiator",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-6",
+              "name": "Raze",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-duelist",
+                "name": "Duelist",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-7",
+              "name": "Breach",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-initiator",
+                "name": "Initiator",
+                "imageUrl": null
+              }
+            }
+          ]
+        }
+      },
+      "state": {
+        "phase": "drafting",
+        "stepIndex": 3,
+        "priorityTeamId": "demo-team-aurora",
+        "roles": {
+          "A": "demo-team-aurora",
+          "B": "demo-team-tempest"
+        },
+        "bannedItemIds": [
+          "demo-map-bind",
+          "demo-map-breeze"
+        ],
+        "maps": [
+          {
+            "mapNumber": 1,
+            "itemId": "demo-map-ascent",
+            "pickedByTeamId": "demo-team-aurora",
+            "decider": false,
+            "sideChoiceByTeamId": null,
+            "startingSide": null
+          }
+        ],
+        "deciderProposal": null
+      },
+      "history": [
+        {
+          "type": "choose_role",
+          "teamId": "demo-team-aurora",
+          "role": "A"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "demo-map-bind"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "demo-map-breeze"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "demo-map-ascent"
+        }
+      ],
+      "currentStep": {
+        "type": "pick",
+        "role": "B",
+        "mapNumber": 2,
+        "actingTeamIds": [
+          "demo-team-tempest"
+        ]
+      },
+      "availableItemIds": [
+        "demo-map-haven",
+        "demo-map-icebox",
+        "demo-map-lotus",
+        "demo-map-split"
+      ],
+      "catalogVersion": "example-maps-v1"
+    },
+    "currentSession": {
+      "id": "demo-valorant-series-veto",
+      "revision": 4,
+      "status": "drafting",
+      "snapshot": {
+        "profile": {
+          "id": "valorant_maps_bo3",
+          "version": 2,
+          "gameTitle": "VALORANT",
+          "scope": "series",
+          "availability": "standard",
+          "sideOptions": [
+            "attack",
+            "defense"
+          ],
+          "steps": [
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "pick",
+              "role": "A",
+              "mapNumber": 1
+            },
+            {
+              "type": "pick",
+              "role": "B",
+              "mapNumber": 2
+            },
+            {
+              "type": "ban",
+              "role": "A"
+            },
+            {
+              "type": "ban",
+              "role": "B"
+            },
+            {
+              "type": "decider",
+              "mapNumber": 3
+            },
+            {
+              "type": "side",
+              "role": "B",
+              "mapNumber": 1
+            },
+            {
+              "type": "side",
+              "role": "A",
+              "mapNumber": 2
+            },
+            {
+              "type": "side",
+              "role": "A",
+              "mapNumber": 3
+            }
+          ]
+        },
+        "bestOf": 3,
+        "gameIndex": null,
+        "team1Id": "demo-team-aurora",
+        "team2Id": "demo-team-tempest",
+        "team1Seed": 1,
+        "team2Seed": 2,
+        "priorityTeamId": "demo-team-aurora",
+        "items": [
+          {
+            "id": "demo-map-bind",
+            "name": "Bind",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-breeze",
+            "name": "Breeze",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-ascent",
+            "name": "Ascent",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-haven",
+            "name": "Haven",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-icebox",
+            "name": "Icebox",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-lotus",
+            "name": "Lotus",
+            "imageUrl": null
+          },
+          {
+            "id": "demo-map-split",
+            "name": "Split",
+            "imageUrl": null
+          }
+        ],
+        "priorGames": [],
+        "agentCatalog": {
+          "version": "example-agents-v1",
+          "items": [
+            {
+              "id": "demo-agent-1",
+              "name": "Jett",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-duelist",
+                "name": "Duelist",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-2",
+              "name": "Sova",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-initiator",
+                "name": "Initiator",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-3",
+              "name": "Omen",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-controller",
+                "name": "Controller",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-4",
+              "name": "Killjoy",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-sentinel",
+                "name": "Sentinel",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-5",
+              "name": "KAY/O",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-initiator",
+                "name": "Initiator",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-6",
+              "name": "Raze",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-duelist",
+                "name": "Duelist",
+                "imageUrl": null
+              }
+            },
+            {
+              "id": "demo-agent-7",
+              "name": "Breach",
+              "imageUrl": null,
+              "agentRole": {
+                "id": "demo-role-initiator",
+                "name": "Initiator",
+                "imageUrl": null
+              }
+            }
+          ]
+        }
+      },
+      "state": {
+        "phase": "drafting",
+        "stepIndex": 3,
+        "priorityTeamId": "demo-team-aurora",
+        "roles": {
+          "A": "demo-team-aurora",
+          "B": "demo-team-tempest"
+        },
+        "bannedItemIds": [
+          "demo-map-bind",
+          "demo-map-breeze"
+        ],
+        "maps": [
+          {
+            "mapNumber": 1,
+            "itemId": "demo-map-ascent",
+            "pickedByTeamId": "demo-team-aurora",
+            "decider": false,
+            "sideChoiceByTeamId": null,
+            "startingSide": null
+          }
+        ],
+        "deciderProposal": null
+      },
+      "history": [
+        {
+          "type": "choose_role",
+          "teamId": "demo-team-aurora",
+          "role": "A"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-aurora",
+          "itemId": "demo-map-bind"
+        },
+        {
+          "type": "ban",
+          "teamId": "demo-team-tempest",
+          "itemId": "demo-map-breeze"
+        },
+        {
+          "type": "pick",
+          "teamId": "demo-team-aurora",
+          "itemId": "demo-map-ascent"
+        }
+      ],
+      "currentStep": {
+        "type": "pick",
+        "role": "B",
+        "mapNumber": 2,
+        "actingTeamIds": [
+          "demo-team-tempest"
+        ]
+      },
+      "availableItemIds": [
+        "demo-map-haven",
+        "demo-map-icebox",
+        "demo-map-lotus",
+        "demo-map-split"
+      ],
+      "catalogVersion": "example-maps-v1"
+    },
+    "gameSessions": []
+  }
+}

@@ -1346,11 +1346,12 @@ export async function startJsonWriter({
       ? request.url?.match(/^\/api\/public\/matches\/([0-9a-f-]{36})$/i)
       : null;
     if (publicMatchRequest) {
+      response.setHeader("Cache-Control", "no-store");
       try {
         const matchId = publicMatchRequest[1];
         const { upstream, body } = await getHubPublicResource(`match:${matchId.toLowerCase()}`, () => (
           fetchBounded(fetchImpl, `${LEAGUE_HUB_PUBLIC_URL}/matches/${encodeURIComponent(matchId)}`, {
-            headers: { Accept: "application/json" },
+            headers: { Accept: "application/json", "Cache-Control": "no-cache" },
             expectedType: "json",
             maximumBytes: 1_000_000,
           })
@@ -1360,7 +1361,7 @@ export async function startJsonWriter({
           return;
         }
         JSON.parse(body.toString("utf8"));
-        response.writeHead(200, { "Content-Type": "application/json" });
+        response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         response.end(body);
       } catch (error) {
         if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");

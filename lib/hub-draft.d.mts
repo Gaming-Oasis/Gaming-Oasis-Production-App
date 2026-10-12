@@ -1,0 +1,32 @@
+export type HubGameKey = "valorant" | "leagueOfLegends";
+export type HubTeam = "team1" | "team2";
+export type HubIdentity = { game: string; team1Id: string; team2Id: string };
+export type HubMatch = { id: string; syncedId: string; hubIdentity: HubIdentity | null };
+export type HubLineupRow = { position: string; item: string; player: string };
+export type HubSession = {
+  id: string; gameIndex: number | null; kind: string; bestOf: number; mode: string; phase: string;
+  progress: string; activeSelection: boolean; blueTeam: HubTeam | null; firstPickTeam: HubTeam | null;
+  roles: { A: HubTeam | null; B: HubTeam | null }; selections: string[];
+  picks: Record<HubTeam, string[]>; pickOrders: Record<HubTeam, number[]>;
+  bans: Array<{ team: HubTeam; name: string }>;
+  maps: Array<{ number: number; name: string; picker: HubTeam | null; decider: boolean; choosingTeam: HubTeam | null; side: string }>;
+  revealed: boolean; lineups: Record<HubTeam, HubLineupRow[]>; confirmedTeams: HubTeam[]; priorPicks: string[];
+};
+export type HubCollection = {
+  matchId: string; identity: HubIdentity; revision: number; required: boolean; bestOf: number;
+  currentGameIndex: number | null; games: Array<{ team1: number; team2: number }>;
+  veto: HubSession | null; sessions: HubSession[];
+};
+export type HubSource = { mode: "manual" | "live"; matchId: string; collection: HubCollection | null };
+export type HubPresentation = { gameNumber: number; progress: string; activeSelection: boolean; rolesRevealed: boolean; sidesReady: boolean; fearlessChampions: string[] };
+export function hubIdentity(payload: unknown): HubIdentity | null;
+export function emptyHubSource(): HubSource;
+export function hubEligibility(match: HubMatch, game: string): string;
+export function normalizeHubCollection(payload: unknown, match: HubMatch): HubCollection;
+export function selectHubSession(collection: HubCollection | null | undefined, gameNumber: number): HubSession | null;
+export function hubLeagueResultMetadata(collection: HubCollection | null | undefined, gameNumber: number): { bluePicks: string[]; redPicks: string[]; blueTeam: HubTeam; firstPickTeam: HubTeam | undefined } | null;
+export function hydrateHubSource(value: unknown): HubSource;
+export function projectHubGame<T>(game: T, key: HubGameKey): T;
+export function acceptHubCollection<T>(game: T, key: HubGameKey, collection: HubCollection): T;
+export function clearHubGame<T>(game: T, key: HubGameKey): T;
+export function setHubMode<T>(game: T, key: HubGameKey, mode: "manual" | "live", matchId: string): T;

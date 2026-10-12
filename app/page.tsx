@@ -90,6 +90,8 @@ import {
 import { applyProductionDefaults, matchesProductionDefaults } from "../lib/production-defaults.mjs";
 import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyMatchLookupResult } from "../lib/match-sync.mjs";
+import { HubDraftControls, useHubDraftSync } from "./HubDraftControls";
+import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
 import {
   CASTER_PRESET_LIMIT,
   findCasterPreset,
@@ -153,6 +155,7 @@ type Team = {
 type Match = {
   id: string;
   syncedId: string;
+  hubIdentity: HubIdentity | null;
   team1: Team;
   team2: Team;
   league: MatchLeague;
@@ -290,6 +293,8 @@ type WriterLiveDataStatus = {
 };
 
 type LeagueOfLegends = {
+  hubDraft: HubSource;
+  hubPresentation?: HubPresentation;
   /** Who owns the map-side assignment: the draft drive (default) or the manual Flip Sides switch. */
   sideControl: "draft" | "manual";
   firstPickTeam: "" | "team1" | "team2";
@@ -436,6 +441,7 @@ type ValorantBo5 = {
 };
 
 type Valorant = {
+  hubDraft: HubSource;
   scoreboardHeader: string;
   bestOf: "Bo1" | "Bo3" | "Bo5";
   flipSides: boolean;
@@ -716,7 +722,7 @@ const emptyTeam = (): Team => ({
 });
 
 function emptyMatch(): Match {
-  return { id: "", syncedId: "", team1: emptyTeam(), team2: emptyTeam(), league: emptyLeague() };
+  return { id: "", syncedId: "", hubIdentity: null, team1: emptyTeam(), team2: emptyTeam(), league: emptyLeague() };
 }
 
 function createDraws(): DrawData {
@@ -810,6 +816,7 @@ function createInitialState(): ProductionState {
       savedGames: createRocketLeagueGames(),
     },
     valorant: {
+      hubDraft: emptyHubSource(),
       scoreboardHeader: "",
       bestOf: "Bo3",
       flipSides: false,
@@ -822,6 +829,7 @@ function createInitialState(): ProductionState {
       bo5: { ban1: "", ban2: "", pick1: "", pick2: "", pick3: "", pick4: "", decider: "", side1: "", side2: "", side3: "", side4: "", side5: "" },
     },
     leagueOfLegends: {
+      hubDraft: emptyHubSource(),
       sideControl: "draft",
       firstPickTeam: "",
       scoreboardHeader: "",
@@ -998,9 +1006,11 @@ function mergeStringRecord<T extends Record<string, string>>(template: T, value:
   ) as T;
 }
 
-function mergeValorantVeto<T extends Record<string, string>>(template: T, value: unknown, maps: ValorantMapArtwork[]): T {
+function mergeValorantVeto<T extends Record<string, string>>(template: T, value: unknown, maps: ValorantMapArtwork[], hubSource?: HubSource): T {
   const merged = mergeStringRecord(template, value);
   const mapByName = new Map(maps.map((map) => [canonicalMapName(map.name), map.name]));
+  for (const map of hubSource?.collection?.veto?.maps ?? []) mapByName.set(canonicalMapName(map.name), map.name);
+  for (const ban of hubSource?.collection?.veto?.bans ?? []) mapByName.set(canonicalMapName(ban.name), ban.name);
   const usedMaps = new Set<string>();
   return Object.fromEntries(Object.entries(merged).map(([key, rawValue]) => {
     if (key.startsWith("side")) return [key, rawValue === "attack" || rawValue === "defense" ? rawValue : ""];
@@ -1081,9 +1091,12 @@ function mergeLeague(saved?: unknown): MatchLeague {
 
 function mergeMatch(saved?: unknown): Match {
   const source = asRecord(saved);
+  const identity = asRecord(source.hubIdentity);
   return {
     id: stringValue(source.id),
     syncedId: stringValue(source.syncedId),
+    hubIdentity: ["VALORANT", "League of Legends"].includes(stringValue(identity.game)) && stringValue(identity.team1Id) && stringValue(identity.team2Id)
+      ? { game: stringValue(identity.game), team1Id: stringValue(identity.team1Id), team2Id: stringValue(identity.team2Id) } : null,
     team1: mergeTeam(source.team1),
     team2: mergeTeam(source.team2),
     league: mergeLeague(source.league),
@@ -1196,6 +1209,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
     },
     valorant: {
       ...initial.valorant,
+      hubDraft: hydrateHubSource(savedValorant.hubDraft),
       scoreboardHeader: stringValue(savedValorant.scoreboardHeader),
       flipSides: booleanValue(savedValorant.flipSides, false),
       banSwap: booleanValue(savedValorant.banSwap, false),
@@ -1204,12 +1218,14 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       bestOf: savedValorantBestOf,
       games: scoreRows(savedValorant.games, VALORANT_GAME_COUNT),
       savedGames: trimSavedResultRows(scoreRows(savedValorantResults, VALORANT_GAME_COUNT), VALORANT_GAME_COUNT),
-      bo3: mergeValorantVeto(initial.valorant.bo3, savedValorant.bo3, normalizedMaps),
-      bo5: mergeValorantVeto(initial.valorant.bo5, savedValorant.bo5, normalizedMaps),
+      bo3: mergeValorantVeto(initial.valorant.bo3, savedValorant.bo3, normalizedMaps, hydrateHubSource(savedValorant.hubDraft)),
+      bo5: mergeValorantVeto(initial.valorant.bo5, savedValorant.bo5, normalizedMaps, hydrateHubSource(savedValorant.hubDraft)),
     },
     leagueOfLegends: {
       ...initial.leagueOfLegends,
       ...savedLeague,
+      hubDraft: hydrateHubSource(savedLeague.hubDraft),
+      hubPresentation: undefined,
       scoreboard: normalizeLeagueScoreboard(savedLeague.scoreboard) as LeagueScoreboardSettings,
       bestOf: savedLeagueBestOf,
       draftMode: savedLeague.draftMode === "standard" ? "standard" : savedLeague.draftMode === "online" ? "online" : "fearless",
@@ -1838,7 +1854,7 @@ function GameAutoAcceptControl({
     <div className="valorant-toggle-row">
       <div>
         <strong>Auto Accept Live Results</strong>
-        <p>{locked ? "Live results are accepted automatically for this game." : "When live data detects a winner, save the next result automatically. Leave off to review it before updating results."}</p>
+        <p>{locked ? checked ? "Live results are accepted automatically for this game." : "League Hub Live keeps results manual. Use Update results to advance." : "When live data detects a winner, save the next result automatically. Leave off to review it before updating results."}</p>
       </div>
       <label className="switch large">
         <input aria-label={`Auto Accept Live ${gameName} Results`} type="checkbox" checked={checked} disabled={locked} onChange={(event) => onChange?.(event.target.checked)} />
@@ -2056,6 +2072,53 @@ export default function Home() {
     { sequence: 0, controller: null },
   ]);
 
+  const acceptHubDraft = useCallback((collection: HubCollection) => {
+    setState((current) => {
+      const match = current.general.matches[0];
+      if (!isPrimaryTabRef.current || match.id.trim() !== collection.matchId || match.syncedId !== collection.matchId
+        || JSON.stringify(match.hubIdentity) !== JSON.stringify(collection.identity)) return current;
+      const key = collection.identity.game === "VALORANT" ? "valorant" : "leagueOfLegends";
+      const game = acceptHubCollection(current[key], key, collection);
+      return game === current[key] ? current : { ...current, [key]: game };
+    });
+  }, []);
+  const hubMatch = state.general.matches[0];
+  const activeHubKey = hubMatch.hubIdentity?.game === "VALORANT" ? "valorant" : "leagueOfLegends";
+  const hubStatus = useHubDraftSync({
+    active: hydrated && isPrimaryTab && state[activeHubKey].hubDraft.mode === "live"
+      && !hubEligibility(hubMatch, activeHubKey === "valorant" ? "VALORANT" : "League of Legends"),
+    match: hubMatch, endpoint: MATCH_LOOKUP_ENDPOINT, onCollection: acceptHubDraft,
+  });
+  useEffect(() => {
+    if (!hydrated || !isPrimaryTab) return;
+    setState((current) => {
+      const match = current.general.matches[0];
+      const reconcile = <T extends Valorant | LeagueOfLegends>(game: T, key: HubGameKey): T => {
+        if (game.hubDraft.matchId && (game.hubDraft.matchId !== match.syncedId || game.hubDraft.matchId !== match.id.trim()
+          || hubEligibility(match, key === "valorant" ? "VALORANT" : "League of Legends")
+          || game.hubDraft.collection && JSON.stringify(game.hubDraft.collection.identity) !== JSON.stringify(match.hubIdentity))) return clearHubGame(game, key);
+        return projectHubGame(game, key);
+      };
+      const valorant = reconcile(current.valorant, "valorant");
+      const leagueOfLegends = reconcile(current.leagueOfLegends, "leagueOfLegends");
+      return valorant === current.valorant && leagueOfLegends === current.leagueOfLegends ? current : { ...current, valorant, leagueOfLegends };
+    });
+  }, [hydrated, isPrimaryTab, hubMatch, state.valorant.hubDraft, state.leagueOfLegends.hubDraft, state.leagueOfLegends.currentGame]);
+
+  function changeHubMode(key: HubGameKey, mode: "manual" | "live") {
+    setState((current) => {
+      const match = current.general.matches[0];
+      if (!isPrimaryTabRef.current || mode === "live" && hubEligibility(match, key === "valorant" ? "VALORANT" : "League of Legends")) return current;
+      return { ...current, [key]: setHubMode(current[key], key, mode, match.syncedId) };
+    });
+  }
+
+  function renderHubDraftControls(key: HubGameKey, gameNumber: number) {
+    return <HubDraftControls gameKey={key} source={state[key].hubDraft} match={hubMatch} gameNumber={gameNumber}
+      teams={[resolveTeam(hubMatch.team1).name || "Team 1", resolveTeam(hubMatch.team2).name || "Team 2"]}
+      status={hubStatus} owner={isPrimaryTab} onMode={(mode) => changeHubMode(key, mode)} />;
+  }
+
   const notify = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -2236,6 +2299,7 @@ export default function Home() {
         const playerSignature = (payload.live.players ?? []).map((player: { riotId?: string; champion?: string }) => `${player.riotId ?? ""}:${player.champion ?? ""}`).join("|");
         const proposalId = `lol-${endEvent?.id ?? "end"}-${Math.floor(payload.live.game.gameTime ?? 0)}-${playerSignature}`;
         setState((current) => {
+          if (current.leagueOfLegends.hubDraft.mode === "live") return current;
           if (current.leagueOfLegends.resultProposal?.id === proposalId || current.leagueOfLegends.confirmedGames.some((game) => game.id === proposalId)) return current;
           const winnerTeam = payload.live.game.winnerTeam;
           const blueWinner = current.leagueOfLegends.blueTeam === "team1" ? "team1" : "team2";
@@ -3359,14 +3423,15 @@ export default function Home() {
         const existing = previousByGame.get(gameNumber);
         const resultHasPicks = [...result.bluePicks, ...result.redPicks].some(Boolean);
         const useCurrentDraft = gameNumber === finishedGame && currentDraftHasPicks;
+        const hubMetadata = current.leagueOfLegends.hubDraft.mode === "live" ? hubLeagueResultMetadata(current.leagueOfLegends.hubDraft.collection, gameNumber) : null;
         return [{
           id: result.id || existing?.id || `manual-${gameNumber}-${Date.now()}`,
           gameNumber,
           winner: result.winner,
-          bluePicks: resultHasPicks ? result.bluePicks : useCurrentDraft ? slots.bluePicks : existing?.bluePicks ?? Array(5).fill(""),
-          redPicks: resultHasPicks ? result.redPicks : useCurrentDraft ? slots.redPicks : existing?.redPicks ?? Array(5).fill(""),
-          blueTeam: gameNumber === finishedGame ? current.leagueOfLegends.blueTeam : existing?.blueTeam,
-          firstPickTeam: gameNumber === finishedGame ? current.leagueOfLegends.firstPickTeam || undefined : existing?.firstPickTeam,
+          bluePicks: hubMetadata?.bluePicks ?? (resultHasPicks ? result.bluePicks : useCurrentDraft ? slots.bluePicks : existing?.bluePicks ?? Array(5).fill("")),
+          redPicks: hubMetadata?.redPicks ?? (resultHasPicks ? result.redPicks : useCurrentDraft ? slots.redPicks : existing?.redPicks ?? Array(5).fill("")),
+          blueTeam: hubMetadata?.blueTeam || (gameNumber === finishedGame ? current.leagueOfLegends.blueTeam : existing?.blueTeam),
+          firstPickTeam: hubMetadata?.firstPickTeam || (gameNumber === finishedGame ? current.leagueOfLegends.firstPickTeam || undefined : existing?.firstPickTeam),
           snapshot: result.snapshot ?? existing?.snapshot ?? null,
           confirmedAt: new Date().toISOString(),
         } as LeagueConfirmedGame];
@@ -3387,7 +3452,7 @@ export default function Home() {
       const nextFirstPickTeam = expected?.firstPickTeam ?? current.leagueOfLegends.firstPickTeam;
       return {
         ...current,
-        leagueOfLegends: {
+        leagueOfLegends: projectHubGame({
           ...current.leagueOfLegends,
           confirmedGames,
           results: leagueResultsFromConfirmedGames(confirmedGames),
@@ -3401,26 +3466,26 @@ export default function Home() {
             ? createLeagueDraftState(current.leagueOfLegends.draft.timerSeconds, leagueFirstPickSide(nextBlueTeam, nextFirstPickTeam)) as LeagueDraftState
             : current.leagueOfLegends.draft,
           resultProposal: null,
-        },
+        }, "leagueOfLegends"),
       };
     });
     notify("League of Legends results updated");
   }
 
   useEffect(() => {
-    if (!hydrated || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
+    if (!hydrated || state.leagueOfLegends.hubDraft.mode === "live" || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
     saveLeagueResults();
-  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id]);
+  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id, state.leagueOfLegends.hubDraft.mode]);
 
   // Game 1 applies the expected assignment to the higher seed; equal or missing seeds wait for the coin toss.
   useEffect(() => {
-    if (!hydrated || state.leagueOfLegends.currentGame !== 1 || state.leagueOfLegends.firstPickTeam) return;
+    if (!hydrated || state.leagueOfLegends.hubDraft.mode === "live" || state.leagueOfLegends.currentGame !== 1 || state.leagueOfLegends.firstPickTeam) return;
     const holder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
     const raw = holder ? expectedLeagueSelection(holder) : null;
     const expected = raw && state.leagueOfLegends.sideControl === "manual" ? { firstPickTeam: raw.firstPickTeam } : raw;
     if (!expected) return;
     setState((current) => {
-      if (current.leagueOfLegends.currentGame !== 1 || current.leagueOfLegends.firstPickTeam || current.leagueOfLegends.draft.currentStep > 0) return current;
+      if (current.leagueOfLegends.hubDraft.mode === "live" || current.leagueOfLegends.currentGame !== 1 || current.leagueOfLegends.firstPickTeam || current.leagueOfLegends.draft.currentStep > 0) return current;
       const merged = { ...current.leagueOfLegends, ...expected };
       return {
         ...current,
@@ -3430,14 +3495,16 @@ export default function Home() {
         },
       };
     });
-  }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstPickTeam, state.leagueOfLegends.sideControl]);
+  }, [hydrated, state.general.matches, state.leagueOfLegends.currentGame, state.leagueOfLegends.firstPickTeam, state.leagueOfLegends.sideControl, state.leagueOfLegends.hubDraft.mode]);
 
   function resetLeagueSeries() {
-    if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool.")) return;
+    if (!window.confirm("Reset the League of Legends series? This clears draft history, confirmed results, and the fearless pool, and returns the draft to Manual.")) return;
     setState((current) => ({
       ...current,
       leagueOfLegends: {
         ...current.leagueOfLegends,
+        hubDraft: emptyHubSource(),
+        hubPresentation: undefined,
         currentGame: 1,
         sideControl: "draft",
         firstPickTeam: "",
@@ -4240,7 +4307,7 @@ export default function Home() {
           primaryColor: resolved.primaryColor,
           secondaryColor: resolved.secondaryColor,
         }, gameTitle));
-        matches[matchIndex] = applyMatchLookupResult(currentMatch, { requestedId, league, team1, team2 }) as Match;
+        matches[matchIndex] = { ...applyMatchLookupResult(currentMatch, { requestedId, league, team1, team2 }), hubIdentity: hubIdentity(json) } as Match;
         return {
           ...current,
           general: {
@@ -4679,7 +4746,7 @@ export default function Home() {
         <GameLiveDataMonitor
           gameName="VALORANT"
           label="Manual control"
-          detail="No VALORANT live-data API is configured. Results and match state are controlled from this workspace."
+          detail={state.valorant.hubDraft.mode === "live" ? "League Hub fills the veto and reported lineups. Enter scores here and use Update results to advance." : "Scores are controlled from this workspace. Connect League Hub in Pick / ban for live veto and lineup updates."}
           tone="manual"
         />
         <div className="tabs" role="tablist" aria-label="VALORANT views" onKeyDown={handleTabListKeyDown}>
@@ -4730,10 +4797,10 @@ export default function Home() {
                     placeholder={state.general.eventName || "Uses Event name"}
                     hint={state.valorant.scoreboardHeader.trim() ? `On-air: ${valorantHeader}` : "Leave blank to use General Info event name."}
                   />
-                  <label className="field"><span className="field-label">Series format</span><select value={state.valorant.bestOf} onChange={(event) => updateValorantBestOf(event.target.value as Valorant["bestOf"])}><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
+                  <label className="field"><span className="field-label">Series format</span><select disabled={state.valorant.hubDraft.mode === "live"} value={state.valorant.bestOf} onChange={(event) => updateValorantBestOf(event.target.value as Valorant["bestOf"])}><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
                 </div>
                 <div className="valorant-toggle-list">
-                  <GameAutoAcceptControl gameName="VALORANT" checked locked />
+                  <GameAutoAcceptControl gameName="VALORANT" checked={state.valorant.hubDraft.mode !== "live"} locked />
                   <GameFlipSidesControl gameName="VALORANT" checked={state.valorant.flipSides} onChange={(checked) => updateValorant({ flipSides: checked })} />
                 </div>
               </section>
@@ -4746,13 +4813,14 @@ export default function Home() {
           </div>
         ) : valorantTab === "pickBans" ? (
           <div className="valorant-pickban-stack">
+            {renderHubDraftControls("valorant", valorantCurrentMap.number)}
             <section className="panel-card valorant-reference" aria-label="VALORANT ban team assignments">
               <div><span>Ban Team A</span><strong>{teamA}</strong></div>
               <div><span>Ban Team B</span><strong>{teamB}</strong></div>
               <div><span>Format</span><strong>{state.valorant.bestOf}</strong></div>
               <div className="valorant-reference-ban-control">
                 <div><span>Ban swap</span><strong>{state.valorant.banSwap ? "Swapped" : "Standard"}</strong></div>
-                <label className="switch large"><input aria-label="Swap VALORANT pick ban teams" type="checkbox" checked={state.valorant.banSwap} onChange={(event) => updateValorant({ banSwap: event.target.checked })} /><span /></label>
+                <label className="switch large"><input aria-label="Swap VALORANT pick ban teams" disabled={state.valorant.hubDraft.mode === "live"} type="checkbox" checked={state.valorant.banSwap} onChange={(event) => updateValorant({ banSwap: event.target.checked })} /><span /></label>
               </div>
             </section>
 
@@ -4761,7 +4829,7 @@ export default function Home() {
             ) : (
               <div className="valorant-pickban-grid">
                 <section className="panel-card pickban-card">
-                  <div className="card-title-row"><div><h2>Map selection</h2><p>{state.valorant.bestOf} pick and ban order</p></div><button className="button danger" type="button" onClick={resetValorantMapBans}>Reset map bans</button></div>
+                  <div className="card-title-row"><div><h2>Map selection</h2><p>{state.valorant.bestOf} pick and ban order</p></div><button className="button danger" type="button" disabled={state.valorant.hubDraft.mode === "live"} onClick={resetValorantMapBans}>Reset map bans</button></div>
                   <div className="pickban-list">
                     {activeMapRows.map((row, index) => {
                       const previousPhase = index > 0 ? activeMapRows[index - 1].phase : "";
@@ -4774,7 +4842,7 @@ export default function Home() {
                       const usedElsewhere = new Set(Object.entries(activeSelection)
                         .filter(([selectionKey, selectionValue]) => selectionKey !== row.key && !selectionKey.startsWith("side") && Boolean(selectionValue))
                         .map(([, selectionValue]) => canonicalMapName(selectionValue)));
-                      return <div className="pickban-row-wrap" key={row.key}>{row.phase !== previousPhase ? <span className="pickban-phase">{row.phase}</span> : null}<label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} map selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select map</option>{mapOptions.map((mapName) => <option value={mapName} key={mapName} disabled={usedElsewhere.has(canonicalMapName(mapName))}>{mapName}</option>)}</select></label></div>;
+                      return <div className="pickban-row-wrap" key={row.key}>{row.phase !== previousPhase ? <span className="pickban-phase">{row.phase}</span> : null}<label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select disabled={state.valorant.hubDraft.mode === "live"} aria-label={`${row.label} map selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select map</option>{mapOptions.map((mapName) => <option value={mapName} key={mapName} disabled={usedElsewhere.has(canonicalMapName(mapName))}>{mapName}</option>)}</select></label></div>;
                     })}
                   </div>
                 </section>
@@ -4784,7 +4852,7 @@ export default function Home() {
                   <div className="pickban-list">
                     {activeSideRows.map((row) => {
                       const value = state.valorant.bestOf === "Bo5" ? state.valorant.bo5[row.key as keyof ValorantBo5] : state.valorant.bo3[row.key as keyof ValorantBo3];
-                      return <label className="pickban-row" key={row.key}><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select side</option><option value="attack">Attack</option><option value="defense">Defense</option></select></label>;
+                      return <label className="pickban-row" key={row.key}><span><strong>{row.label}</strong><small>{row.team}</small></span><select disabled={state.valorant.hubDraft.mode === "live"} aria-label={`${row.label} selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select side</option><option value="attack">Attack</option><option value="defense">Defense</option></select></label>;
                     })}
                   </div>
                 </section>
@@ -5254,7 +5322,8 @@ export default function Home() {
     const teamTwo = resolveTeam(state.general.matches[0].team2);
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
     const redTeam = state.leagueOfLegends.blueTeam === "team1" ? teamTwo : teamOne;
-    const leagueSelectionLocked = state.leagueOfLegends.draft.currentStep > 0;
+    const hubLive = state.leagueOfLegends.hubDraft.mode === "live";
+    const leagueSelectionLocked = hubLive || state.leagueOfLegends.draft.currentStep > 0;
     const sideControl = state.leagueOfLegends.sideControl;
     const seedHolder = leagueSeedHolder(state.general.matches[0].team1.seed, state.general.matches[0].team2.seed);
     const leagueSelectionSummary = state.leagueOfLegends.firstPickTeam
@@ -5286,13 +5355,13 @@ export default function Home() {
         </div>
         {sideControl === "manual" ? <p className="field-hint">Sides are set manually with Flip Sides (Results &amp; setup).</p> : null}
         <div className="form-grid">
-          <label className="field"><span className="field-label">Draft rules</span><select disabled={state.leagueOfLegends.draft.currentStep > 0} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
+          <label className="field"><span className="field-label">Draft rules</span><select disabled={leagueSelectionLocked} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
         </div>
         <p className="field-hint" role="status">{leagueSelectionSummary}</p>
       </section>
     );
     const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode, state.leagueOfLegends.draft.firstPickSide);
-    const activeStep = draftSteps[state.leagueOfLegends.draft.currentStep];
+    const activeStep = hubLive && !state.leagueOfLegends.hubPresentation?.activeSelection ? undefined : draftSteps[state.leagueOfLegends.draft.currentStep];
     const picks = draftSlots(state.leagueOfLegends.draft, state.leagueOfLegends.draftMode);
     const unavailable = state.leagueOfLegends.draftMode === "fearless"
       ? fearlessChampionSet(leagueConfirmedGames, state.leagueOfLegends.bestOf, state.leagueOfLegends.currentGame)
@@ -5392,21 +5461,22 @@ export default function Home() {
 
         {leagueTab === "draft" ? (
           <div className="league-draft-layout">
+            {renderHubDraftControls("leagueOfLegends", state.leagueOfLegends.currentGame)}
             <section className="panel-card league-draft-control">
               <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the selected draft format. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div></div>
-              {firstSelectionSetup}
+              {hubLive ? <p className="field-hint">{state.leagueOfLegends.hubPresentation?.sidesReady ? leagueSelectionSummary : "Waiting for Hub sides and pick order."}</p> : firstSelectionSetup}
               {activeStep ? (
                 <div className="league-active-step">
                   <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
-                  <label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
-                  <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button>
+                  <label className="field"><span className="field-label">Champion</span><select disabled={hubLive} value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
+                  <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={hubLive || !leagueChampion}>Lock {activeStep.action}</button>
                 </div>
-              ) : <div className="league-draft-complete"><strong>Draft complete</strong><span>Review the role order below, then verify the spectator feed in Debug.</span></div>}
+              ) : <div className="league-draft-complete"><strong>{hubLive ? state.leagueOfLegends.hubPresentation?.progress || "Waiting for Hub draft" : "Draft complete"}</strong><span>{hubLive ? "Selections update from League Hub." : "Review the role order below, then verify the spectator feed in Debug."}</span></div>}
               <div className="league-draft-actions">
-                <button className="button secondary" type="button" onClick={undoLeagueDraft} disabled={state.leagueOfLegends.draft.currentStep === 0}>Undo</button>
-                <button className="button danger" type="button" onClick={resetLeagueDraft}>Reset draft</button>
+                <button className="button secondary" type="button" onClick={undoLeagueDraft} disabled={hubLive || state.leagueOfLegends.draft.currentStep === 0}>Undo</button>
+                <button className="button danger" type="button" onClick={resetLeagueDraft} disabled={hubLive}>Reset draft</button>
               </div>
-              <div className="league-role-order">
+              {!hubLive ? <div className="league-role-order">
                 <h3>Pick/Ban role assignments</h3>
                 <p>Drag a role onto another pick to swap role assignments. You can also select a role, then its destination. Champions stay in their original pick slots.</p>
                 {(["blue", "red"] as const).map((side) => (
@@ -5415,11 +5485,11 @@ export default function Home() {
                     <LeagueRoleOrder side={side} picks={picks[`${side}Picks`]} order={state.leagueOfLegends.draft[`${side}PickOrder`]} onAssign={(role, pick) => updateLeaguePickRole(side, role, pick)} />
                   </fieldset>
                 ))}
-              </div>
+              </div> : null}
             </section>
             <section className="panel-card league-draft-history">
               <div className="card-title-row"><div><h2>Draft order</h2><p>{state.leagueOfLegends.draft.currentStep} of {draftSteps.length} selections locked.</p></div></div>
-              <div className="league-draft-steps">{draftSteps.map((step) => <div className={`${step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small></div>)}</div>
+              <div className="league-draft-steps">{draftSteps.map((step) => <div className={`${activeStep && step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small></div>)}</div>
             </section>
           </div>
         ) : null}
@@ -5505,12 +5575,12 @@ export default function Home() {
                     placeholder={state.general.eventName || "Uses Event name"}
                     hint={state.leagueOfLegends.scoreboardHeader.trim() ? `On-air: ${leagueHeader}` : "Leave blank to use General Info event name."}
                   />
-                  <label className="field"><span className="field-label">Series format</span><select value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
-                  <label className="field"><span className="field-label">Side control</span><select value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueOfLegends({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{sideControl === "draft" ? "Sides follow the Draft tab each game." : "Flip Sides sets sides; saves still set pick order."}</span></label>
+                  <label className="field"><span className="field-label">Series format</span><select disabled={hubLive} value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
+                  <label className="field"><span className="field-label">Side control</span><select disabled={hubLive} value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueOfLegends({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{sideControl === "draft" ? "Sides follow the Draft tab each game." : "Flip Sides sets sides; saves still set pick order."}</span></label>
                 </div>
                 <div className="valorant-toggle-list">
                   <GameFlipSidesControl gameName="League of Legends" disabled={state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0} checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1" })} />
-                  <GameAutoAcceptControl gameName="League of Legends" checked={state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
+                  <GameAutoAcceptControl gameName="League of Legends" locked={hubLive} checked={!hubLive && state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
                   <p className="field-hint" role="status">{leagueSelectionSummary}</p>
                 </div>
               </section>
