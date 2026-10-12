@@ -30,3 +30,4 @@ export function projectHubGame<T>(game: T, key: HubGameKey): T;
 export function acceptHubCollection<T>(game: T, key: HubGameKey, collection: HubCollection): T;
 export function clearHubGame<T>(game: T, key: HubGameKey): T;
 export function setHubMode<T>(game: T, key: HubGameKey, mode: "manual" | "live", matchId: string): T;
+export function reconcileHubMatch<T>(game: T, key: HubGameKey, match: HubMatch): T;

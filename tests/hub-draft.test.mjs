@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, normalizeHubCollection, projectHubGame, selectHubSession, setHubMode } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, normalizeHubCollection, projectHubGame, reconcileHubMatch, selectHubSession, setHubMode } from "../lib/hub-draft.mjs";
 import { buildLeagueOverlayState, createLeagueDraftState, draftSlots } from "../lib/league-of-legends.mjs";
 import { leagueFearlessChampions } from "../lib/league-overlay.mjs";
 import { buildValorantFields, getValorantCurrentSides } from "../lib/valorant.mjs";
@@ -24,6 +24,63 @@ test("all seven public examples normalize without roster or private fields", () 
   assert.deepEqual(collections.map((c) => c.revision), [12, 26, 27, 30, 5, 14, 17]);
   assert.ok(collections.every((c) => !JSON.stringify(c).includes("rosters")));
   assert.deepEqual(emptyHubSource(), { mode: "manual", matchId: "", collection: null });
+});
+
+test("synced Match 1 automatically enables Live for its game, including existing workspaces", () => {
+  for (const [key, createGame, payload] of [["leagueOfLegends", league, payloads[0]], ["valorant", valorant, payloads[4]]]) {
+    const game = { ...createGame(), hubDraft: emptyHubSource() };
+    const match = matchFor(payload);
+    const live = reconcileHubMatch(game, key, match);
+    assert.deepEqual(live.hubDraft, { mode: "live", matchId: match.id, collection: null });
+    assert.strictEqual(reconcileHubMatch(live, key, match), live, "unchanged match must not cause another production write");
+    assert.strictEqual(live.results, game.results);
+    assert.strictEqual(live.games, game.games);
+    assert.strictEqual(live.savedGames, game.savedGames);
+    assert.strictEqual(live.confirmedGames, game.confirmedGames);
+  }
+});
+
+test("missing, unsynced, and other-game match data cannot enable Live", () => {
+  for (const [key, createGame, payload, other] of [["leagueOfLegends", league, payloads[0], payloads[4]], ["valorant", valorant, payloads[4], payloads[0]]]) {
+    const game = { ...createGame(), hubDraft: emptyHubSource() };
+    for (const match of [{ id: "", syncedId: "", hubIdentity: null }, { ...matchFor(payload), id: "new-unsynced-match" },
+      { ...matchFor(payload), hubIdentity: null }, matchFor(other)]) {
+      assert.strictEqual(reconcileHubMatch(game, key, match), game);
+    }
+  }
+});
+
+test("turning Live off is retained across reconciliation and reload, even before the first response", () => {
+  for (const [key, createGame, payload, collection] of [["leagueOfLegends", league, payloads[0], collections[0]], ["valorant", valorant, payloads[4], collections[4]]]) {
+    const match = matchFor(payload);
+    const live = reconcileHubMatch({ ...createGame(), hubDraft: emptyHubSource() }, key, match);
+    for (const game of [live, acceptHubCollection(live, key, collection)]) {
+      const off = setHubMode(game, key, "manual", match.id);
+      assert.strictEqual(reconcileHubMatch(off, key, { ...match }), off);
+      const reloaded = { ...off, hubDraft: hydrateHubSource(JSON.parse(JSON.stringify(off.hubDraft))) };
+      assert.strictEqual(reconcileHubMatch(reloaded, key, match), reloaded);
+      assert.strictEqual(acceptHubCollection(off, key, collection), off, "late replies must not override Off");
+      assert.equal(setHubMode(off, key, "live", match.id).hubDraft.mode, "live");
+    }
+  }
+});
+
+test("a different synced Match 1 enables Live and clears the old import without publishing scores", () => {
+  for (const [key, createGame, payload, collection] of [["leagueOfLegends", league, payloads[0], collections[0]], ["valorant", valorant, payloads[4], collections[4]]]) {
+    const old = setHubMode(acceptHubCollection(createGame(), key, collection), key, "manual", collection.matchId);
+    const match = { ...matchFor(payload), id: "replacement-match", syncedId: "replacement-match" };
+    const next = reconcileHubMatch(old, key, match);
+    assert.deepEqual(next.hubDraft, { mode: "live", matchId: match.id, collection: null });
+    if (key === "valorant") {
+      assert.ok(Object.values(next.bo3).every((value) => value === ""));
+      assert.strictEqual(next.games, old.games);
+      assert.strictEqual(next.savedGames, old.savedGames);
+    } else {
+      assert.ok(next.draft.selections.every((value) => value === ""));
+      assert.deepEqual(next.results.map((row) => row.winner), old.results.map((row) => row.winner));
+    }
+    assert.strictEqual(acceptHubCollection(next, key, collection), next, "late old-match reply must be discarded");
+  }
 });
 
 test("partial League picks and bans follow their owners and chronological slots", () => {

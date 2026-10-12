@@ -86,7 +86,7 @@ export function HubDraftControls({ gameKey, source, match, teams, gameNumber, st
   return <section className="panel-card hub-draft-panel" aria-label={`${game} League Hub API`}>
     <div className="hub-api-heading"><div><h2>League Hub API</h2><p className="hub-match-teams">{teams[0]} <span>vs</span> {teams[1]}</p></div>
       <div className="hub-api-actions">
-        <label className="field"><span className="field-label">Draft source</span><select aria-label={`${game} draft source`} aria-describedby={`${gameKey}-hub-status`} value={source.mode} disabled={!owner} onChange={(event) => onMode(event.target.value as "manual" | "live")}><option value="manual">Manual</option><option value="live" disabled={Boolean(reason)}>Live</option></select></label>
+        <label className="hub-live-control"><span className="hub-live-label">Live <small>{live ? "On" : "Off"}</small></span><span className="switch large"><input type="checkbox" role="switch" aria-label={`${game} League Hub Live`} aria-describedby={`${gameKey}-hub-status`} checked={live} disabled={!owner || Boolean(reason)} onChange={(event) => onMode(event.target.checked ? "live" : "manual")} /><span aria-hidden="true" /></span></label>
         {live && !reason ? <button type="button" className="button secondary" onClick={status.refresh} disabled={!owner}>{status.error ? "Retry now" : "Refresh now"}</button> : null}
       </div>
     </div>

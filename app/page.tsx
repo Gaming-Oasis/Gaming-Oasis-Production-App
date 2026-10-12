@@ -91,7 +91,7 @@ import { applyProductionDefaults, matchesProductionDefaults } from "../lib/produ
 import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyMatchLookupResult } from "../lib/match-sync.mjs";
 import { HubDraftControls, useHubDraftSync } from "./HubDraftControls";
-import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, reconcileHubMatch, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
 import {
   CASTER_PRESET_LIMIT,
   findCasterPreset,
@@ -2094,14 +2094,8 @@ export default function Home() {
     if (!hydrated || !isPrimaryTab) return;
     setState((current) => {
       const match = current.general.matches[0];
-      const reconcile = <T extends Valorant | LeagueOfLegends>(game: T, key: HubGameKey): T => {
-        if (game.hubDraft.matchId && (game.hubDraft.matchId !== match.syncedId || game.hubDraft.matchId !== match.id.trim()
-          || hubEligibility(match, key === "valorant" ? "VALORANT" : "League of Legends")
-          || game.hubDraft.collection && JSON.stringify(game.hubDraft.collection.identity) !== JSON.stringify(match.hubIdentity))) return clearHubGame(game, key);
-        return projectHubGame(game, key);
-      };
-      const valorant = reconcile(current.valorant, "valorant");
-      const leagueOfLegends = reconcile(current.leagueOfLegends, "leagueOfLegends");
+      const valorant = reconcileHubMatch(current.valorant, "valorant", match);
+      const leagueOfLegends = reconcileHubMatch(current.leagueOfLegends, "leagueOfLegends", match);
       return valorant === current.valorant && leagueOfLegends === current.leagueOfLegends ? current : { ...current, valorant, leagueOfLegends };
     });
   }, [hydrated, isPrimaryTab, hubMatch, state.valorant.hubDraft, state.leagueOfLegends.hubDraft, state.leagueOfLegends.currentGame]);
@@ -3475,9 +3469,11 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (!hydrated || state.leagueOfLegends.hubDraft.mode === "live" || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
+    // Match reconciliation can enable Live in this same effect flush (sync or reload).
+    // Do not publish a saved spectator result before that mode change has rendered.
+    if (!hydrated || reconcileHubMatch(state.leagueOfLegends, "leagueOfLegends", hubMatch).hubDraft.mode === "live" || !state.leagueOfLegends.autoAcceptLiveResults || !state.leagueOfLegends.resultProposal?.winner || !leaguePendingResults) return;
     saveLeagueResults();
-  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id, state.leagueOfLegends.hubDraft.mode]);
+  }, [hydrated, leaguePendingResults, state.leagueOfLegends.autoAcceptLiveResults, state.leagueOfLegends.resultProposal?.id, state.leagueOfLegends.hubDraft, hubMatch]);
 
   // Game 1 applies the expected assignment to the higher seed; equal or missing seeds wait for the coin toss.
   useEffect(() => {
