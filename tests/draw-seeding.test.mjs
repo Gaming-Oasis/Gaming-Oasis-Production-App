@@ -144,13 +144,13 @@ test("shortens draw show JSON names to the school and squad", () => {
     P14: "University of Texas at Dallas Rocket League C - UTD Black",
     P15: "",
   }, "Rocket League"), {
-    P11: "Cumberland A",
-    P12: "Daytona State A",
+    P11: "Cumberland",
+    P12: "Daytona State",
     P13: "Cumberland B",
     P14: "University of Texas at Dallas C",
     P15: "",
   });
-  assert.equal(shortDrawNames({ P11: "GT VALORANT A - Georgia Tech Gold" }, "VALORANT").P11, "GT A");
+  assert.equal(shortDrawNames({ P11: "GT VALORANT A - Georgia Tech Gold" }, "VALORANT").P11, "GT");
 });
 
 test("filters imported teams by name or seed", () => {
