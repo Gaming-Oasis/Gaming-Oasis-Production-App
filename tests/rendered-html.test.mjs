@@ -2559,10 +2559,10 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.deepEqual(starterPreviewFiles, []);
 });
 
-test("derives the short production name while preserving team labels", () => {
+test("derives the short production name while omitting the A squad label", () => {
   assert.equal(TEAM_NAME_LIMIT, 13);
-  assert.equal(shortTeamName("#1 KU Rocket League A - Keiser University", "Rocket League"), "KU A");
-  assert.equal(shortTeamName("#4 GT Rocket League A - Swarm", "Rocket League"), "GT A");
+  assert.equal(shortTeamName("#1 KU Rocket League A - Keiser University", "Rocket League"), "KU");
+  assert.equal(shortTeamName("#4 GT Rocket League A - Swarm", "Rocket League"), "GT");
   assert.equal(shortTeamName("#2 MU VALORANT B - Midland University", "VALORANT"), "MU B");
   assert.equal(shortTeamName("Independent Team"), "Independent Team");
 });

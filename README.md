@@ -154,7 +154,7 @@ Champion portraits, square champion icons, and item artwork come from Riot Data 
 
 Logo previews retain the source image's transparency, inspect its visible colors, and automatically place it over a white or navy (`#171717`) background for contrast. Operators can force either background from the team override controls.
 
-Synced team names are converted to their short production form before output. For example, `#1 KU Rocket League A - Keiser University` becomes `KU A`; the full Hub name remains visible as source information. Final names are limited to the legacy 13-character graphics field, and an over-limit override field is highlighted red until corrected.
+Synced team names are converted to their short production form before output. For example, `#1 KU Rocket League A - Keiser University` becomes `KU`; the A squad suffix is omitted, while B and other squad labels remain. The full Hub name remains visible as source information. Final names are limited to the legacy 13-character graphics field, and an over-limit override field is highlighted red until corrected.
 
 ## Local development
 

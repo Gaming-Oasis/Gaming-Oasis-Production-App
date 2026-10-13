@@ -56,7 +56,7 @@ Attach this guide, `AGENTS.md`, and `docs/GAMING-OASIS-TOOL-BRAND-GUIDE.md` when
 - [ ] Synced logo previews automatically choose a white or navy (`#171717`) contrast background and allow either option to be forced manually.
 - [ ] Synced logo images retain transparency; only the preview container receives the selected white or navy background.
 - [ ] A team name longer than the legacy 13-character limit visibly marks its override field as required until the final value is valid.
-- [ ] League Hub team names retain their full source label while production output uses the short school-and-squad form (for example, `KU A`).
+- [ ] League Hub team names retain their full source label while production output uses the short school-and-squad form, omitting the A squad suffix (for example, `KU` or `MU B`).
 - [ ] Home, away, and backup color selection plus color similarity comparison remain available.
 - [ ] Every edit continues to update all six JSON files through the local writer.
 - [ ] Legacy filenames and field shapes remain unchanged unless explicitly approved.
