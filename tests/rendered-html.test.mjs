@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { applyProductionDefaults } from "../lib/production-defaults.mjs";
+import { acknowledgePhantom, phantomAction, phantomBroadcast, phantomStatus } from "../lib/phantom-draft.mjs";
 import { acceptHubCollection, hubIdentity, hubLeagueResultMetadata, normalizeHubCollection, projectHubGame } from "../lib/hub-draft.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
 import { calculateRocketLeagueSeries, formatRocketLeagueScore, proposeRocketLeagueLiveResult } from "../lib/rocket-league.mjs";
@@ -2913,6 +2914,47 @@ test("proxies public League Hub matches without credentials", async () => {
   } finally {
     await writer.close();
   }
+});
+
+test("phantom manual and automatic reveals use complete writer transactions for both games", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-phantom-writer-"));
+  const installed = [];
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    beforeInstallFile: filename => installed.push(filename) });
+  const sources = {
+    valorant: { bestOf: "Bo3", games: [], savedGames: [], bo5: {}, bo3: { ban1: "Ascent", ban2: "Bind", pick1: "Haven", side1: "attack", pick2: "Split", side2: "defense", ban3: "Lotus", ban4: "Pearl", decider: "Sunset", side3: "attack" } },
+    leagueOfLegends: { bestOf: "Bo3", currentGame: 1, draftMode: "online", confirmedGames: [], draft: { ...createLeagueDraftState(), selections: Array.from({ length: 20 }, (_, i) => `Champion ${i}`) } },
+  };
+  try {
+    for (const key of Object.keys(sources)) {
+      let game = phantomAction(sources[key], key, "", "enable");
+      for (let count = 0; count < 4; count++) {
+        const files = await productionFileFixtures("Phantom writer test");
+        const broadcast = phantomBroadcast(game, key);
+        const artwork = ["Ascent", "Bind", "Haven", "Split", "Lotus", "Pearl", "Sunset"].map(name => ({ name, pickCard: "", banCard: "", nextMap: "" }));
+        const overlay = key === "valorant" ? buildValorantOverlayState(broadcast, {}, {}, {}, [], artwork) : buildLeagueOverlayState(broadcast, {}, {});
+        if (key === "valorant") Object.assign(files[0].data[0], buildValorantFields(broadcast, {}, {}, artwork));
+        const response = await postWriter(writer, "/api/live-json", { files, overlays: { [key]: overlay } });
+        assert.equal(response.status, 200, await response.text());
+        assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+        for (const file of files.filter(file => file.filename !== "sponsors.json")) {
+          assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, file.filename), "utf8")), file.data);
+        }
+        const ticket = game.phantom.pending;
+        game = acknowledgePhantom(game, ticket, 1000, () => 0);
+        assert.equal(game.phantom.pending, "");
+        assert.equal(phantomStatus(game, key).count, count);
+        if (count === 0) game = phantomAction(game, key, "", "next");
+        else {
+          game = phantomAction(game, key, "", "start");
+          // Starting auto also needs acknowledgement of the currently published snapshot.
+          game = acknowledgePhantom(game, game.phantom.pending, 1000, () => 0);
+          game = phantomAction(game, key, "", "tick", "", 16000);
+          assert.equal(game.phantom.deadline, 0, "the next timer waits for this write");
+        }
+      }
+    }
+  } finally { await writer.close(); }
 });
 
 test("Hub draft revisions publish complete six-file packages while score fields stay manual", async () => {

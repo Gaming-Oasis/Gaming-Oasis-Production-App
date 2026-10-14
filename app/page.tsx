@@ -4,6 +4,8 @@ import { normalizeRocketLeagueSceneMode } from "../lib/rocket-league-scene.mjs";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LeagueRoleOrder } from "./LeagueRoleOrder";
+import { PhantomDraftControls, PhantomRowControl } from "./PhantomDraftControls";
+import { acknowledgePhantoms, phantomAction, phantomBroadcast, phantomMatchKey, phantomStatus, pausePhantoms, reconcilePhantoms, resetPhantom, restorePhantom, tickPhantoms, type PhantomDraft } from "../lib/phantom-draft.mjs";
 import { TwitchControls } from "./TwitchControls";
 import { ValorantMapLibrary, useValorantMapLibrary } from "./ValorantMapLibrary";
 import { migrateValorantPlaceholder } from "../lib/valorant-map-placeholder.mjs";
@@ -293,6 +295,7 @@ type WriterLiveDataStatus = {
 };
 
 type LeagueOfLegends = {
+  phantom?: PhantomDraft;
   hubDraft: HubSource;
   hubPresentation?: HubPresentation;
   /** Who owns the map-side assignment: the draft drive (default) or the manual Flip Sides switch. */
@@ -441,6 +444,7 @@ type ValorantBo5 = {
 };
 
 type Valorant = {
+  phantom?: PhantomDraft;
   hubDraft: HubSource;
   scoreboardHeader: string;
   bestOf: "Bo1" | "Bo3" | "Bo5";
@@ -1209,6 +1213,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
     },
     valorant: {
       ...initial.valorant,
+      phantom: restorePhantom(savedValorant.phantom),
       hubDraft: hydrateHubSource(savedValorant.hubDraft),
       scoreboardHeader: stringValue(savedValorant.scoreboardHeader),
       flipSides: booleanValue(savedValorant.flipSides, false),
@@ -1224,6 +1229,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
     leagueOfLegends: {
       ...initial.leagueOfLegends,
       ...savedLeague,
+      phantom: restorePhantom(savedLeague.phantom),
       hubDraft: hydrateHubSource(savedLeague.hubDraft),
       hubPresentation: undefined,
       scoreboard: normalizeLeagueScoreboard(savedLeague.scoreboard) as LeagueScoreboardSettings,
@@ -1506,6 +1512,7 @@ function resolveRegionalLogo(general: GeneralInfo) {
 }
 
 function buildFinalOutput(general: GeneralInfo, rocketLeague: RocketLeague, valorant: Valorant, mapArtwork: ValorantMapArtwork[], league: LeagueOfLegends) {
+  valorant = phantomBroadcast(valorant, "valorant", phantomMatchKey({ general }));
   const savedRocketLeagueGames = trimSavedResultRows(
     rocketLeague.savedGames,
     rocketLeagueGameLimit(rocketLeague.bestOf),
@@ -2669,6 +2676,41 @@ export default function Home() {
     };
   }, [pendingConfirmation]);
 
+  useEffect(() => {
+    if (hydrated && isPrimaryTab) setState(reconcilePhantoms);
+  }, [hydrated, isPrimaryTab, state.valorant, state.leagueOfLegends, state.general.matches]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!isPrimaryTab) {
+      setState((current) => pausePhantoms(current, "Paused after control change."));
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (isPrimaryTabRef.current) setState((current) => tickPhantoms(current, Date.now()));
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [hydrated, isPrimaryTab]);
+
+  function actPhantom(key: "valorant" | "leagueOfLegends", action: string, id = "") {
+    const apply = () => setState((current) => {
+      if (!isPrimaryTabRef.current) return current;
+      const game = phantomAction(current[key], key, phantomMatchKey(current), action, id);
+      return game === current[key] ? current : { ...current, [key]: game };
+    });
+    if (action === "hide" || action === "disable") requestConfirmation({
+      title: action === "hide" ? "Hide all selections?" : "Disable phantom mode?",
+      description: action === "hide" ? "This hides every selection and stops auto reveal." : "This publishes the complete current draft and stops auto reveal.",
+      confirmLabel: action === "hide" ? "Hide all" : "Publish complete draft",
+      onConfirm: apply,
+    });
+    else apply();
+  }
+
+  const matchKey = phantomMatchKey(state);
+  const valorantTicket = state.valorant.phantom?.pending || "";
+  const leagueTicket = state.leagueOfLegends.phantom?.pending || "";
+  const revealTickets = useMemo(() => ({ valorant: valorantTicket, leagueOfLegends: leagueTicket }), [valorantTicket, leagueTicket]);
   const files = useMemo(() => buildExportFiles(state), [state]);
   const manualExportFiles = useMemo(() => [
     ...files,
@@ -2676,7 +2718,7 @@ export default function Home() {
   ], [files, state.valorantMapData]);
   const matchOneLeague = resolveLeague(state.general.matches[0].league);
   const valorantOverlay = useMemo(() => buildValorantOverlayState(
-    state.valorant,
+    phantomBroadcast(state.valorant, "valorant", matchKey),
     resolveTeam(state.general.matches[0].team1),
     resolveTeam(state.general.matches[0].team2),
     {
@@ -2686,7 +2728,7 @@ export default function Home() {
     state.sponsors,
     state.valorantMapData.maps,
     { eventName: state.general.eventName },
-  ), [state.valorant, state.general.eventName, state.general.matches, state.sponsors, state.valorantMapData.maps, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
+  ), [state.valorant, state.general.eventName, state.general.matches, state.sponsors, state.valorantMapData.maps, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, matchKey]);
   const rocketLeagueOverlay = useMemo(() => buildRocketLeagueOverlayState(
     state.rocketLeague,
     resolveTeam(state.general.matches[0].team1),
@@ -2699,13 +2741,13 @@ export default function Home() {
     state.sponsors,
   ), [state.rocketLeague, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor]);
   const leagueOverlay = useMemo(() => buildLeagueOverlayState(
-    state.leagueOfLegends,
+    phantomBroadcast(state.leagueOfLegends, "leagueOfLegends", matchKey),
     resolveTeam(state.general.matches[0].team1),
     resolveTeam(state.general.matches[0].team2),
     { primaryColor: matchOneLeague.primaryColor, secondaryColor: matchOneLeague.secondaryColor, logo: matchOneLeague.logo },
     state.sponsors,
     { eventName: state.general.eventName, assetVersion: leagueCatalogVersion },
-  ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, matchOneLeague.logo, leagueCatalogVersion]);
+  ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, matchOneLeague.logo, leagueCatalogVersion, matchKey]);
   const livePayload = useMemo(() => ({
     files,
     overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay },
@@ -2783,6 +2825,7 @@ export default function Home() {
 
     if (livePayloadSignature === lastSuccessfulPayloadSignatureRef.current) {
       setLiveSync("synced");
+      setState((current) => acknowledgePhantoms(current, revealTickets));
       return () => controller.abort();
     }
 
@@ -2875,10 +2918,12 @@ export default function Home() {
             if (sequence === liveWriteSequenceRef.current) {
               lastSuccessfulPayloadSignatureRef.current = livePayloadSignature;
               setLiveSync("synced");
+              setState((current) => acknowledgePhantoms(current, revealTickets));
             }
             return;
           } catch (error) {
             if ((error as Error).name === "AbortError") return;
+            if (sequence === liveWriteSequenceRef.current) setState((current) => pausePhantoms(current, "Writer unavailable. Retry the pending output, then restart auto reveal."));
             if (error instanceof HttpResponseError && error.terminal) {
               if (sequence === liveWriteSequenceRef.current) setLiveSync("error");
               return;
@@ -2893,7 +2938,7 @@ export default function Home() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [hydrated, outputActivated, isPrimaryTab, livePayload, livePayloadSignature, liveRetryNonce, enterWriterConflictStandby, getWriterToken, postWriterMutation]);
+  }, [hydrated, outputActivated, isPrimaryTab, livePayload, livePayloadSignature, liveRetryNonce, enterWriterConflictStandby, getWriterToken, postWriterMutation, revealTickets]);
 
   useEffect(() => {
     if (!hydrated || !isPrimaryTab) return;
@@ -3362,6 +3407,7 @@ export default function Home() {
       ...current,
       leagueOfLegends: {
         ...current.leagueOfLegends,
+        phantom: resetPhantom(current.leagueOfLegends.phantom),
         draft: createLeagueDraftState(
           current.leagueOfLegends.draft.timerSeconds,
           leagueFirstPickSide(current.leagueOfLegends.blueTeam, current.leagueOfLegends.firstPickTeam),
@@ -3501,6 +3547,7 @@ export default function Home() {
       ...current,
       leagueOfLegends: {
         ...current.leagueOfLegends,
+        phantom: resetPhantom(current.leagueOfLegends.phantom),
         hubDraft: resetHubSource(current.general.matches[0], "leagueOfLegends"),
         hubPresentation: undefined,
         currentGame: 1,
@@ -3724,6 +3771,7 @@ export default function Home() {
       ...current,
       valorant: {
         ...current.valorant,
+        phantom: resetPhantom(current.valorant.phantom),
         games: createValorantGames(),
         savedGames: createValorantGames(),
       },
@@ -3743,7 +3791,7 @@ export default function Home() {
           const key = current.valorant.bestOf === "Bo5" ? "bo5" : "bo3";
           return {
             ...current,
-            valorant: { ...current.valorant, [key]: resetValorantVeto(current.valorant[key]) },
+            valorant: { ...current.valorant, phantom: resetPhantom(current.valorant.phantom), [key]: resetValorantVeto(current.valorant[key]) },
           };
         });
         notify("VALORANT map bans reset");
@@ -4688,6 +4736,8 @@ export default function Home() {
   }
 
   function renderValorant() {
+    const reveal = phantomStatus(state.valorant, "valorant", matchKey);
+    const rowReveal = (id: string) => <PhantomRowControl status={reveal} id={id} onReveal={() => actPhantom("valorant", "reveal", id)} />;
     const homeTeam = resolveTeam(state.general.matches[0].team1).name || "Team 1";
     const awayTeam = resolveTeam(state.general.matches[0].team2).name || "Team 2";
     const displayTeamOne = state.valorant.flipSides ? awayTeam : homeTeam;
@@ -4812,6 +4862,7 @@ export default function Home() {
         ) : valorantTab === "pickBans" ? (
           <div className="valorant-pickban-stack">
             {renderHubDraftControls("valorant", valorantCurrentMap.number)}
+            {state.valorant.bestOf !== "Bo1" ? <PhantomDraftControls status={reveal} onAction={(action) => actPhantom("valorant", action)} /> : null}
             <section className="panel-card valorant-reference" aria-label="VALORANT ban team assignments">
               <div><span>Ban Team A</span><strong>{teamA}</strong></div>
               <div><span>Ban Team B</span><strong>{teamB}</strong></div>
@@ -4842,7 +4893,7 @@ export default function Home() {
                         .map(([, selectionValue]) => canonicalMapName(selectionValue)));
                       return <div className="pickban-row-wrap" key={row.key}>{row.phase !== previousPhase ? <span className="pickban-phase">{row.phase}</span> : null}{state.valorant.hubDraft.mode === "live"
                         ? <div className="pickban-row hub-import-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><span className={`hub-import-value${value ? "" : " pending"}`}>{value || "Waiting for Hub"}</span></div>
-                        : <label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} map selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select map</option>{mapOptions.map((mapName) => <option value={mapName} key={mapName} disabled={usedElsewhere.has(canonicalMapName(mapName))}>{mapName}</option>)}</select></label>}</div>;
+                        : <label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} map selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select map</option>{mapOptions.map((mapName) => <option value={mapName} key={mapName} disabled={usedElsewhere.has(canonicalMapName(mapName))}>{mapName}</option>)}</select></label>}{rowReveal(row.key)}</div>;
                     })}
                   </div>
                 </section>
@@ -4852,9 +4903,9 @@ export default function Home() {
                   <div className="pickban-list">
                     {activeSideRows.map((row) => {
                       const value = state.valorant.bestOf === "Bo5" ? state.valorant.bo5[row.key as keyof ValorantBo5] : state.valorant.bo3[row.key as keyof ValorantBo3];
-                      return state.valorant.hubDraft.mode === "live"
-                        ? <div className="pickban-row hub-import-row" key={row.key}><span><strong>{row.label}</strong><small>{row.team}</small></span><span className={`hub-import-value${value ? "" : " pending"}`}>{value === "attack" ? "Attack" : value === "defense" ? "Defense" : "Waiting for Hub"}</span></div>
-                        : <label className="pickban-row" key={row.key}><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select side</option><option value="attack">Attack</option><option value="defense">Defense</option></select></label>;
+                      return <div className="pickban-row-wrap" key={row.key}>{state.valorant.hubDraft.mode === "live"
+                        ? <div className="pickban-row hub-import-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><span className={`hub-import-value${value ? "" : " pending"}`}>{value === "attack" ? "Attack" : value === "defense" ? "Defense" : "Waiting for Hub"}</span></div>
+                        : <label className="pickban-row"><span><strong>{row.label}</strong><small>{row.team}</small></span><select aria-label={`${row.label} selected by ${row.team}`} value={value} onChange={(event) => state.valorant.bestOf === "Bo5" ? updateValorantBo5(row.key as keyof ValorantBo5, event.target.value) : updateValorantBo3(row.key as keyof ValorantBo3, event.target.value)}><option value="">Select side</option><option value="attack">Attack</option><option value="defense">Defense</option></select></label>}{rowReveal(row.key)}</div>;
                     })}
                   </div>
                 </section>
@@ -5320,6 +5371,7 @@ export default function Home() {
   }
 
   function renderLeagueOfLegends() {
+    const reveal = phantomStatus(state.leagueOfLegends, "leagueOfLegends", matchKey);
     const teamOne = resolveTeam(state.general.matches[0].team1);
     const teamTwo = resolveTeam(state.general.matches[0].team2);
     const blueTeam = state.leagueOfLegends.blueTeam === "team1" ? teamOne : teamTwo;
@@ -5464,6 +5516,7 @@ export default function Home() {
         {leagueTab === "draft" ? (
           <div className="league-draft-layout">
             {renderHubDraftControls("leagueOfLegends", state.leagueOfLegends.currentGame)}
+            <PhantomDraftControls status={reveal} onAction={(action) => actPhantom("leagueOfLegends", action)} />
             <section className="panel-card league-draft-control">
               <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the selected draft format. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div></div>
               {hubLive ? <p className="field-hint">{state.leagueOfLegends.hubPresentation?.sidesReady ? leagueSelectionSummary : "Waiting for Hub sides and pick order."}</p> : firstSelectionSetup}
@@ -5491,7 +5544,10 @@ export default function Home() {
             </section>
             <section className="panel-card league-draft-history">
               <div className="card-title-row"><div><h2>Draft order</h2><p>{state.leagueOfLegends.draft.currentStep} of {draftSteps.length} selections locked.</p></div></div>
-              <div className="league-draft-steps">{draftSteps.map((step) => <div className={`${activeStep && step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small></div>)}</div>
+              <div className={`league-draft-steps${reveal.enabled ? " phantom-steps" : ""}`}>{draftSteps.map((step) => {
+                const id = `${step.side}:${step.action}:${step.slot}`;
+                return <div className={`${activeStep && step.index === state.leagueOfLegends.draft.currentStep ? "active" : ""} ${state.leagueOfLegends.draft.selections[step.index] ? "complete" : ""}`} key={step.index}><span>{String(step.index + 1).padStart(2, "0")}</span><strong>{step.side === "ORDER" ? "Blue" : "Red"} {step.action}</strong><small>{state.leagueOfLegends.draft.selections[step.index] || step.phase}</small><PhantomRowControl status={reveal} id={id} onReveal={() => actPhantom("leagueOfLegends", "reveal", id)} /></div>;
+              })}</div>
             </section>
           </div>
         ) : null}

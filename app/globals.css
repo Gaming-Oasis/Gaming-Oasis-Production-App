@@ -816,3 +816,18 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
   .hub-results-note { align-items: flex-start; flex-direction: column; gap: 0; }
   .hub-match-link > span { flex-basis: 100%; }
 }
+.phantom-controls { grid-column: 1 / -1; padding: var(--space-4); min-width: 0; }
+.phantom-controls .card-title-row > div:first-child { display: block; }
+.phantom-controls .card-title-row p { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.phantom-enable { display: flex; align-items: center; gap: 10px; font-size: 12px; flex-shrink: 0; }
+.phantom-row-control { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 4px 0 8px; }
+.phantom-row-control > span { font-size: 11px; color: var(--muted); }
+.phantom-corrections { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; font-size: 12px; }
+.phantom-corrections h3 { font-size: 14px; }
+.phantom-corrections ul { padding-left: 20px; }
+.league-draft-steps.phantom-steps > div { grid-template-columns: 24px 75px minmax(0, 1fr); }
+.league-draft-steps.phantom-steps .phantom-row-control { grid-column: 1 / -1; display: flex; border: 0; }
+@media (max-width: 600px) {
+  .phantom-controls .card-title-row { align-items: flex-start; flex-direction: column; }
+  .phantom-controls .league-draft-actions { flex-wrap: wrap; }
+}
