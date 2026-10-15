@@ -2937,6 +2937,11 @@ test("phantom manual and automatic reveals use complete writer transactions for 
         const response = await postWriter(writer, "/api/live-json", { files, overlays: { [key]: overlay } });
         assert.equal(response.status, 200, await response.text());
         assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+        if (key === "leagueOfLegends") {
+          const displayed = await (await fetch(`${writer.url}/api/overlays/league-of-legends`)).json();
+          assert.equal(displayed.draft.currentStep, count >= 2 ? count : 20, "the next slot animates between automatic reveals");
+          assert.equal(displayed.draft.timerRunning, false);
+        }
         for (const file of files.filter(file => file.filename !== "sponsors.json")) {
           assert.deepEqual(JSON.parse(await readFile(path.join(outputDir, file.filename), "utf8")), file.data);
         }
