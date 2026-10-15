@@ -66,6 +66,76 @@ test('League follows each existing format and first-pick order, with out-of-orde
   }
 });
 
+test('League waiting animation follows unrevealed slots without publishing the countdown or hidden champions', () => {
+  for (const mode of ['standard', 'online', 'fearless']) for (const side of ['ORDER', 'CHAOS']) for (const hub of [false, true]) {
+    const source = lol(mode, side);
+    if (hub) {
+      source.hubDraft = { mode: 'live', matchId: 'match' };
+      source.hubPresentation = { activeSelection: false, rolesRevealed: false };
+    }
+    let game = enable(source, 'leagueOfLegends');
+    const rows = phantomStatus(game, 'leagueOfLegends').rows;
+    game = reveal(game, 'leagueOfLegends', rows[1].id);
+    game = phantomAction(game, 'leagueOfLegends', '', 'start');
+    for (const row of rows.filter(row => row.index !== 1)) {
+      const output = buildLeagueOverlayState(phantomBroadcast(game, 'leagueOfLegends'), {}, {});
+      assert.equal(output.draft.currentStep, row.index);
+      assert.equal(output.draft.firstPickSide, side);
+      assert.equal(output.draft.timerRunning, false);
+      if (hub) {
+        assert.equal(output.draft.hub.activeSelection, true);
+        assert.equal(output.draft.hub.rolesRevealed, false);
+      }
+      const serialized = JSON.stringify(output);
+      for (const hidden of rows.filter(r => !game.phantom.revealed.includes(r.id))) {
+        assert.ok(!serialized.includes(JSON.stringify(hidden.value)), `${hidden.id} must remain hidden`);
+      }
+      assert.ok(!serialized.includes('deadline'));
+      game = ack(game, 1000);
+      const afterAck = buildLeagueOverlayState(phantomBroadcast(game, 'leagueOfLegends'), {}, {});
+      assert.deepEqual(afterAck.draft, output.draft, 'acknowledgement must not require another broadcast write');
+      assert.equal(game.phantom.deadline, 16000);
+      game = phantomAction(game, 'leagueOfLegends', '', 'tick', '', 16000);
+    }
+    const complete = phantomBroadcast(game, 'leagueOfLegends');
+    assert.equal(complete.draft.currentStep, 20);
+    if (hub) assert.equal(complete.hubPresentation.activeSelection, false);
+    assert.equal(ack(game).phantom.running, false);
+    assert.equal(source.draft.currentStep, 20, 'broadcast progress must not change the completed source draft');
+  }
+});
+
+test('League waiting animation stops on pause, manual reveal, corrections, failure, reload and reset', () => {
+  const source = { ...lol(), hubDraft: { mode: 'live', matchId: 'match' },
+    hubPresentation: { activeSelection: false, rolesRevealed: true } };
+  let running = reveal(enable(source, 'leagueOfLegends'), 'leagueOfLegends', 'ORDER:ban:0');
+  running = ack(phantomAction(running, 'leagueOfLegends', '', 'start'));
+  const selections = [...running.draft.selections]; selections[0] = 'Correction';
+  const cases = [
+    enable(source, 'leagueOfLegends'),
+    pausePhantom(running),
+    phantomAction(running, 'leagueOfLegends', '', 'next'),
+    pausePhantom(phantomAction(running, 'leagueOfLegends', '', 'tick', '', 16000), 'Writer unavailable'),
+    { ...running, draft: { ...running.draft, selections } },
+    { ...running, phantom: restorePhantom(running.phantom) },
+    { ...running, currentGame: 2 },
+    phantomAction(running, 'leagueOfLegends', '', 'hide'),
+  ];
+  for (const game of cases) {
+    const output = phantomBroadcast(game, 'leagueOfLegends');
+    assert.equal(output.draft.currentStep, 20);
+    assert.equal(output.hubPresentation.activeSelection, false);
+  }
+  const incomplete = lol(); incomplete.draft.selections[0] = '';
+  const blocked = phantomAction(enable(incomplete, 'leagueOfLegends'), 'leagueOfLegends', '', 'start');
+  assert.equal(phantomBroadcast(blocked, 'leagueOfLegends').draft.currentStep, 20);
+  const paused = pausePhantom(running);
+  const resumed = phantomAction(paused, 'leagueOfLegends', '', 'start');
+  assert.equal(phantomBroadcast(resumed, 'leagueOfLegends').draft.currentStep, 1);
+  const ordinary = { ...lol(), draft: { ...lol().draft, currentStep: 3, timerRunning: true } };
+  assert.equal(phantomBroadcast(ordinary, 'leagueOfLegends'), ordinary);
+});
+
 for (const [key, create] of [['valorant', val], ['leagueOfLegends', lol]]) {
   test(`${key}: automatic reveal waits for exact acknowledgements and skips manual reveals`, () => {
     let game = enable(create(), key);
