@@ -819,6 +819,12 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); }
 .phantom-controls { grid-column: 1 / -1; padding: var(--space-4); min-width: 0; }
 .phantom-controls .card-title-row > div:first-child { display: block; }
 .phantom-controls .card-title-row p { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.phantom-reveal-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.phantom-reveal-status p { margin: 0; }
+.phantom-reveal-status .field-hint { margin-top: 6px; }
+.phantom-countdown { display: grid; gap: 4px; border-left: 3px solid var(--brand); padding-left: 12px; flex-shrink: 0; }
+.phantom-countdown > span { font-size: 11px; color: var(--muted); }
+.phantom-countdown > strong { font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
 .phantom-enable { display: flex; align-items: center; gap: 10px; font-size: 12px; flex-shrink: 0; }
 .phantom-row-control { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 4px 0 8px; }
 .phantom-row-control > span { font-size: 11px; color: var(--muted); }
