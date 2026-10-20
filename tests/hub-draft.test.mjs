@@ -151,6 +151,61 @@ test("Blue/Red is independent of first pick and Match 1 slots", () => {
   assert.equal(draftSlots(game.draft, game.draftMode).redPicks[0], "Aatrox");
 });
 
+test("pending Hub sides keep the current Blue assignment and do not infer it from first pick", () => {
+  const collection = structuredClone(collections[3]);
+  const session2 = collection.sessions.find((session) => session.gameIndex === 2);
+  session2.firstPickTeam = "team2";
+  session2.roles = { A: "team2", B: "team1" };
+  const game = acceptHubCollection({ ...league(), blueTeam: "team2" }, "leagueOfLegends", collection);
+  assert.equal(game.blueTeam, "team1");
+  assert.equal(game.sideControl, "draft");
+  const next = projectHubGame({ ...game, confirmedGames: [{ gameNumber: 1, winner: "team1" }] }, "leagueOfLegends");
+  assert.equal(next.currentGame, 2);
+  assert.equal(next.hubPresentation.sidesReady, false);
+  assert.equal(next.blueTeam, "team1");
+  assert.equal(next.firstPickTeam, "team2");
+  assert.equal(next.draft.firstPickSide, "CHAOS");
+  const held = projectHubGame({
+    ...league(),
+    blueTeam: "team2",
+    hubDraft: { mode: "live", matchId: collection.matchId, collection },
+    confirmedGames: [{ gameNumber: 1, winner: "team1" }],
+  }, "leagueOfLegends");
+  assert.equal(held.blueTeam, "team2");
+  assert.equal(held.firstPickTeam, "team2");
+  assert.equal(held.draft.firstPickSide, "ORDER");
+});
+
+test("producer Flip Sides override survives Hub polls until the next Hub side selection", () => {
+  const imported = acceptHubCollection(league(), "leagueOfLegends", collections[0]);
+  assert.equal(imported.blueTeam, "team1");
+  assert.equal(imported.firstPickTeam, "team1");
+  const flipped = projectHubGame({ ...imported, sideControl: "manual", blueTeam: "team2" }, "leagueOfLegends");
+  assert.equal(flipped.sideControl, "manual");
+  assert.equal(flipped.blueTeam, "team2");
+  assert.equal(flipped.firstPickTeam, "team1");
+  assert.equal(flipped.draft.firstPickSide, "CHAOS");
+  assert.equal(draftSlots(flipped.draft, flipped.draftMode).redPicks[0], "Aatrox");
+  const polled = acceptHubCollection(flipped, "leagueOfLegends", collections[0]);
+  assert.equal(polled.blueTeam, "team2");
+  assert.equal(polled.sideControl, "manual");
+  assert.equal(polled.firstPickTeam, "team1");
+  const restored = projectHubGame({ ...flipped, sideControl: "draft" }, "leagueOfLegends");
+  assert.equal(restored.sideControl, "draft");
+  assert.equal(restored.blueTeam, "team1");
+  assert.equal(restored.draft.firstPickSide, "ORDER");
+  const collection = structuredClone(collections[3]);
+  const session2 = collection.sessions.find((session) => session.gameIndex === 2);
+  session2.blueTeam = "team1";
+  const live = acceptHubCollection(league(), "leagueOfLegends", collection);
+  const override = projectHubGame({ ...live, sideControl: "manual", blueTeam: "team2" }, "leagueOfLegends");
+  assert.equal(override.blueTeam, "team2");
+  const advanced = projectHubGame({ ...override, confirmedGames: [{ gameNumber: 1, winner: "team1" }] }, "leagueOfLegends");
+  assert.equal(advanced.currentGame, 2);
+  assert.equal(advanced.sideControl, "draft");
+  assert.equal(advanced.blueTeam, "team1");
+});
+
 test("Hub game 2 is held until manual results are published, with no result writes", () => {
   const original = league();
   const game = acceptHubCollection(original, "leagueOfLegends", collections[3]);
@@ -403,6 +458,11 @@ test("partial Standard result metadata retains five slots and the operator's win
   const metadata = hubLeagueResultMetadata(game.hubDraft.collection, 1);
   assert.deepEqual(metadata.bluePicks, ["Aatrox", "", "", "", ""]);
   assert.deepEqual(metadata.redPicks, ["Ahri", "Sejuani", "", "", ""]);
+  const overridden = hubLeagueResultMetadata(game.hubDraft.collection, 1, "team2");
+  assert.equal(overridden.blueTeam, "team2");
+  assert.equal(overridden.firstPickTeam, metadata.firstPickTeam);
+  assert.deepEqual(overridden.bluePicks, metadata.redPicks);
+  assert.deepEqual(overridden.redPicks, metadata.bluePicks);
   const confirmed = { gameNumber: 1, winner: "team2", ...metadata };
   const advanced = projectHubGame({ ...game, confirmedGames: [confirmed] }, "leagueOfLegends");
   assert.equal(advanced.currentGame, 2);

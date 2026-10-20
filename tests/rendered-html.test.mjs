@@ -402,6 +402,12 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /Sides are set manually with Flip Sides \(Results &amp; setup\)\./);
   assert.match(page, /Sides follow the Draft tab each game\./);
   assert.match(page, /Flip Sides sets sides; saves still set pick order\./);
+  assert.match(page, /Sides follow League Hub side selection\. Flip Sides overrides this game\./);
+  assert.match(page, /Waiting for Hub side selection\./);
+  assert.doesNotMatch(page, /Waiting for Hub sides and pick order\./);
+  assert.match(page, /disabled=\{!hubLive && \(state\.leagueOfLegends\.sideControl === "draft" \|\| state\.leagueOfLegends\.draft\.currentStep > 0\)\}/);
+  assert.match(page, /<select value=\{state\.leagueOfLegends\.sideControl\}/);
+  assert.doesNotMatch(page, /<select disabled=\{hubLive\} value=\{state\.leagueOfLegends\.sideControl\}/);
   assert.match(page, /<GameFlipSidesControl gameName="League of Legends"[\s\S]*<GameAutoAcceptControl gameName="League of Legends"[\s\S]*<p className="field-hint" role="status">\{leagueSelectionSummary\}<\/p>/);
   assert.doesNotMatch(page, /allowEmptyLiveWrite|liveWriteReady/);
   assert.match(html, /Export JSON package/);
