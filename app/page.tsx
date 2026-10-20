@@ -3335,6 +3335,9 @@ export default function Home() {
   function updateLeagueSideConfig(patch: Partial<LeagueOfLegends>) {
     setState((current) => {
       const merged = { ...current.leagueOfLegends, ...patch };
+      if (merged.hubDraft.mode === "live") {
+        return { ...current, leagueOfLegends: projectHubGame(merged, "leagueOfLegends") };
+      }
       const firstPickSide = leagueFirstPickSide(merged.blueTeam, merged.firstPickTeam);
       const draft = merged.draft.currentStep === 0 && merged.draft.firstPickSide !== firstPickSide
         ? ({ ...merged.draft, firstPickSide } as LeagueDraftState)
@@ -3465,7 +3468,13 @@ export default function Home() {
         const existing = previousByGame.get(gameNumber);
         const resultHasPicks = [...result.bluePicks, ...result.redPicks].some(Boolean);
         const useCurrentDraft = gameNumber === finishedGame && currentDraftHasPicks;
-        const hubMetadata = current.leagueOfLegends.hubDraft.mode === "live" ? hubLeagueResultMetadata(current.leagueOfLegends.hubDraft.collection, gameNumber) : null;
+        const hubMetadata = current.leagueOfLegends.hubDraft.mode === "live"
+          ? hubLeagueResultMetadata(
+            current.leagueOfLegends.hubDraft.collection,
+            gameNumber,
+            gameNumber === finishedGame ? current.leagueOfLegends.blueTeam : existing?.blueTeam,
+          )
+          : null;
         return [{
           id: result.id || existing?.id || `manual-${gameNumber}-${Date.now()}`,
           gameNumber,
@@ -3484,7 +3493,8 @@ export default function Home() {
       const gameAdvanced = currentGame !== current.leagueOfLegends.currentGame;
       // A new game re-drives the expected assignment for the previous loser; a corrected winner does too, but never mid-draft.
       const holder = resolveLeagueFirstSelection(current.leagueOfLegends, confirmedGames);
-      const rawExpected = (gameAdvanced || (currentResultChanged && current.leagueOfLegends.draft.currentStep === 0))
+      const rawExpected = current.leagueOfLegends.hubDraft.mode !== "live"
+        && (gameAdvanced || (currentResultChanged && current.leagueOfLegends.draft.currentStep === 0))
         ? expectedLeagueSelection(holder)
         : null;
       const expected = rawExpected && current.leagueOfLegends.sideControl === "manual" ? { firstPickTeam: rawExpected.firstPickTeam } : rawExpected;
@@ -5519,7 +5529,7 @@ export default function Home() {
             <PhantomDraftControls status={reveal} onAction={(action) => actPhantom("leagueOfLegends", action)} />
             <section className="panel-card league-draft-control">
               <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the selected draft format. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div></div>
-              {hubLive ? <p className="field-hint">{state.leagueOfLegends.hubPresentation?.sidesReady ? leagueSelectionSummary : "Waiting for Hub sides and pick order."}</p> : firstSelectionSetup}
+              {hubLive ? <p className="field-hint">{state.leagueOfLegends.hubPresentation?.sidesReady || sideControl === "manual" ? leagueSelectionSummary : "Waiting for Hub side selection."}</p> : firstSelectionSetup}
               {activeStep ? (
                 <div className="league-active-step">
                   <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
@@ -5634,10 +5644,10 @@ export default function Home() {
                     hint={state.leagueOfLegends.scoreboardHeader.trim() ? `On-air: ${leagueHeader}` : "Leave blank to use General Info event name."}
                   />
                   <label className="field"><span className="field-label">Series format</span><select disabled={hubLive} value={state.leagueOfLegends.bestOf} onChange={(event) => updateLeagueBestOf(event.target.value as LeagueOfLegends["bestOf"])}><option>Bo1</option><option>Bo3</option><option>Bo5</option></select></label>
-                  <label className="field"><span className="field-label">Side control</span><select disabled={hubLive} value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueOfLegends({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{sideControl === "draft" ? "Sides follow the Draft tab each game." : "Flip Sides sets sides; saves still set pick order."}</span></label>
+                  <label className="field"><span className="field-label">Side control</span><select value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueSideConfig({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{hubLive ? (sideControl === "manual" ? "Flip Sides is overriding Hub for this game. Choose Draft tab to follow Hub side selection again." : "Sides follow League Hub side selection. Flip Sides overrides this game.") : (sideControl === "draft" ? "Sides follow the Draft tab each game." : "Flip Sides sets sides; saves still set pick order.")}</span></label>
                 </div>
                 <div className="valorant-toggle-list">
-                  <GameFlipSidesControl gameName="League of Legends" disabled={state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0} checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1" })} />
+                  <GameFlipSidesControl gameName="League of Legends" disabled={!hubLive && (state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0)} checked={state.leagueOfLegends.blueTeam === "team2"} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1", ...(hubLive ? { sideControl: "manual" as const } : {}) })} />
                   <GameAutoAcceptControl gameName="League of Legends" locked={hubLive} checked={!hubLive && state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
                   <p className="field-hint" role="status">{leagueSelectionSummary}</p>
                 </div>
