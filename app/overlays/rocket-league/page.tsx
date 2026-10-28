@@ -10,7 +10,7 @@ import {
   readableText,
   resolveImagePlate,
 } from "../../../lib/readable-text.mjs";
-import { sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
+import { hubLogoSrc, sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import { VsMatchupStage } from "../vs/VsMatchupOverlay";
 import {
   isMatchTeamStats,
@@ -261,18 +261,6 @@ function isOverlaySponsors(value: unknown): value is OverlaySponsor[] {
   });
 }
 
-function localLogoUrl(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) {
-      return `http://127.0.0.1:4877${url.pathname}`;
-    }
-  } catch {
-    // Relative and manually entered logo URLs remain unchanged.
-  }
-  return value;
-}
-
 function StableLogo({
   src,
   alt,
@@ -282,7 +270,7 @@ function StableLogo({
   alt: string;
   className?: string;
 }) {
-  const candidate = src ? localLogoUrl(src) : "";
+  const candidate = src ? hubLogoSrc(src) : "";
   const { displayedSource, handleDisplayedError } = useStableImageSource(candidate);
 
   return displayedSource

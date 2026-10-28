@@ -4,6 +4,8 @@ import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyProductionDefaults, matchesProductionDefaults } from "../lib/production-defaults.mjs";
 import { createLeagueDraftState } from "../lib/league-of-legends.mjs";
 import { normalizeLeagueScoreboard, setLeagueBaronActive, setLeagueElderActive, updateLeagueDragons } from "../lib/league-scoreboard.mjs";
+import { emptyBracketState, normalizeBracketSnapshot } from "../lib/bracket.mjs";
+import { bracketFixture } from "./fixtures/bracket-fixture.mjs";
 
 test("clearing production data retains both presets and customized settings while clearing show entries", () => {
   const empty = {
@@ -18,6 +20,8 @@ test("clearing production data retains both presets and customized settings whil
   };
   for (const conferences of [true, false]) {
     const current = applyProductionDefaults(structuredClone(empty), conferences);
+    const fixture = bracketFixture();
+    current.bracket = { ...emptyBracketState("solid"), hold: true, autoRotate: true, page: 2, snapshot: normalizeBracketSnapshot(fixture.detail, fixture.workspace, fixture.source) };
     current.settings = { drawShowEnabled: true, generalInfoEnabled: false };
     current.general = { eventName: "Finals", matches: [{ id: "123" }] };
     current.valorantMapData = { maps: [{ name: "Custom artwork" }] };
@@ -33,6 +37,7 @@ test("clearing production data retains both presets and customized settings whil
     current.leagueOfLegends.scoreboard = setLeagueElderActive(setLeagueBaronActive(updateLeagueDragons(current.leagueOfLegends.scoreboard, "team1", { types: ["ocean"] }), "team1", true), "team2", true);
     const original = structuredClone(current);
     const cleared = clearProductionData(current, structuredClone(empty));
+    assert.deepEqual(cleared.bracket, emptyBracketState("solid"));
     assert.deepEqual(current, original);
     assert.equal(matchesProductionDefaults(cleared, conferences), true);
     for (const key of ["general", "draws", "drawSeeding"]) assert.deepEqual(cleared[key], empty[key]);

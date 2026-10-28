@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { leagueDraftSteps, LEAGUE_ROLES, leagueChampionAssetId, leagueGameLimit, normalizeLeaguePickOrder } from "../../../lib/league-of-legends.mjs";
 import { isLeagueOverlayData, leagueFearlessChampions, leagueFearlessPage, leagueLiveStatsAvailable } from "../../../lib/league-overlay.mjs";
 import { detectImagePlate, readableText, resolveImagePlate } from "../../../lib/readable-text.mjs";
+import { hubLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import { FitTeamName, SponsorCarousel, VsSceneBackdrop, type VsOverlayTeam, type VsOverlaySponsor } from "../vs/VsMatchupOverlay";
 import { useStableImageSource } from "../useStableImageSource";
 import { LEAGUE_DRAGON_TYPES, leagueBaronSecondsRemaining, leagueElderSecondsRemaining, leagueScoreboardTeam, leagueScoreboardValue, normalizeLeagueScoreboard } from "../../../lib/league-scoreboard.mjs";
@@ -83,14 +84,6 @@ function clock(seconds: number) {
   return Math.floor(seconds / 60) + ":" + String(Math.floor(seconds % 60)).padStart(2, "0");
 }
 
-function localLogoUrl(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) return "http://127.0.0.1:4877" + url.pathname;
-  } catch { /* Relative and manual URLs are already usable. */ }
-  return value;
-}
-
 function assetUrl(version: string, name: string, portrait = false) {
   if (!/^\d+\.\d+\.\d+$/.test(version) || !name) return "";
   return ASSET_ENDPOINT + "/" + version + "/" + (portrait ? "portrait/" : "champion/") + leagueChampionAssetId(name) + (portrait ? "_0.jpg" : ".png");
@@ -132,7 +125,7 @@ function TeamLogo({ team }: { team: VsOverlayTeam }) {
   const words = team.name.trim().split(/\s+/);
   const initials = (words.length > 1 ? words.map((word) => word[0]).join("") : words[0]).slice(0, 3).toUpperCase();
   return <span className={styles.logoPlate} style={{ background: plate, color: readableText(plate) }}>
-    <StableArtwork src={localLogoUrl(team.logo)} label={team.name} fallbackLabel={initials || "—"} />
+    <StableArtwork src={hubLogoSrc(team.logo)} label={team.name} fallbackLabel={initials || "—"} />
   </span>;
 }
 
@@ -317,7 +310,7 @@ export function LiveOverlay({ data, available }: { data: OverlayData; available:
           return <div key={side}>
             <div className={styles.scoreFill} style={{ ...box(fill), background: team.color }} data-source-box={fill.join(",")} />
             <div className={styles.scoreLogo} style={{ ...box(logoRect), background: resolveImagePlate(team.logoBackground), color: readableText(resolveImagePlate(team.logoBackground)) }} aria-label={team.name + " logo"}>
-              <StableArtwork src={localLogoUrl(team.logo)} label={team.name} />
+              <StableArtwork src={hubLogoSrc(team.logo)} label={team.name} />
             </div>
             <SeriesIndicators team={team} bestOf={data.bestOf} side={side} scene="score" />
             <div style={{ color: readableText(team.color) }}>

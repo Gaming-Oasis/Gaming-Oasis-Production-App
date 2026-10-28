@@ -1,0 +1,53 @@
+.viewport { position: fixed; inset: 0; overflow: hidden; background: transparent; }
+.frame { position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.stage { --bracket-accent: #F6AC18; --bracket-accent-text: #171717; position: relative; width: 1920px; height: 1080px; overflow: hidden; background: transparent; color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+.stage[data-background="solid"] { background: #171717; }
+.header, .roundHeading, .match, .qualification, .footer { position: absolute; background: #171717; }
+
+.header { left: 96px; top: 64px; width: 1728px; height: 112px; border-left: 3px solid var(--bracket-accent); display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; gap: 40px; }
+.heading { min-width: 0; flex: 1; }
+.heading p { margin: 0 0 4px; color: rgb(255 255 255 / .8); font-size: 18px; line-height: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heading h1 { margin: 0; font-size: 36px; line-height: 48px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand { width: 266px; flex-shrink: 0; text-align: right; }
+.brand img { display: block; width: 266px; height: 45px; object-fit: contain; }
+.brand p { margin: 8px 0 0; color: rgb(255 255 255 / .75); font-size: 16px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roundHeading { top: 220px; height: 40px; border-left: 3px solid var(--bracket-accent); padding: 6px 14px; color: rgb(255 255 255 / .9); font-size: 20px; line-height: 28px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.connectors { position: absolute; inset: 0; width: 1920px; height: 1080px; pointer-events: none; }
+.connectors path { fill: none; stroke-linejoin: round; }
+/* A crisp dark keyline keeps the same feeder paths visible over light video. */
+.connectorContrast { stroke: #171717; stroke-width: 4; }
+.connectorLine { stroke: #FFFFFF; stroke-opacity: .6; stroke-width: 1.5; }
+
+.match { display: grid; grid-template-rows: 24px repeat(2, minmax(0, 1fr)); border: 1px solid rgb(255 255 255 / .18); overflow: hidden; }
+.matchHeading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 12px; color: rgb(255 255 255 / .72); font-size: 14px; line-height: 20px; }
+.matchRow { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) 56px; min-height: 0; align-items: stretch; }
+.matchRow + .matchRow { border-top: 1px solid rgb(255 255 255 / .14); }
+.matchRow[data-winner="true"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--bracket-accent); }
+.seed, .score { display: flex; align-items: center; justify-content: center; }
+.seed { color: rgb(255 255 255 / .72); font-size: 16px; line-height: 22px; font-weight: 400; }
+.score { min-height: 0; margin: 6px; font-size: 30px; line-height: 40px; font-weight: 600; }
+.score[data-pending="true"] { color: rgb(255 255 255 / .76); font-size: 26px; font-weight: 400; }
+.matchRow[data-winner="true"] .score { background: var(--bracket-accent); color: var(--bracket-accent-text); font-weight: 700; }
+.team { display: flex; gap: 10px; align-items: center; padding: 0 12px 0 4px; min-width: 0; }
+.teamName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 26px; line-height: 36px; font-weight: 500; }
+.matchRow[data-winner="true"] .teamName { font-weight: 600; }
+.matchRow[data-pending="true"] .teamName { color: rgb(255 255 255 / .8); font-size: 23px; font-weight: 400; }
+.logo { display: inline-flex; flex: 0 0 32px; width: 32px; height: 32px; padding: 3px; align-items: center; justify-content: center; }
+.logo img { width: 100%; height: 100%; object-fit: contain; }
+
+.compact { grid-template-rows: 18px repeat(2, minmax(0, 1fr)); }
+.compact .matchHeading { padding: 1px 10px; font-size: 13px; line-height: 16px; }
+.compact .matchRow { grid-template-columns: 30px minmax(0, 1fr) 46px; }
+.compact .seed { font-size: 14px; line-height: 20px; }
+.compact .score { margin: 1px 4px; font-size: 20px; line-height: 28px; }
+.compact .teamName { font-size: 20px; line-height: 28px; }
+.compact .matchRow[data-pending="true"] .teamName { font-size: 20px; }
+.compact .matchRow[data-winner="true"]::before { top: 4px; bottom: 4px; }
+.compact .logo { flex-basis: 22px; width: 22px; height: 22px; padding: 1px; }
+.compact .team { gap: 6px; padding: 0 8px 0 2px; }
+
+.qualification { min-height: 44px; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; padding: 10px 14px; border-left: 3px solid var(--bracket-accent); color: rgb(255 255 255 / .9); font-size: 18px; line-height: 24px; }
+.footer { left: 96px; top: 1000px; width: 1728px; height: 48px; border-left: 3px solid var(--bracket-accent); display: flex; justify-content: space-between; align-items: center; gap: 40px; padding: 8px 24px; color: rgb(255 255 255 / .85); font-size: 16px; line-height: 24px; }
+.footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.footer span:last-child { text-align: right; color: rgb(255 255 255 / .72); font-size: 15px; line-height: 22px; }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hubConnectionState, hubDraftProgress } from "../lib/hub-connection.mjs";
+import { BRACKET_CONNECTION_COPY, hubConnectionState, hubDraftProgress } from "../lib/hub-connection.mjs";
 
 const ready = { owner: true, reason: "", mode: "live", hasSnapshot: true,
   status: { busy: false, connected: true, error: "", lastSuccess: "2026-10-12T16:00:00Z" } };
@@ -48,4 +48,18 @@ test("League progress follows the production game, including when Hub has advanc
   ] };
   assert.equal(hubDraftProgress(collection, "leagueOfLegends", 1), "Draft complete");
   assert.equal(hubDraftProgress(collection, "leagueOfLegends", 2), "Champion pick");
+});
+
+test("bracket status uses the same guards with Hold as its manual mode", () => {
+  const bracket = { ...ready, copy: BRACKET_CONNECTION_COPY };
+  const resumed = hubConnectionState({ ...bracket, status: { ...ready.status, busy: true, connected: false } });
+  assert.equal(resumed.label, "Connecting", "a refresh time saved before Hold does not claim the resumed poll is healthy");
+  assert.match(resumed.detail, /current bracket stays on air/);
+  assert.equal(hubConnectionState({ ...bracket, mode: "manual" }).label, "Updates held");
+  assert.equal(hubConnectionState({ ...bracket, owner: false }).label, "Standby");
+  assert.equal(hubConnectionState({ ...bracket, reason: "Choose an event and load a stage to begin." }).label, "No bracket loaded");
+  const failure = hubConnectionState({ ...bracket, status: { ...ready.status, error: "League Hub is unavailable" } });
+  assert.equal(failure.label, "Updates interrupted");
+  assert.equal(failure.detail, "League Hub is unavailable. The current bracket stays on air. Retrying automatically.");
+  assert.match(hubConnectionState(bracket).detail, /Hold freezes/);
 });

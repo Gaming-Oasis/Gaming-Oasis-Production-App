@@ -12,7 +12,7 @@ import { migrateValorantPlaceholder } from "../lib/valorant-map-placeholder.mjs"
 import { MAP_API, mergeMapArtwork } from "../lib/valorant-map-library.mjs";
 import { prepareMapExport } from "../lib/valorant-map-export.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
-import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
+import { googleDriveFileId, hubLogoSrc } from "../lib/sponsor-logo-url.mjs";
 import {
   applyTierSeedOffset,
   buildByGroupExport,
@@ -104,8 +104,11 @@ import {
 } from "../lib/caster-presets.mjs";
 import LeagueScoreboardControls, { type LeagueScoreboardSettings } from "./LeagueScoreboardControls";
 import { normalizeLeagueScoreboard, resetLeagueScoreboardCounts } from "../lib/league-scoreboard.mjs";
+import { BracketWorkspace, useBracketSync } from "./BracketWorkspace";
+import { acceptBracketSnapshot, buildBracketOverlayState, emptyBracketState, hydrateBracketState, type BracketSnapshot, type BracketSource, type BracketState } from "../lib/bracket.mjs";
+import { bracketFramingKey, nextBracketFrame, startBracketRotation } from "../lib/bracket-rotation.mjs";
 
-type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "leagueOfLegends" | "sponsors" | "draw" | "settings";
+type Section = "welcome" | "general" | "matches" | "rocketLeague" | "valorant" | "leagueOfLegends" | "brackets" | "sponsors" | "draw" | "settings";
 type ConnectionState = "idle" | "connected" | "error";
 type LiveSyncState = "checking" | "standby" | "saving" | "retrying" | "synced" | "error";
 type LiveDataTone = "live" | "waiting" | "offline" | "manual";
@@ -468,6 +471,7 @@ type ValorantMapArtwork = {
 type ValorantMapData = { maps: ValorantMapArtwork[] };
 
 type ProductionState = {
+  bracket: BracketState;
   general: GeneralInfo;
   rocketLeague: RocketLeague;
   valorant: Valorant;
@@ -499,7 +503,8 @@ type PendingConfirmation = {
 type CasterPreset = { name: string; social: string };
 
 function hasOutputRelevantChanges(current: ProductionState, saved: ProductionState) {
-  return current.general !== saved.general
+  return current.bracket !== saved.bracket
+    || current.general !== saved.general
     || current.rocketLeague !== saved.rocketLeague
     || current.valorant !== saved.valorant
     || current.leagueOfLegends !== saved.leagueOfLegends
@@ -548,6 +553,7 @@ function hasProductionContent(state: ProductionState) {
     state.valorant.scoreboardHeader,
     state.leagueOfLegends.scoreboardHeader,
   ].some(hasText)
+    || Boolean(state.bracket.snapshot)
     || state.general.segments.some(hasText)
     || state.general.matches.some((match) => (
       hasText(match.id) || teamHasContent(match.team1) || teamHasContent(match.team2) || leagueHasContent(match.league)
@@ -629,15 +635,7 @@ function canonicalMapName(value: unknown) {
 function displayLogoUrl(value: string) {
   const driveId = googleDriveFileId(value);
   if (driveId) return `http://127.0.0.1:4877/api/public/map-artwork/${encodeURIComponent(driveId)}`;
-  try {
-    const url = new URL(value);
-    if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) {
-      return `${LOCAL_PUBLIC_ENDPOINT}${url.pathname.replace(/^\/api\/public/, "")}`;
-    }
-  } catch {
-    // Keep manual and relative logo paths unchanged.
-  }
-  return value;
+  return hubLogoSrc(value);
 }
 
 function normalizeLogoBackground(value: unknown) {
@@ -785,6 +783,7 @@ function mergeDrawSeeding(saved: unknown): DrawSeeding {
 
 function createInitialState(): ProductionState {
   return {
+    bracket: emptyBracketState(),
     general: {
       eventName: "",
       mainCaster: "",
@@ -1171,6 +1170,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
     ? uniqueMaps
     : initial.valorantMapData.maps.map((map) => ({ ...map }));
   return {
+    bracket: hydrateBracketState(saved.bracket),
     general: {
       eventName: stringValue(savedGeneral.eventName),
       mainCaster: stringValue(savedGeneral.mainCaster),
@@ -2065,6 +2065,8 @@ export default function Home() {
   const writerRevisionRef = useRef(0);
   const liveWriteSequenceRef = useRef(0);
   const lastSuccessfulPayloadSignatureRef = useRef("");
+  const lastSuccessfulBracketFrameRef = useRef("");
+  const bracketRotationRef = useRef<ReturnType<typeof startBracketRotation> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resetModalRef = useRef<HTMLDivElement>(null);
   const resetTriggerRef = useRef<HTMLButtonElement>(null);
@@ -2089,6 +2091,37 @@ export default function Home() {
       return game === current[key] ? current : { ...current, [key]: game };
     });
   }, []);
+  const acceptBracket = useCallback((snapshot: BracketSnapshot, source: BracketSource) => {
+    setState(current => {
+      if (!isPrimaryTabRef.current) return current;
+      const bracket = acceptBracketSnapshot(current.bracket, snapshot, source);
+      return bracket === current.bracket ? current : { ...current, bracket };
+    });
+  }, []);
+  const changeBracket = useCallback((bracket: BracketState) => {
+    setState(current => isPrimaryTabRef.current ? { ...current, bracket } : current);
+  }, []);
+  const bracketStatus = useBracketSync({ active: hydrated && isPrimaryTab, value: state.bracket, onSnapshot: acceptBracket });
+  useEffect(() => {
+    if (!hydrated || !isPrimaryTab || !state.bracket.autoRotate) return;
+    const rotation = startBracketRotation({
+      read: () => ({ enabled: isPrimaryTabRef.current && !serverOwnershipBlockedRef.current,
+        value: stateRef.current.bracket, publishedKey: lastSuccessfulBracketFrameRef.current }),
+      advance: expectedKey => setState(current => {
+        if (!isPrimaryTabRef.current || serverOwnershipBlockedRef.current || !current.bracket.autoRotate
+          || bracketFramingKey(current.bracket) !== expectedKey) return current;
+        const bracket = nextBracketFrame(current.bracket);
+        return bracket === current.bracket ? current : { ...current, bracket };
+      }),
+    });
+    bracketRotationRef.current = rotation;
+    return () => {
+      rotation.stop();
+      if (bracketRotationRef.current === rotation) bracketRotationRef.current = null;
+    };
+  }, [hydrated, isPrimaryTab, state.bracket.autoRotate]);
+  // Framing, score, and Hold changes re-check the dwell; publication results do the same in the live writer.
+  useEffect(() => { bracketRotationRef.current?.update(); }, [state.bracket]);
   const hubMatch = state.general.matches[0];
   const activeHubKey = hubMatch.hubIdentity?.game === "VALORANT" ? "valorant" : "leagueOfLegends";
   const hubStatus = useHubDraftSync({
@@ -2748,11 +2781,12 @@ export default function Home() {
     state.sponsors,
     { eventName: state.general.eventName, assetVersion: leagueCatalogVersion },
   ), [state.leagueOfLegends, state.general.eventName, state.general.matches, state.sponsors, matchOneLeague.primaryColor, matchOneLeague.secondaryColor, matchOneLeague.logo, leagueCatalogVersion, matchKey]);
+  const bracketOverlay = useMemo(() => buildBracketOverlayState(state.bracket), [state.bracket]);
   const livePayload = useMemo(() => ({
     files,
-    overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay },
+    overlays: { valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay, bracket: bracketOverlay },
     valorantMapData: state.valorantMapData,
-  }), [files, leagueOverlay, rocketLeagueOverlay, state.valorantMapData, valorantOverlay]);
+  }), [files, leagueOverlay, rocketLeagueOverlay, state.valorantMapData, valorantOverlay, bracketOverlay]);
   const livePayloadSignature = useMemo(() => createLivePayloadSignature(livePayload), [livePayload]);
   const filledSponsors = state.sponsors.filter((sponsor) => sponsor.name.trim() || sponsor.logo.trim()).length;
   const filledMatches = state.general.matches.filter((match) => resolveTeam(match.team1).name && resolveTeam(match.team2).name).length;
@@ -2824,6 +2858,8 @@ export default function Home() {
     }
 
     if (livePayloadSignature === lastSuccessfulPayloadSignatureRef.current) {
+      lastSuccessfulBracketFrameRef.current = bracketFramingKey(livePayload.overlays.bracket);
+      bracketRotationRef.current?.update();
       setLiveSync("synced");
       setState((current) => acknowledgePhantoms(current, revealTickets));
       return () => controller.abort();
@@ -2917,13 +2953,19 @@ export default function Home() {
             }
             if (sequence === liveWriteSequenceRef.current) {
               lastSuccessfulPayloadSignatureRef.current = livePayloadSignature;
+              lastSuccessfulBracketFrameRef.current = bracketFramingKey(livePayload.overlays.bracket);
+              bracketRotationRef.current?.update();
               setLiveSync("synced");
               setState((current) => acknowledgePhantoms(current, revealTickets));
             }
             return;
           } catch (error) {
             if ((error as Error).name === "AbortError") return;
-            if (sequence === liveWriteSequenceRef.current) setState((current) => pausePhantoms(current, "Writer unavailable. Retry the pending output, then restart auto reveal."));
+            if (sequence === liveWriteSequenceRef.current) {
+              lastSuccessfulBracketFrameRef.current = "";
+              bracketRotationRef.current?.update();
+              setState((current) => pausePhantoms(current, "Writer unavailable. Retry the pending output, then restart auto reveal."));
+            }
             if (error instanceof HttpResponseError && error.terminal) {
               if (sequence === liveWriteSequenceRef.current) setLiveSync("error");
               return;
@@ -4403,6 +4445,7 @@ export default function Home() {
   }
 
   const sectionLabels: Record<Section, string> = {
+    brackets: "Brackets",
     welcome: "Welcome",
     general: "General info",
     matches: "Team Info",
@@ -4418,6 +4461,7 @@ export default function Home() {
     { key: "welcome", label: "Welcome" },
     ...(state.settings.generalInfoEnabled ? [{ key: "general" as Section, label: "General info" }] : []),
     { key: "matches", label: "Team Info" },
+    { key: "brackets", label: "Brackets" },
     ...(state.settings.rocketLeagueEnabled ? [{ key: "rocketLeague" as Section, label: "Rocket League" }] : []),
     ...(state.settings.valorantEnabled ? [{ key: "valorant" as Section, label: "VALORANT" }] : []),
     ...(state.settings.leagueOfLegendsEnabled ? [{ key: "leagueOfLegends" as Section, label: "League of Legends" }] : []),
@@ -6013,6 +6057,7 @@ export default function Home() {
           {visibleSection === "rocketLeague" ? renderRocketLeague() : null}
           {visibleSection === "valorant" ? renderValorant() : null}
           {visibleSection === "leagueOfLegends" ? renderLeagueOfLegends() : null}
+          {visibleSection === "brackets" ? <BracketWorkspace enabled={hydrated && isPrimaryTab} value={state.bracket} onChange={changeBracket} matchId={state.general.matches[0].syncedId} writerStatus={liveSyncShortLabel(liveSync)} status={bracketStatus} /> : null}
           {visibleSection === "sponsors" ? renderSponsors() : null}
           {visibleSection === "draw" ? renderDraw() : null}
           {visibleSection === "settings" ? renderSettings() : null}

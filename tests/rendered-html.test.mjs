@@ -52,12 +52,84 @@ import {
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
 import { mergeLeagueOverlayLive, startLeagueLiveClient } from "../lib/league-of-legends-live.mjs";
-import { sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
+import { hubLogoSrc, sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
+import { readBoundedJson } from "../lib/bounded-json.mjs";
 import { FINAL_OUTPUT_KEYS, JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
 import { resolveNpmInvocation, stopChild } from "../scripts/launch-production.mjs";
+import { bracketFixture } from "./fixtures/bracket-fixture.mjs";
+import { bracketEventPath, bracketStagePath, buildBracketOverlayState, emptyBracketState, normalizeBracketSnapshot } from "../lib/bracket.mjs";
 
 const WRITER_TEST_ORIGIN = "http://localhost:3000";
 const writerTestSessions = new WeakMap();
+
+test("bracket publication commits all six files and retains its previous graphic on transaction failure", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-bracket-"));
+  const installed = [];
+  let fail = false;
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    beforeInstallFile: (filename, index) => { installed.push(filename); if (fail && index === 3) throw new Error("injected bracket commit failure"); } });
+  try {
+    const fixture = bracketFixture();
+    const bracket = buildBracketOverlayState({ ...emptyBracketState(), snapshot: normalizeBracketSnapshot(fixture.detail, fixture.workspace, fixture.source) });
+    const files = await productionFileFixtures("LCQ");
+    assert.equal((await fetch(`${writer.url}/api/overlays/bracket`)).status, 204);
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { bracket } })).status, 200);
+    assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+    assert.deepEqual(await (await fetch(`${writer.url}/api/overlays/bracket`)).json(), bracket);
+    const baseline = await Promise.all([...JSON_FILENAMES].map(filename => readFile(path.join(outputDir, filename), "utf8")));
+    const changed = structuredClone(bracket); changed.snapshot.rounds[0].matches[0].team1.score = 2;
+    changed.autoRotate = true; changed.page = 1;
+    fail = true;
+    assert.equal((await postWriter(writer, "/api/live-json", { files: await productionFileFixtures("Changed"), overlays: { bracket: changed } })).status, 500);
+    assert.deepEqual(await (await fetch(`${writer.url}/api/overlays/bracket`)).json(), bracket);
+    assert.deepEqual(await Promise.all([...JSON_FILENAMES].map(filename => readFile(path.join(outputDir, filename), "utf8"))), baseline);
+    fail = false; installed.length = 0;
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { bracket: changed } })).status, 200);
+    assert.deepEqual(installed.splice(0).sort(), [...JSON_FILENAMES].sort());
+    assert.deepEqual(await (await fetch(`${writer.url}/api/overlays/bracket`)).json(), changed);
+    const malformed = structuredClone(changed); malformed.snapshot.rounds[0].matches[0].team1.score = -3;
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { bracket: malformed } })).status, 422);
+    assert.equal((await postWriter(writer, "/api/live-json", { files: files.slice(0, 5), overlays: { bracket: changed } })).status, 422);
+    assert.deepEqual(await (await fetch(`${writer.url}/api/overlays/bracket`)).json(), changed);
+    assert.equal((await postWriter(writer, "/api/live-json", { files, overlays: { bracket: buildBracketOverlayState(emptyBracketState("solid")) } })).status, 200);
+    assert.equal((await (await fetch(`${writer.url}/api/overlays/bracket`)).json()).snapshot, null);
+  } finally { await writer.close(); }
+});
+
+test("public bracket proxy revalidates ETags, removes unpublished cache and bounds fixed-host resources", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-bracket-proxy-"));
+  const fixture = bracketFixture(), calls = [];
+  let mode = "ok";
+  const writer = await startJsonWriter({ port: 0, outputDir, enableRocketLeagueStatsApi: false, enableLeagueLiveClient: false,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (mode === "missing") return Response.json({ error: "Stage not found" }, { status: 404 });
+      if (mode === "large") return new Response("", { headers: { "content-length": "2000001", "content-type": "application/json" } });
+      if (mode === "invalid") return new Response("not json", { headers: { "content-type": "application/json" } });
+      if (options.headers["If-None-Match"] === 'W/"bracket-v1"') return new Response(null, { status: 304 });
+      return Response.json(url.endsWith(bracketEventPath(fixture.source)) ? fixture.detail : fixture.workspace, { headers: { ETag: 'W/"bracket-v1"' } });
+    } });
+  try {
+    const eventPath = bracketEventPath(fixture.source), stagePath = bracketStagePath(fixture.source);
+    for (const resource of [eventPath, stagePath]) {
+      const first = await fetch(`${writer.url}${resource}`); assert.equal(first.status, 200);
+      const initial = await first.json();
+      const second = await fetch(`${writer.url}${resource}`); assert.equal(second.status, 200);
+      assert.deepEqual(await second.json(), initial);
+      assert.equal(calls.at(-1).options.headers["If-None-Match"], 'W/"bracket-v1"');
+      assert.ok(calls.at(-1).url.startsWith("https://hub.gamingoasis.gg/api/portal/"));
+      assert.equal(calls.at(-1).options.redirect, "error");
+    }
+    mode = "missing"; assert.equal((await fetch(`${writer.url}${stagePath}`)).status, 404);
+    mode = "ok"; assert.equal((await fetch(`${writer.url}${stagePath}`)).status, 200);
+    assert.equal(calls.at(-1).options.headers["If-None-Match"], undefined);
+    mode = "large"; assert.equal((await fetch(`${writer.url}${stagePath}`)).status, 502);
+    mode = "invalid"; assert.equal((await fetch(`${writer.url}${stagePath}`)).status, 502);
+    const count = calls.length;
+    for (const resource of [`${eventPath}?url=https://example.com`, "/api/portal/leagues/a/seasons/b/events/c/stages/not-an-id", "/api/admin/events"]) assert.equal((await fetch(`${writer.url}${resource}`)).status, 404);
+    assert.equal(calls.length, count);
+  } finally { await writer.close(); }
+});
 
 function liveOutputNames(extra = []) {
   return [...JSON_FILENAMES, "sponsor-logos", ...extra].sort();
@@ -2395,7 +2467,7 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.doesNotMatch(page, /VALORANT_MAPS\.map/);
   assert.doesNotMatch(page, />Map artwork</);
   assert.match(page, /buildRocketLeagueOverlayState/);
-  assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay \}/);
+  assert.match(page, /overlays: \{ valorant: valorantOverlay, rocketLeague: rocketLeagueOverlay, leagueOfLegends: leagueOverlay, bracket: bracketOverlay \}/);
   assert.match(page, /Scoreboard header override/);
   assert.match(page, /Leave blank to use General Info event name\./);
   assert.match(page, /resolveScoreboardHeader/);
@@ -2887,6 +2959,28 @@ test("resolves sponsor logos onto sources vMix can paint", () => {
     sponsorLogoSrc("https://drive.google.com/file/d/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4/view"),
     "http://127.0.0.1:4877/api/public/map-artwork/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4",
   );
+});
+
+test("routes only League Hub team and league logos through the cached Hub proxy", async () => {
+  const teamLogo = "https://hub.gamingoasis.gg/api/public/logos/teams/11111111-1111-4111-8111-111111111111";
+  assert.equal(hubLogoSrc(teamLogo), "http://127.0.0.1:4877/api/public/logos/teams/11111111-1111-4111-8111-111111111111");
+  assert.equal(hubLogoSrc(teamLogo.replace("teams", "leagues")), "http://127.0.0.1:4877/api/public/logos/leagues/11111111-1111-4111-8111-111111111111");
+  for (const value of [teamLogo.replace("teams", "programs"), teamLogo.replace("hub.gamingoasis.gg", "hub.gamingoasis.gg.evil"), "partner.png", ""]) {
+    assert.equal(hubLogoSrc(value), value);
+  }
+  for (const file of ["app/page.tsx", "app/overlays/league-of-legends/LeagueOverlay.tsx", "app/overlays/rocket-league/page.tsx", "app/overlays/rocket-league/stats/PostMatchTeamStats.tsx", "app/overlays/valorant/page.tsx", "app/overlays/vs/VsMatchupOverlay.tsx", "app/overlays/bracket/BracketStage.tsx"]) {
+    assert.doesNotMatch(await readFile(new URL(`../${file}`, import.meta.url), "utf8"), /api\\\/public\\\/logos/, `${file} reuses hubLogoSrc`);
+  }
+});
+
+test("bounded JSON reads stop at the byte limit with or without a declared length", async () => {
+  let aborted = 0;
+  const options = { maximumBytes: 8, abort: () => { aborted += 1; }, message: "too large" };
+  assert.deepEqual(await readBoundedJson(Response.json({ a: 1 }), options), { a: 1 });
+  await assert.rejects(readBoundedJson(new Response("[1,2,3,4,5]", { headers: { "content-length": "11" } }), options), /too large/);
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("[1,2,")); controller.enqueue(new TextEncoder().encode("3,4,5]")); controller.close(); } });
+  await assert.rejects(readBoundedJson(new Response(stream), options), /too large/);
+  assert.equal(aborted, 2);
 });
 
 test("proxies public League Hub matches without credentials", async () => {

@@ -30,6 +30,8 @@ Functional success and error colors may be used for system state. Do not use bra
 
 ## Browser overlays color scheme
 
+The bracket browser source (`/overlays/bracket`) uses the same flat `#171717` plates, white text, selected-event league colors, and shared logo contrast helpers. Its surrounding canvas defaults to transparent; the optional solid canvas also uses `#171717`.
+
 Applies to `/overlays/rocket-league`, `/overlays/rocket-league/vs`, `/overlays/rocket-league/stats`, `/overlays/valorant`, `/overlays/valorant/vs`, and the League Pick/Ban, Scoreboard, and VS routes under `/overlays/league-of-legends` (browser sources for OBS). Operator chrome uses the core tokens above; overlays use this tighter fixed set plus live Match 1 / league colors.
 
 ### Fixed colors
