@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatSocialHandle } from "../lib/social-handle.mjs";
 import { isLeagueScoreboard } from "../lib/league-scoreboard.mjs";
+import { isBracketOverlayState, parseBracketProxyPath } from "../lib/bracket.mjs";
 import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
 import { createValorantMapStore } from "../lib/valorant-map-store.mjs";
 import { VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
@@ -772,6 +773,8 @@ export async function startJsonWriter({
   let valorantOverlayState = null;
   let rocketLeagueOverlayState = null;
   let leagueOverlayState = null;
+  let bracketOverlayState = null;
+  const bracketResourceCache = new Map();
   const mapArtworkCache = new Map();
   const mapArtworkRequests = new Map();
   const hubPublicRequests = new Map();
@@ -1220,6 +1223,13 @@ export async function startJsonWriter({
       return;
     }
 
+    if (request.method === "GET" && request.url === "/api/overlays/bracket") {
+      if (!bracketOverlayState) { response.writeHead(204).end(); return; }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(bracketOverlayState));
+      return;
+    }
+
     if (request.method === "GET" && request.url === "/api/overlays/valorant") {
       if (!valorantOverlayState) {
         response.writeHead(204).end();
@@ -1338,6 +1348,41 @@ export async function startJsonWriter({
       } catch (error) {
         if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");
         rejectJson(response, error instanceof HttpError ? error.status : 502, error instanceof HttpError ? error.message : "Sponsor logo is unavailable");
+      }
+      return;
+    }
+
+    const bracketRequest = request.method === "GET" ? parseBracketProxyPath(request.url) : null;
+    if (bracketRequest) {
+      try {
+        const resourcePath = request.url;
+        const result = await getHubPublicResource(`bracket:${resourcePath}`, async () => {
+          const cached = getLru(bracketResourceCache, resourcePath);
+          const headers = { Accept: "application/json", "Cache-Control": "no-cache" };
+          if (cached?.etag) headers["If-None-Match"] = cached.etag;
+          const { upstream, body } = await fetchBounded(fetchImpl, `https://hub.gamingoasis.gg${resourcePath}`, {
+            headers, expectedType: "json", maximumBytes: 2_000_000, redirect: "error",
+          });
+          if (upstream.status === 304 && cached) return cached;
+          if (!upstream.ok) {
+            if (upstream.status === 404) bracketResourceCache.delete(resourcePath);
+            throw new HttpError(upstream.status === 404 ? 404 : 502, upstream.status === 404 ? "Event or stage was not found or is no longer public" : "League Hub is unavailable");
+          }
+          const data = JSON.parse(body.toString("utf8"));
+          const valid = bracketRequest.stageId
+            ? data?.stage?.id === bracketRequest.stageId && Array.isArray(data.rounds)
+            : data?.league?.slug === bracketRequest.leagueSlug && data?.season?.slug === bracketRequest.seasonSlug
+              && data?.event?.slug === bracketRequest.eventSlug && Array.isArray(data.stages);
+          if (!valid) throw new HttpError(502, "League Hub returned invalid bracket data");
+          const entry = { body, etag: upstream.headers.get("etag") || "" };
+          setLru(bracketResourceCache, resourcePath, entry, 32, 8_000_000);
+          return entry;
+        });
+        response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        response.end(result.body);
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 429) response.setHeader("Retry-After", "1");
+        rejectJson(response, error instanceof HttpError ? error.status : 502, error instanceof HttpError ? error.message : "League Hub bracket data is unavailable");
       }
       return;
     }
@@ -1582,7 +1627,7 @@ export async function startJsonWriter({
       }
 
       if (payload.overlays !== undefined && (!isPlainObject(payload.overlays)
-        || Object.keys(payload.overlays).some((key) => !["valorant", "rocketLeague", "leagueOfLegends"].includes(key)))) {
+        || Object.keys(payload.overlays).some((key) => !["valorant", "rocketLeague", "leagueOfLegends", "bracket"].includes(key)))) {
         throw new HttpError(422, "Invalid overlay state container");
       }
       const nextValorantOverlay = payload.overlays?.valorant;
@@ -1594,6 +1639,10 @@ export async function startJsonWriter({
         throw new HttpError(422, "Invalid Rocket League overlay state");
       }
       const nextLeagueOverlay = payload.overlays?.leagueOfLegends;
+      const nextBracketOverlay = payload.overlays?.bracket;
+      if (nextBracketOverlay !== undefined && !isBracketOverlayState(nextBracketOverlay)) {
+        throw new HttpError(422, "Invalid bracket overlay state");
+      }
       if (nextLeagueOverlay !== undefined && !validLeagueOverlay(nextLeagueOverlay)) {
         throw new HttpError(422, "Invalid League of Legends overlay state");
       }
@@ -1635,6 +1684,7 @@ export async function startJsonWriter({
           rocketLeagueStatsApi?.setBroadcastSetupEnabled?.(nextRocketLeagueOverlay.broadcastSetupEnabled !== false);
         }
         if (nextLeagueOverlay !== undefined) leagueOverlayState = nextLeagueOverlay;
+        if (nextBracketOverlay !== undefined) bracketOverlayState = nextBracketOverlay;
         lastWrite = new Date().toISOString();
         generation += 1;
         setLru(lastRevisionByWriter, payload.writerId, { revision: payload.revision, digest: payloadDigest }, 256);

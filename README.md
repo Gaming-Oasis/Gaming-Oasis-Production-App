@@ -13,6 +13,7 @@ A ground-up rebuild of the Gaming Oasis vMix production control tool. This first
 - **Welcome** — show-readiness overview and shortcuts
 - **General info** — event name, talent, stream copy, and an eight-segment run of show
 - **Team Info** — two public League Hub match lookups with manual team overrides, color comparison, and complete Match 2-to-Match 1 copying
+- **Brackets** — live League Hub elimination brackets with manual framing, Hold, and a dedicated browser source
 - **Rocket League** — seven staged game-score inputs with an explicit JSON update, scoreboard header, series format, and automatic round and series totals
 - **VALORANT** — five staged map-result inputs with an explicit JSON update, flip-side and ban-swap controls, plus Bo3/Bo5 picks, bans, and starting sides
 - **League of Legends** — Bo1/Bo3/Bo5 series control, manual standard/global-fearless champion select, local spectator-client status, a ten-player live board, and staged winner-only game results
@@ -119,6 +120,20 @@ GET https://hub.gamingoasis.gg/api/public/matches/:matchId
 No production credentials or configurable API settings are required. The response's `match.team1` and `match.team2` provide team identity, seed, and home/away colors, `standings` provides placement and record, and `league` plus `event` populate per-match League info. Each match stores Hub source league name, logo (`league.logo` or `league.logoUrl`), primary/secondary colors, and event name separately from manual overrides. Resolved league colors become each team's Backup 1/2 swatches. Match 1's resolved event name updates General Info / `FinalOutput.eventname`, and Match 1's resolved league colors feed the Rocket League and VALORANT overlays. Each team can output its standing record (the default when available), placement (such as `3rd`), or stage seed (such as `#2`).
 
 The local writer proxies the match response and Hub-hosted logo previews because the production interface runs on localhost while the public League Hub endpoints are hosted at `hub.gamingoasis.gg`. Exported JSON keeps the original public logo URL.
+
+## League Hub bracket browser source
+
+Open **Brackets**, paste a public League Hub event link, and select **Find stages**. Choose a single- or double-elimination stage and select **Load bracket**. **Use Match 1 stage** finds the synced Match 1's event and stage; select **Load bracket** to display it. The bracket stays independent of subsequent Match 1 changes. A failed load retains the current graphic.
+
+Add `http://localhost:3000/overlays/bracket` to OBS or vMix as a **1920 × 1080** browser source. Transparency is the default; **Background → Solid dark** supplies a flat dark canvas. The preview uses the same graphic, with the selected event's league colors, official Gaming Oasis wordmark, team logos, separate seeds, series scores, and published feeder relationships.
+
+**Focused section** shows four opening matches and their descendants across up to four rounds. Use **Bracket section**, **Starting round**, and **Page** to reach every published match, including upper/lower brackets, finals/reset, and third place. **Complete overview** is available when the section fits within four rounds and eight matches per column. Qualifier brackets retain their published cutoff; the tool does not generate later rounds.
+
+Enable **Auto rotate · 10 seconds** to loop through the available pages and bracket groups, including later rounds, losers, finals/reset, and third place when published. Each page stays on air for ten seconds after its complete six-file publication succeeds. Rotation continues across workspace navigation and while results are held; manual framing restarts the interval. A writer failure or control handoff pauses rotation until the controlling tab successfully publishes again. The toggle is saved with the bracket and starts off for older drafts and newly loaded sources.
+
+The controlling operator browser refreshes every two seconds across workspace navigation. **Hold updates** freezes scores and progression while leaving framing available; releasing Hold immediately requests the latest bracket. **Refresh now** retries without waiting. Errors retain the last valid graphic and retry with backoff up to thirty seconds. Connection health, last refresh, and writer status appear only in the operator workspace. Keep the controlling browser and local writer running for updates.
+
+The selected source, snapshot, framing, background, and Hold state survive reloads and control handoff. Every bracket control or accepted data change publishes through the complete six-file writer transaction; the graphic updates only after that transaction succeeds. Legacy JSON shapes and manual recovery exports remain unchanged. Reset local data clears the bracket while preserving its background setting. No credentials or writes to League Hub are involved.
 
 ## League Hub draft and veto autofill
 
