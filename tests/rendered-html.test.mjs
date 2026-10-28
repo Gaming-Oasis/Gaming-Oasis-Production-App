@@ -52,7 +52,8 @@ import {
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
 import { mergeLeagueOverlayLive, startLeagueLiveClient } from "../lib/league-of-legends-live.mjs";
-import { sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
+import { hubLogoSrc, sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
+import { readBoundedJson } from "../lib/bounded-json.mjs";
 import { FINAL_OUTPUT_KEYS, JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
 import { resolveNpmInvocation, stopChild } from "../scripts/launch-production.mjs";
 import { bracketFixture } from "./fixtures/bracket-fixture.mjs";
@@ -2958,6 +2959,28 @@ test("resolves sponsor logos onto sources vMix can paint", () => {
     sponsorLogoSrc("https://drive.google.com/file/d/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4/view"),
     "http://127.0.0.1:4877/api/public/map-artwork/14E-M7BFACgPnAPqs8glAC1iHEjWHyOQ4",
   );
+});
+
+test("routes only League Hub team and league logos through the cached Hub proxy", async () => {
+  const teamLogo = "https://hub.gamingoasis.gg/api/public/logos/teams/11111111-1111-4111-8111-111111111111";
+  assert.equal(hubLogoSrc(teamLogo), "http://127.0.0.1:4877/api/public/logos/teams/11111111-1111-4111-8111-111111111111");
+  assert.equal(hubLogoSrc(teamLogo.replace("teams", "leagues")), "http://127.0.0.1:4877/api/public/logos/leagues/11111111-1111-4111-8111-111111111111");
+  for (const value of [teamLogo.replace("teams", "programs"), teamLogo.replace("hub.gamingoasis.gg", "hub.gamingoasis.gg.evil"), "partner.png", ""]) {
+    assert.equal(hubLogoSrc(value), value);
+  }
+  for (const file of ["app/page.tsx", "app/overlays/league-of-legends/LeagueOverlay.tsx", "app/overlays/rocket-league/page.tsx", "app/overlays/rocket-league/stats/PostMatchTeamStats.tsx", "app/overlays/valorant/page.tsx", "app/overlays/vs/VsMatchupOverlay.tsx", "app/overlays/bracket/BracketStage.tsx"]) {
+    assert.doesNotMatch(await readFile(new URL(`../${file}`, import.meta.url), "utf8"), /api\\\/public\\\/logos/, `${file} reuses hubLogoSrc`);
+  }
+});
+
+test("bounded JSON reads stop at the byte limit with or without a declared length", async () => {
+  let aborted = 0;
+  const options = { maximumBytes: 8, abort: () => { aborted += 1; }, message: "too large" };
+  assert.deepEqual(await readBoundedJson(Response.json({ a: 1 }), options), { a: 1 });
+  await assert.rejects(readBoundedJson(new Response("[1,2,3,4,5]", { headers: { "content-length": "11" } }), options), /too large/);
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("[1,2,")); controller.enqueue(new TextEncoder().encode("3,4,5]")); controller.close(); } });
+  await assert.rejects(readBoundedJson(new Response(stream), options), /too large/);
+  assert.equal(aborted, 2);
 });
 
 test("proxies public League Hub matches without credentials", async () => {

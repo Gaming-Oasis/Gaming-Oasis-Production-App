@@ -6,7 +6,7 @@ import {
   readableText,
   resolveImagePlate,
 } from "../../../lib/readable-text.mjs";
-import { sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
+import { hubLogoSrc, sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import { usePollingJson } from "../usePollingJson";
 import { useStableImageSource } from "../useStableImageSource";
 import styles from "./valorant-overlay.module.css";
@@ -107,18 +107,6 @@ function isMapWidget(value: unknown): value is MapWidget {
   });
 }
 
-function localLogoUrl(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) {
-      return `http://127.0.0.1:4877${url.pathname}`;
-    }
-  } catch {
-    // Relative and manually entered logo URLs remain unchanged.
-  }
-  return value;
-}
-
 function localArtworkUrl(value: string) {
   try {
     const url = new URL(value);
@@ -133,7 +121,7 @@ function localArtworkUrl(value: string) {
 }
 
 function StableLogo({ src, alt }: { src: string; alt: string }) {
-  const candidate = src ? localLogoUrl(src) : "";
+  const candidate = src ? hubLogoSrc(src) : "";
   const { displayedSource, handleDisplayedError } = useStableImageSource(candidate);
 
   return displayedSource

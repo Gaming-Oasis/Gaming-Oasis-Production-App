@@ -3,18 +3,15 @@
 import { useState, type CSSProperties } from "react";
 import { layoutBracket, type BracketState, type BracketParticipant } from "../../../lib/bracket.mjs";
 import { detectImagePlate, readableText, resolveImagePlate } from "../../../lib/readable-text.mjs";
-import { sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
+import { hubLogoSrc, sponsorLogoSrc } from "../../../lib/sponsor-logo-url.mjs";
 import { useStableImageSource } from "../useStableImageSource";
 import styles from "./bracket.module.css";
 
 function TeamLogo({ participant }: { participant: BracketParticipant }) {
   const [plate, setPlate] = useState(resolveImagePlate(""));
-  let src = participant.logo;
-  try {
-    const url = new URL(src);
-    src = url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)
-      ? `http://127.0.0.1:4877${url.pathname}` : sponsorLogoSrc(src);
-  } catch { src = ""; }
+  // Snapshot logos are absolute HTTPS URLs; anything outside the Hub logo proxy uses the sponsor proxy.
+  const hubSrc = hubLogoSrc(participant.logo);
+  const src = hubSrc === participant.logo ? sponsorLogoSrc(participant.logo) : hubSrc;
   const image = useStableImageSource(src);
   return <span className={styles.logo} style={{ backgroundColor: src ? plate : "transparent" }} aria-hidden="true">
     {image.displayedSource ? <img src={image.displayedSource} crossOrigin="anonymous" alt="" onError={image.handleDisplayedError} onLoad={event => {
@@ -29,8 +26,7 @@ export function BracketStage({ value }: { value: BracketState }) {
   if (!snapshot) return <div className={styles.stage} data-background={value.background} aria-label="No bracket loaded" />;
   const cutoff = snapshot.stage.formatSummary.match(/Cutoff Top (\d+)/i)?.[1];
   const qualification = snapshot.advancement || (cutoff ? `Top ${cutoff} qualify` : "");
-  const lastColumn = layout.cards.filter(card => card.column === layout.headers.length - 1);
-  const qualificationCard = lastColumn.length === 1 ? lastColumn[0] : null;
+  const qualificationCard = layout.qualifier;
   const qualificationTop = qualificationCard ? qualificationCard.y + qualificationCard.height + 34 : 0;
   const qualificationLines = Math.floor((988 - qualificationTop - 20) / 24);
   return <div className={styles.stage} data-background={value.background} style={{ "--bracket-accent": snapshot.league.primaryColor, "--bracket-accent-text": readableText(snapshot.league.primaryColor) } as CSSProperties} aria-label={`${snapshot.event.name} — ${snapshot.stage.name}`}>

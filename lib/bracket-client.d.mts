@@ -4,3 +4,4 @@ export const BRACKET_WRITER_ORIGIN: string;
 export function readBracketResource(path: string, signal?: AbortSignal, fetchImpl?: typeof fetch): Promise<unknown>;
 export function loadBracketEvent(source: BracketSource, signal?: AbortSignal, fetchImpl?: typeof fetch): Promise<BracketEventChoice>;
 export function loadBracketSnapshot(source: BracketSource, signal?: AbortSignal, fetchImpl?: typeof fetch): Promise<BracketSnapshot>;
+export function refreshBracketSnapshot(snapshot: BracketSnapshot, signal?: AbortSignal, fetchImpl?: typeof fetch): Promise<BracketSnapshot>;

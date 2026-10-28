@@ -1,29 +1,39 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { bracketEventPath, bracketSourceFromMatch, emptyBracketState, layoutBracket, parseBracketEventUrl, type BracketSnapshot, type BracketSource, type BracketState } from "../lib/bracket.mjs";
-import { loadBracketEvent, loadBracketSnapshot, readBracketResource, type BracketEventChoice } from "../lib/bracket-client.mjs";
+import { bracketEventUrl, bracketSourceFromMatch, emptyBracketState, layoutBracket, parseBracketEventUrl, type BracketSnapshot, type BracketSource, type BracketState } from "../lib/bracket.mjs";
+import { loadBracketEvent, loadBracketSnapshot, readBracketResource, refreshBracketSnapshot, type BracketEventChoice } from "../lib/bracket-client.mjs";
+import { BRACKET_CONNECTION_COPY, hubConnectionState, type HubConnectionStatus } from "../lib/hub-connection.mjs";
 import { startHubPolling } from "../lib/hub-polling.mjs";
 import { BracketStage } from "./overlays/bracket/BracketStage";
 
-type BracketStatus = { busy: boolean; error: string; lastSuccess: string };
-const idle: BracketStatus = { busy: false, error: "", lastSuccess: "" };
+const idle: HubConnectionStatus = { busy: false, error: "", lastSuccess: "", connected: false };
 const OVERLAY_URL = "http://localhost:3000/overlays/bracket";
 
 export function useBracketSync({ active, value, onSnapshot }: { active: boolean; value: BracketState; onSnapshot: (snapshot: BracketSnapshot, source: BracketSource) => void }) {
-  const [status, setStatus] = useState<BracketStatus>(idle);
+  const [status, setStatus] = useState<HubConnectionStatus>(idle);
   const poller = useRef<ReturnType<typeof startHubPolling> | null>(null);
   const success = useRef({ key: "", at: "" });
+  const accepted = useRef(value.snapshot);
   const source = value.snapshot?.source;
   const key = source ? JSON.stringify(source) : "";
+  useEffect(() => { accepted.current = value.snapshot; }, [value.snapshot]);
   useEffect(() => {
     if (success.current.key !== key) success.current = { key, at: "" };
     setStatus({ ...idle, lastSuccess: success.current.at });
     if (!active || value.hold || !key) return;
     const requestedSource: BracketSource = JSON.parse(key);
-    const current = startHubPolling({ load: (signal: AbortSignal) => loadBracketSnapshot(requestedSource, signal),
+    const current = startHubPolling({
+      load: (signal: AbortSignal) => {
+        const base = accepted.current;
+        return base && JSON.stringify(base.source) === key ? refreshBracketSnapshot(base, signal) : loadBracketSnapshot(requestedSource, signal);
+      },
       accept: (snapshot: BracketSnapshot) => onSnapshot(snapshot, requestedSource),
-      status: (next: BracketStatus) => { if (next.lastSuccess) success.current.at = next.lastSuccess; setStatus({ ...next, lastSuccess: success.current.at }); },
+      status: (next: Omit<HubConnectionStatus, "connected">) => {
+        if (next.lastSuccess) success.current.at = next.lastSuccess;
+        // A saved refresh time must not imply that a new connection is healthy yet.
+        setStatus({ ...next, connected: Boolean(next.lastSuccess), lastSuccess: success.current.at });
+      },
     });
     poller.current = current;
     return () => { current.stop(); if (poller.current === current) poller.current = null; };
@@ -31,11 +41,11 @@ export function useBracketSync({ active, value, onSnapshot }: { active: boolean;
   return { ...status, refresh: useCallback(() => poller.current?.refresh(), []) };
 }
 
-export function BracketWorkspace({ visible, enabled, value, onChange, matchId, writerStatus, status }: {
-  visible: boolean; enabled: boolean; value: BracketState; onChange: (value: BracketState) => void; matchId: string;
-  writerStatus: string; status: BracketStatus & { refresh: () => void };
+export function BracketWorkspace({ enabled, value, onChange, matchId, writerStatus, status }: {
+  enabled: boolean; value: BracketState; onChange: (value: BracketState) => void; matchId: string;
+  writerStatus: string; status: HubConnectionStatus & { refresh: () => void };
 }) {
-  const [eventUrl, setEventUrl] = useState("");
+  const [eventUrl, setEventUrl] = useState(() => value.snapshot ? bracketEventUrl(value.snapshot.source) : "");
   const [candidate, setCandidate] = useState<BracketEventChoice | null>(null);
   const [stageId, setStageId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,6 +69,8 @@ export function BracketWorkspace({ visible, enabled, value, onChange, matchId, w
     observer.observe(element); return () => observer.disconnect();
   }, []);
   const layout = layoutBracket(value);
+  const connection = hubConnectionState({ owner: enabled, reason: value.snapshot ? "" : "Choose an event and load a stage to begin.",
+    mode: value.hold ? "manual" : "live", status, hasSnapshot: Boolean(value.snapshot), copy: BRACKET_CONNECTION_COPY });
   async function perform(work: (signal: AbortSignal) => Promise<void>) {
     request.current?.abort(); const current = new AbortController(); request.current = current;
     setBusy(true); setError("");
@@ -79,7 +91,7 @@ export function BracketWorkspace({ visible, enabled, value, onChange, matchId, w
       if (!signal.aborted) onChange({ ...emptyBracketState(value.background), snapshot });
     });
   }
-  return <div hidden={!visible} className="bracket-workspace">
+  return <div className="bracket-workspace">
     <header className="section-heading"><div><span className="eyebrow">League Hub</span><h1>Brackets</h1><p>Display a published League Hub elimination bracket.</p></div></header>
     <section className="panel-card bracket-source-panel" aria-label="Bracket source">
       <h2>League Hub source</h2>
@@ -89,14 +101,14 @@ export function BracketWorkspace({ visible, enabled, value, onChange, matchId, w
           const detail = await readBracketResource(`/api/public/matches/${encodeURIComponent(matchId)}`, signal);
           const source = bracketSourceFromMatch(detail);
           await chooseEvent(source, signal);
-          if (!signal.aborted) setEventUrl(`https://hub.gamingoasis.gg${bracketEventPath(source).replace("/api/portal/leagues/", "/portal/")}`);
+          if (!signal.aborted) setEventUrl(bracketEventUrl(source));
         })}>Use Match 1 stage</button>
       </div>
       {candidate ? <div className="bracket-source-row"><label className="field"><span className="field-label">{candidate.name} · Stage</span><select aria-label="Stage" value={stageId} onChange={event => setStageId(event.target.value)} disabled={busy}><option value="">Select an elimination stage</option>{candidate.stages.map(stage => <option value={stage.id} key={stage.id}>{stage.name} · {stage.type === "single_elimination" ? "Single elimination" : "Double elimination"}</option>)}</select></label><button className="button primary" disabled={!enabled || busy || !stageId} onClick={load}>Load bracket</button></div> : null}
       {busy ? <p role="status">Loading from League Hub…</p> : null}
-      {error ? <p className="field-error" role="alert">{error} The current bracket stays on air.</p> : null}
-      <div className="hub-connection-row" data-tone={status.error ? "error" : "normal"}>
-        <p role="status"><strong>{!value.snapshot ? "No bracket loaded" : value.hold ? "Updates held" : status.error ? "Updates interrupted" : status.lastSuccess ? "Connected" : "Connecting"}</strong><span>{value.snapshot ? `${value.snapshot.event.name} · ${value.snapshot.stage.name}` : "Choose an event and load a stage to begin."}{status.error && !value.hold ? ` · ${status.error}` : ""}</span><span>{writerStatus}</span></p>
+      {error ? <p className="field-error" role="alert">{error}{value.snapshot ? " The current bracket stays on air." : ""}</p> : null}
+      <div className="hub-connection-row" data-tone={connection.tone}>
+        <p role="status"><strong>{connection.label}</strong>{value.snapshot ? <span>{value.snapshot.event.name} · {value.snapshot.stage.name}</span> : null}<span>{connection.detail}</span><span>{writerStatus}</span></p>
         {status.lastSuccess ? <span className="hub-refresh-time">Last refresh <time dateTime={status.lastSuccess}>{new Date(status.lastSuccess).toLocaleTimeString()}</time></span> : null}
       </div>
     </section>

@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readableText, resolveImagePlate } from "../../../../lib/readable-text.mjs";
+import { hubLogoSrc } from "../../../../lib/sponsor-logo-url.mjs";
 import { useStableImageSource } from "../../useStableImageSource";
 import styles from "./stats-overlay.module.css";
 
@@ -87,18 +88,6 @@ const NAME_MIN_PX = 14;
 
 export type StatsSceneBackground = "transparent" | "team-split";
 
-function localLogoUrl(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) {
-      return `http://127.0.0.1:4877${url.pathname}`;
-    }
-  } catch {
-    // Relative and manually entered logo URLs remain unchanged.
-  }
-  return value;
-}
-
 function BackgroundLogo({
   src,
   className,
@@ -106,7 +95,7 @@ function BackgroundLogo({
   src: string;
   className: string;
 }) {
-  const candidate = src ? localLogoUrl(src) : "";
+  const candidate = src ? hubLogoSrc(src) : "";
   const { displayedSource, handleDisplayedError } = useStableImageSource(candidate);
 
   return displayedSource

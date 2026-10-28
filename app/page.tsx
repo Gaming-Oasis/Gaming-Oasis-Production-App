@@ -12,7 +12,7 @@ import { migrateValorantPlaceholder } from "../lib/valorant-map-placeholder.mjs"
 import { MAP_API, mergeMapArtwork } from "../lib/valorant-map-library.mjs";
 import { prepareMapExport } from "../lib/valorant-map-export.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
-import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
+import { googleDriveFileId, hubLogoSrc } from "../lib/sponsor-logo-url.mjs";
 import {
   applyTierSeedOffset,
   buildByGroupExport,
@@ -635,15 +635,7 @@ function canonicalMapName(value: unknown) {
 function displayLogoUrl(value: string) {
   const driveId = googleDriveFileId(value);
   if (driveId) return `http://127.0.0.1:4877/api/public/map-artwork/${encodeURIComponent(driveId)}`;
-  try {
-    const url = new URL(value);
-    if (url.origin === "https://hub.gamingoasis.gg" && /^\/api\/public\/logos\/(teams|leagues)\/[0-9a-f-]{36}$/i.test(url.pathname)) {
-      return `${LOCAL_PUBLIC_ENDPOINT}${url.pathname.replace(/^\/api\/public/, "")}`;
-    }
-  } catch {
-    // Keep manual and relative logo paths unchanged.
-  }
-  return value;
+  return hubLogoSrc(value);
 }
 
 function normalizeLogoBackground(value: unknown) {
@@ -2074,6 +2066,7 @@ export default function Home() {
   const liveWriteSequenceRef = useRef(0);
   const lastSuccessfulPayloadSignatureRef = useRef("");
   const lastSuccessfulBracketFrameRef = useRef("");
+  const bracketRotationRef = useRef<ReturnType<typeof startBracketRotation> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resetModalRef = useRef<HTMLDivElement>(null);
   const resetTriggerRef = useRef<HTMLButtonElement>(null);
@@ -2121,8 +2114,14 @@ export default function Home() {
         return bracket === current.bracket ? current : { ...current, bracket };
       }),
     });
-    return () => rotation.stop();
+    bracketRotationRef.current = rotation;
+    return () => {
+      rotation.stop();
+      if (bracketRotationRef.current === rotation) bracketRotationRef.current = null;
+    };
   }, [hydrated, isPrimaryTab, state.bracket.autoRotate]);
+  // Framing, score, and Hold changes re-check the dwell; publication results do the same in the live writer.
+  useEffect(() => { bracketRotationRef.current?.update(); }, [state.bracket]);
   const hubMatch = state.general.matches[0];
   const activeHubKey = hubMatch.hubIdentity?.game === "VALORANT" ? "valorant" : "leagueOfLegends";
   const hubStatus = useHubDraftSync({
@@ -2860,6 +2859,7 @@ export default function Home() {
 
     if (livePayloadSignature === lastSuccessfulPayloadSignatureRef.current) {
       lastSuccessfulBracketFrameRef.current = bracketFramingKey(livePayload.overlays.bracket);
+      bracketRotationRef.current?.update();
       setLiveSync("synced");
       setState((current) => acknowledgePhantoms(current, revealTickets));
       return () => controller.abort();
@@ -2954,6 +2954,7 @@ export default function Home() {
             if (sequence === liveWriteSequenceRef.current) {
               lastSuccessfulPayloadSignatureRef.current = livePayloadSignature;
               lastSuccessfulBracketFrameRef.current = bracketFramingKey(livePayload.overlays.bracket);
+              bracketRotationRef.current?.update();
               setLiveSync("synced");
               setState((current) => acknowledgePhantoms(current, revealTickets));
             }
@@ -2962,6 +2963,7 @@ export default function Home() {
             if ((error as Error).name === "AbortError") return;
             if (sequence === liveWriteSequenceRef.current) {
               lastSuccessfulBracketFrameRef.current = "";
+              bracketRotationRef.current?.update();
               setState((current) => pausePhantoms(current, "Writer unavailable. Retry the pending output, then restart auto reveal."));
             }
             if (error instanceof HttpResponseError && error.terminal) {
@@ -6055,7 +6057,7 @@ export default function Home() {
           {visibleSection === "rocketLeague" ? renderRocketLeague() : null}
           {visibleSection === "valorant" ? renderValorant() : null}
           {visibleSection === "leagueOfLegends" ? renderLeagueOfLegends() : null}
-          <BracketWorkspace visible={visibleSection === "brackets"} enabled={hydrated && isPrimaryTab} value={state.bracket} onChange={changeBracket} matchId={state.general.matches[0].syncedId} writerStatus={liveSyncShortLabel(liveSync)} status={bracketStatus} />
+          {visibleSection === "brackets" ? <BracketWorkspace enabled={hydrated && isPrimaryTab} value={state.bracket} onChange={changeBracket} matchId={state.general.matches[0].syncedId} writerStatus={liveSyncShortLabel(liveSync)} status={bracketStatus} /> : null}
           {visibleSection === "sponsors" ? renderSponsors() : null}
           {visibleSection === "draw" ? renderDraw() : null}
           {visibleSection === "settings" ? renderSettings() : null}

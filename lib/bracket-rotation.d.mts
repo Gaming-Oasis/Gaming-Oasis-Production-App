@@ -10,4 +10,4 @@ export function startBracketRotation(options: {
   schedule?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
   cancel?: (timer: ReturnType<typeof setTimeout>) => void;
   now?: () => number;
-}): { stop: () => void };
+}): { update: () => void; stop: () => void };

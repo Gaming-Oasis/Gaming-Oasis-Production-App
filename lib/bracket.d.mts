@@ -8,6 +8,7 @@ export type BracketOverlayState = BracketState & { version: 1 };
 export function isBracketSource(value: unknown, stageRequired?: boolean): value is BracketSource;
 export function parseBracketEventUrl(value: string): BracketSource;
 export function bracketEventPath(source: BracketSource): string;
+export function bracketEventUrl(source: BracketSource): string;
 export function bracketStagePath(source: BracketSource): string;
 export function parseBracketProxyPath(path: string): BracketSource | null;
 export function bracketSourceFromMatch(detail: unknown): BracketSource;
@@ -19,4 +20,5 @@ export function buildBracketOverlayState(state: BracketState): BracketOverlaySta
 export function isBracketOverlayState(value: unknown): value is BracketOverlayState;
 export function acceptBracketSnapshot(state: BracketState, snapshot: BracketSnapshot, expectedSource: BracketSource): BracketState;
 export function bracketSections(snapshot: BracketSnapshot | null): { id: string; label: string }[];
-export function layoutBracket(state: BracketState): { sections: { id: string; label: string }[]; section: string; rounds: BracketRound[]; canOverview: boolean; overview: boolean; start: number; page: number; pageCount: number; cards: { match: BracketMatch; x: number; y: number; width: number; height: number; column: number }[]; headers: { x: number; width: number; label: string }[]; connectors: string[]; label: string };
+export type BracketCard = { match: BracketMatch; x: number; y: number; width: number; height: number; column: number };
+export function layoutBracket(state: BracketState): { sections: { id: string; label: string }[]; section: string; rounds: BracketRound[]; canOverview: boolean; overview: boolean; start: number; page: number; pageCount: number; cards: BracketCard[]; headers: { x: number; width: number; label: string }[]; connectors: string[]; qualifier: BracketCard | null; label: string };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { acceptBracketSnapshot, bracketEventPath, bracketSections, bracketSourceFromMatch, buildBracketOverlayState, emptyBracketState, hydrateBracketState, isBracketOverlayState, layoutBracket, normalizeBracketSnapshot, parseBracketEventUrl, parseBracketProxyPath } from "../lib/bracket.mjs";
-import { loadBracketSnapshot, readBracketResource } from "../lib/bracket-client.mjs";
+import { acceptBracketSnapshot, bracketEventPath, bracketEventUrl, bracketSections, bracketSourceFromMatch, bracketStagePath, buildBracketOverlayState, emptyBracketState, hydrateBracketState, isBracketOverlayState, layoutBracket, normalizeBracketSnapshot, parseBracketEventUrl, parseBracketProxyPath } from "../lib/bracket.mjs";
+import { loadBracketSnapshot, readBracketResource, refreshBracketSnapshot } from "../lib/bracket-client.mjs";
 import { startHubPolling } from "../lib/hub-polling.mjs";
 import { bracketFixture, doubleBracketFixture } from "./fixtures/bracket-fixture.mjs";
 
@@ -132,6 +132,37 @@ test("bounded client loads normalized event/stage data and propagates failure/ca
   await assert.rejects(readBracketResource("/test", undefined, async () => Response.json({ error: "Hub unavailable" }, { status: 502 })), /Hub unavailable/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(readBracketResource("/test", controller.signal, async (_url, options) => { options.signal.throwIfAborted(); }), /abort/i);
+});
+
+test("live refreshes request only the stage and keep the loaded league and event details", async () => {
+  const fixture = bracketFixture();
+  const loadedSnapshot = normalize(fixture);
+  fixture.workspace.rounds[0].matches[0].team1.score = 2;
+  const requests = [];
+  const refreshed = await refreshBracketSnapshot(loadedSnapshot, undefined, async url => { requests.push(url); return Response.json(fixture.workspace); });
+  assert.deepEqual(requests, [`http://127.0.0.1:4877${bracketStagePath(fixture.source)}`]);
+  assert.deepEqual(refreshed, normalize(fixture));
+  assert.equal(refreshed.rounds[0].matches[0].team1.score, 2);
+  assert.notDeepEqual(acceptBracketSnapshot(loaded(bracketFixture()), refreshed, fixture.source).snapshot, loadedSnapshot);
+});
+
+test("the qualification marker sits only under the stage's last published round", () => {
+  const lcq = layoutBracket(loaded(bracketFixture()));
+  assert.equal(lcq.qualifier?.match.id, lcq.rounds.at(-1).matches[0].id, "LCQ page ends on its cutoff round");
+  const deep = loaded(bracketFixture(128, 1));
+  assert.equal(layoutBracket(deep).headers.at(-1).label, "Round of 16");
+  assert.equal(layoutBracket(deep).qualifier, null, "a window that stops at the Round of 16 has no qualifier");
+  const final = layoutBracket({ ...deep, roundStart: 3 });
+  assert.equal(final.qualifier?.match.id, deep.snapshot.rounds.at(-1).matches[0].id);
+  const double = loaded(doubleBracketFixture());
+  for (const section of ["winners", "losers", "third_place"]) assert.equal(layoutBracket({ ...double, section }).qualifier, null, section);
+  assert.equal(layoutBracket({ ...double, section: "finals" }).qualifier?.match.id, "f12");
+});
+
+test("a loaded source restores the public event link it was read from", () => {
+  const source = bracketFixture().source;
+  assert.equal(bracketEventUrl(source), "https://hub.gamingoasis.gg/portal/sel/seasons/fall-2026/events/rocket-league");
+  assert.deepEqual(parseBracketEventUrl(bracketEventUrl(source)), { ...source, stageId: "" });
 });
 
 test("poller stops late responses on Hold/handoff, resumes immediately and backs off", async () => {

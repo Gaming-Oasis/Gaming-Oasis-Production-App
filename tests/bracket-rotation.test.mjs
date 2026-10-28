@@ -64,57 +64,78 @@ test("rotation defaults off for old drafts and its preference survives reload", 
   assert.equal(hydrateBracketState(undefined).autoRotate, false);
 });
 
-function clockedRotation() {
-  let clock = 0, pending, stopped = false;
-  const model = { enabled: true, value: loaded(bracketFixture()), publishedKey: "" };
+/** Like the page, callers run update() after framing or publication changes; only the dwell deadline is timed. */
+function clockedRotation(initial = loaded(bracketFixture())) {
+  let clock = 0, pending = null, scheduled = 0;
+  const model = { enabled: true, value: initial, publishedKey: "" };
   const advances = [];
   const rotation = startBracketRotation({ read: () => model, now: () => clock,
     advance: key => { advances.push(key); model.value = nextBracketFrame(model.value); },
-    schedule: fn => { pending = fn; return fn; }, cancel: () => { pending = null; stopped = true; } });
-  return { model, advances, rotation, acknowledge() { model.publishedKey = bracketFramingKey(model.value); },
-    tick(ms = 0) { clock += ms; const callback = pending; pending = null; callback?.(); }, get stopped() { return stopped; } };
+    schedule: (fn, ms) => { scheduled += 1; pending = { fn, at: clock + ms }; return pending; },
+    cancel: timer => { if (pending === timer) pending = null; } });
+  return { model, advances, rotation, get pending() { return pending; }, get scheduled() { return scheduled; },
+    change(value) { model.value = value; rotation.update(); },
+    acknowledge() { model.publishedKey = bracketFramingKey(model.value); rotation.update(); },
+    tick(ms) { clock += ms; while (pending && pending.at <= clock) { const { fn } = pending; pending = null; fn(); } } };
 }
 
 test("each page waits ten seconds after publication, with no catch-up during writer failures", () => {
   const clock = clockedRotation();
+  assert.equal(clock.pending, null, "nothing is timed while the first page awaits publication");
   clock.tick(30_000); assert.equal(clock.advances.length, 0);
-  clock.acknowledge(); clock.tick();
+  clock.acknowledge();
   clock.tick(9_999); assert.equal(clock.advances.length, 0);
+  assert.equal(clock.scheduled, 1, "one deadline per dwell, not a chain of polling timers that hidden tabs throttle");
   clock.tick(1); assert.equal(clock.advances.length, 1);
+  assert.equal(clock.pending, null, "the next page waits for its own publication");
   clock.tick(40_000); assert.equal(clock.advances.length, 1, "pending page must be accepted before rotating again");
-  clock.acknowledge(); clock.tick();
+  clock.acknowledge();
   clock.tick(10_000); assert.equal(clock.advances.length, 2);
-  clock.model.publishedKey = ""; clock.tick(100_000);
+  clock.acknowledge(); clock.tick(5_000);
+  clock.model.publishedKey = ""; clock.rotation.update(); clock.tick(100_000);
   assert.equal(clock.advances.length, 2);
   clock.rotation.stop();
 });
 
 test("score imports and Hold do not restart rotation; manual framing does", () => {
-  const clock = clockedRotation(); clock.acknowledge(); clock.tick();
+  const clock = clockedRotation(); clock.acknowledge();
   clock.tick(5_000);
-  clock.model.value = structuredClone(clock.model.value);
-  clock.model.value.snapshot.rounds[0].matches[0].team1.score = 2;
-  clock.model.value.hold = true;
+  const imported = structuredClone(clock.model.value);
+  imported.snapshot.rounds[0].matches[0].team1.score = 2;
+  imported.hold = true;
+  clock.change(imported);
   clock.tick(5_000); assert.equal(clock.advances.length, 1);
-  clock.model.value = { ...clock.model.value, page: 2 };
-  clock.acknowledge(); clock.tick();
+  clock.change({ ...clock.model.value, page: 2 });
+  clock.acknowledge();
   clock.tick(9_999); assert.equal(clock.advances.length, 1);
   clock.tick(1); assert.equal(clock.model.value.page, 3);
   clock.rotation.stop();
 });
 
 test("handoff, new sources, disabling rotation and teardown discard old deadlines", () => {
-  const clock = clockedRotation(); clock.acknowledge(); clock.tick();
-  clock.tick(5_000); clock.model.enabled = false; clock.tick(30_000);
+  const clock = clockedRotation(); clock.acknowledge();
+  clock.tick(5_000); clock.model.enabled = false; clock.rotation.update(); clock.tick(30_000);
   assert.equal(clock.advances.length, 0);
-  clock.model.enabled = true; clock.tick();
+  clock.model.enabled = true; clock.rotation.update();
   clock.tick(9_999); assert.equal(clock.advances.length, 0);
-  clock.model.value = { ...clock.model.value, snapshot: structuredClone(clock.model.value.snapshot) };
-  clock.model.value.snapshot.source.stageId = "22222222-2222-4222-8222-222222222222";
-  clock.tick(30_000); assert.equal(clock.advances.length, 0);
-  clock.acknowledge(); clock.tick();
-  clock.model.value.autoRotate = false; clock.tick(30_000);
+  const moved = { ...clock.model.value, snapshot: structuredClone(clock.model.value.snapshot) };
+  moved.snapshot.source.stageId = "22222222-2222-4222-8222-222222222222";
+  clock.change(moved); clock.tick(30_000); assert.equal(clock.advances.length, 0);
+  clock.acknowledge();
+  clock.change({ ...clock.model.value, autoRotate: false }); clock.tick(30_000);
   assert.equal(clock.advances.length, 0);
-  clock.rotation.stop(); assert.equal(clock.stopped, true);
+  clock.change({ ...clock.model.value, autoRotate: true }); clock.acknowledge(); clock.tick(5_000);
+  clock.rotation.stop(); assert.equal(clock.pending, null);
   clock.tick(100_000); assert.equal(clock.advances.length, 0);
+});
+
+test("an expiring deadline re-reads framing, and a frame that cannot move starts another dwell", () => {
+  const clock = clockedRotation(); clock.acknowledge();
+  clock.model.value = { ...clock.model.value, page: 2 };
+  clock.tick(10_000); assert.equal(clock.advances.length, 0, "an unpublished manual frame is never advanced");
+  const single = clockedRotation(loaded(bracketFixture(4, 1))); single.acknowledge();
+  single.tick(10_000); single.tick(10_000);
+  assert.equal(single.advances.length, 2);
+  assert.notEqual(single.pending, null);
+  single.rotation.stop();
 });

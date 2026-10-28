@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { readBoundedJson } from "../../lib/bounded-json.mjs";
 
 type PollingJsonOptions<T> = {
   endpoint: string;
@@ -45,33 +46,11 @@ export function usePollingJson<T>({
           return;
         }
         if (response.status !== 204 && response.ok) {
-          const declaredLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
-          if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
-            requestController.abort();
-            throw new Error("Overlay response is too large");
-          }
-          const chunks: Uint8Array[] = [];
-          let receivedBytes = 0;
-          if (response.body) {
-            const reader = response.body.getReader();
-            while (true) {
-              const { done, value: chunk } = await reader.read();
-              if (done) break;
-              receivedBytes += chunk.byteLength;
-              if (receivedBytes > maximumBytes) {
-                requestController.abort();
-                throw new Error("Overlay response is too large");
-              }
-              chunks.push(chunk);
-            }
-          }
-          const bytes = new Uint8Array(receivedBytes);
-          let offset = 0;
-          for (const chunk of chunks) {
-            bytes.set(chunk, offset);
-            offset += chunk.byteLength;
-          }
-          const candidate: unknown = JSON.parse(new TextDecoder().decode(bytes));
+          const candidate = await readBoundedJson(response, {
+            maximumBytes,
+            abort: () => requestController.abort(),
+            message: "Overlay response is too large",
+          });
           if (active && validate(candidate)) {
             const next = normalize ? normalize(candidate) : candidate;
             const serialized = JSON.stringify(next);
