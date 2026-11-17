@@ -24,6 +24,7 @@ export function emptyHubSource(): HubSource;
 export function resetHubSource(match: HubMatch, key: HubGameKey): HubSource;
 export function hubEligibility(match: HubMatch, game: string): string;
 export function normalizeHubCollection(payload: unknown, match: HubMatch): HubCollection;
+export function leagueFlipSource(input: { blueTeam: HubTeam | string; sideControl: "draft" | "manual" | string; hubLive: boolean; sidesReady: boolean }): string;
 export function selectHubSession(collection: HubCollection | null | undefined, gameNumber: number): HubSession | null;
 export function hubLeagueResultMetadata(collection: HubCollection | null | undefined, gameNumber: number, onAirBlue?: HubTeam | "" | null): { bluePicks: string[]; redPicks: string[]; blueTeam: HubTeam; firstPickTeam: HubTeam | undefined } | null;
 export function hydrateHubSource(value: unknown): HubSource;

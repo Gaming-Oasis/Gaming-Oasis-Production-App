@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, normalizeHubCollection, projectHubGame, reconcileHubMatch, resetHubSource, selectHubSession, setHubMode } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, clearHubGame, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, leagueFlipSource, normalizeHubCollection, projectHubGame, reconcileHubMatch, resetHubSource, selectHubSession, setHubMode } from "../lib/hub-draft.mjs";
 import { buildLeagueOverlayState, createLeagueDraftState, draftSlots } from "../lib/league-of-legends.mjs";
 import { leagueFearlessChampions } from "../lib/league-overlay.mjs";
 import { buildValorantFields, getValorantCurrentSides } from "../lib/valorant.mjs";
@@ -174,6 +174,22 @@ test("pending Hub sides keep the current Blue assignment and do not infer it fro
   assert.equal(held.blueTeam, "team2");
   assert.equal(held.firstPickTeam, "team2");
   assert.equal(held.draft.firstPickSide, "ORDER");
+});
+
+test("League Flip Sides indicator says whether a flip came from the producer, Hub, or the Draft tab", () => {
+  const imported = acceptHubCollection(league(), "leagueOfLegends", collections[0]);
+  const source = (game) => leagueFlipSource({ blueTeam: game.blueTeam, sideControl: game.sideControl, hubLive: game.hubDraft.mode === "live", sidesReady: Boolean(game.hubPresentation?.sidesReady) });
+  assert.equal(source(imported), "Not flipped");
+  const manual = projectHubGame({ ...imported, sideControl: "manual", blueTeam: "team2" }, "leagueOfLegends");
+  assert.equal(source(manual), "Flipped manually");
+  const collection = structuredClone(collections[0]);
+  collection.sessions.find((session) => session.gameIndex === 1).blueTeam = "team2";
+  const hub = acceptHubCollection(league(), "leagueOfLegends", collection);
+  assert.equal(hub.sideControl, "draft");
+  assert.equal(source(hub), "Flipped by League Hub side selection");
+  assert.equal(leagueFlipSource({ blueTeam: "team2", sideControl: "draft", hubLive: true, sidesReady: false }), "Flipped from last game. Waiting for Hub side selection");
+  assert.equal(leagueFlipSource({ blueTeam: "team2", sideControl: "draft", hubLive: false, sidesReady: false }), "Flipped by Draft tab side selection");
+  assert.equal(leagueFlipSource({ blueTeam: "team2", sideControl: "manual", hubLive: false, sidesReady: false }), "Flipped manually");
 });
 
 test("producer Flip Sides override survives Hub polls until the next Hub side selection", () => {
