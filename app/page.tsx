@@ -5448,10 +5448,12 @@ export default function Home() {
     const hubCollection = hubLive ? state.leagueOfLegends.hubDraft.collection : null;
     const hubSideSession = selectHubSession(hubCollection, state.leagueOfLegends.currentGame);
     // Phantom mode publishes its staged sides until corrections are applied, so the scene can trail the tool.
-    const onAirBlueKey = phantomBroadcast(state.leagueOfLegends, "leagueOfLegends", matchKey).blueTeam;
+    // Read the Blue team from the payload actually sent to the writer.
+    const onAirBlueKey = leagueOverlay.blueTeamKey;
     const sidesOnAir = onAirBlueKey === blueKey;
+    const sidesReady = leagueSidesReady(state.leagueOfLegends);
     const sideSource = leagueSideStatus({
-      hubLive, sideControl, sidesReady: leagueSidesReady(state.leagueOfLegends), hubRequired: hubCollection?.required, hubHasSession: Boolean(hubSideSession),
+      hubLive, sideControl, sidesReady, hubRequired: hubCollection?.required, hubHasSession: Boolean(hubSideSession),
       hubBlueTeam: hubSideSession?.blueTeam ?? null, blueTeam: blueKey, onAirBlueTeam: onAirBlueKey, firstPickTeam: state.leagueOfLegends.firstPickTeam,
       gameNumber: state.leagueOfLegends.currentGame, teamName: leagueTeamName,
     });
@@ -5466,7 +5468,7 @@ export default function Home() {
             const pickOrder = firstPickKey ? (firstPickKey === teamKey ? "First pick" : "Second pick") : "Pick order not set";
             return (
               <div className="league-side-team" key={side}>
-                <span>{side === "blue" ? "Blue side" : "Red side"}{sidesOnAir ? (side === "blue" ? " · Left on Pick/Ban" : " · Right on Pick/Ban") : ""}</span>
+                <span>{side === "blue" ? "Blue side" : "Red side"}{sidesReady ? "" : " (not confirmed)"}{sidesOnAir ? (side === "blue" ? " · Left on Pick/Ban" : " · Right on Pick/Ban") : ""}</span>
                 <strong>{leagueTeamName(teamKey)}</strong>
                 <small>{teamKey === "team1" ? "Team 1" : "Team 2"} · {pickOrder}</small>
               </div>

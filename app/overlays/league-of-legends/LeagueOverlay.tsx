@@ -19,6 +19,8 @@ const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/league-of-legends";
 const ASSET_ENDPOINT = "http://127.0.0.1:4877/api/public/league-of-legends/assets";
 const ICON_ROOT = "/league-of-legends-overlay";
 const SIDE_TAB_WIDTH = 340;
+// Left-to-right mark, written as a code point so the invisible character never sits in the source.
+const LRM = String.fromCharCode(0x200E);
 
 type Rect = number[];
 function box(rect: Rect, origin: Rect = [0, 0]): CSSProperties {
@@ -194,7 +196,7 @@ function SideTabName({ name }: { name: string }) {
     return () => { active = false; };
   }, [name]);
   // Left-to-right marks keep trailing punctuation in place when the cut name overflows right-to-left.
-  return <strong ref={ref} data-cut={cut}>{"‎" + name + "‎"}</strong>;
+  return <strong ref={ref} data-cut={cut}>{LRM + name + LRM}</strong>;
 }
 
 function FearlessStrip({ data }: { data: OverlayData }) {
