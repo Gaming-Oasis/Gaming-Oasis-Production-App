@@ -178,18 +178,36 @@ test("pending Hub sides keep the current Blue assignment and do not infer it fro
 
 test("League Flip Sides indicator says whether a flip came from the producer, Hub, or the Draft tab", () => {
   const imported = acceptHubCollection(league(), "leagueOfLegends", collections[0]);
-  const source = (game) => leagueFlipSource({ blueTeam: game.blueTeam, sideControl: game.sideControl, hubLive: game.hubDraft.mode === "live", sidesReady: Boolean(game.hubPresentation?.sidesReady) });
-  assert.equal(source(imported), "Not flipped");
-  const manual = projectHubGame({ ...imported, sideControl: "manual", blueTeam: "team2" }, "leagueOfLegends");
-  assert.equal(source(manual), "Flipped manually");
+  assert.deepEqual(leagueFlipSource(imported), { flipped: false, source: "hub" });
+  const flipped = projectHubGame({ ...imported, sideControl: "manual", blueTeam: "team2" }, "leagueOfLegends");
+  assert.deepEqual(leagueFlipSource(flipped), { flipped: true, source: "override" });
+
+  // Hub flips; the producer turning Flip off is an override, and Manual alone only freezes Hub's order.
   const collection = structuredClone(collections[0]);
   collection.sessions.find((session) => session.gameIndex === 1).blueTeam = "team2";
   const hub = acceptHubCollection(league(), "leagueOfLegends", collection);
   assert.equal(hub.sideControl, "draft");
-  assert.equal(source(hub), "Flipped by League Hub side selection");
-  assert.equal(leagueFlipSource({ blueTeam: "team2", sideControl: "draft", hubLive: true, sidesReady: false }), "Flipped from last game. Waiting for Hub side selection");
-  assert.equal(leagueFlipSource({ blueTeam: "team2", sideControl: "draft", hubLive: false, sidesReady: false }), "Flipped by Draft tab side selection");
-  assert.equal(leagueFlipSource({ blueTeam: "team2", sideControl: "manual", hubLive: false, sidesReady: false }), "Flipped manually");
+  assert.deepEqual(leagueFlipSource(hub), { flipped: true, source: "hub" });
+  const unflipped = projectHubGame({ ...hub, sideControl: "manual", blueTeam: "team1" }, "leagueOfLegends");
+  assert.deepEqual(leagueFlipSource(unflipped), { flipped: false, source: "override" });
+  const frozen = projectHubGame({ ...hub, sideControl: "manual" }, "leagueOfLegends");
+  assert.deepEqual(leagueFlipSource(frozen), { flipped: true, source: "hub" });
+
+  // A manual flip carried into a Hub game with no side selection yet is pending, not Hub.
+  const game1 = projectHubGame({ ...acceptHubCollection(league(), "leagueOfLegends", collections[3]), sideControl: "manual", blueTeam: "team2" }, "leagueOfLegends");
+  const game2 = projectHubGame({ ...game1, confirmedGames: [{ gameNumber: 1, winner: "team1" }] }, "leagueOfLegends");
+  assert.equal(game2.currentGame, 2);
+  assert.equal(game2.sideControl, "draft");
+  assert.equal(game2.hubPresentation.sidesReady, false);
+  assert.deepEqual(leagueFlipSource(game2), { flipped: true, source: "pending" });
+
+  // A Draft tab flip stays Draft tab with Hub off, and is pending (not "last game") once Hub goes live without sides.
+  const off = setHubMode({ ...league(), sideControl: "draft", blueTeam: "team2" }, "leagueOfLegends", "manual", "demo-match-league");
+  assert.deepEqual(leagueFlipSource(off), { flipped: true, source: "draft" });
+  assert.deepEqual(leagueFlipSource({ ...off, sideControl: "manual" }), { flipped: true, source: "manual" });
+  const live = setHubMode(off, "leagueOfLegends", "live", "another-match");
+  assert.equal(live.hubDraft.collection, null);
+  assert.deepEqual(leagueFlipSource(live), { flipped: true, source: "pending" });
 });
 
 test("producer Flip Sides override survives Hub polls until the next Hub side selection", () => {

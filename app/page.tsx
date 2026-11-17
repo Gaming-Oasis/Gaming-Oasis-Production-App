@@ -93,7 +93,7 @@ import { applyProductionDefaults, matchesProductionDefaults } from "../lib/produ
 import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyMatchLookupResult } from "../lib/match-sync.mjs";
 import { HubDraftControls, useHubDraftSync } from "./HubDraftControls";
-import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, leagueFlipSource, projectHubGame, reconcileHubMatch, resetHubSource, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, leagueFlipSource, projectHubGame, reconcileHubMatch, resetHubSource, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource, type LeagueFlipSource } from "../lib/hub-draft.mjs";
 import {
   CASTER_PRESET_LIMIT,
   findCasterPreset,
@@ -1821,26 +1821,35 @@ function Field({
   );
 }
 
+function flipSourceLabel({ flipped, source }: { flipped: boolean; source: LeagueFlipSource }) {
+  if (source === "override") return flipped ? "Flipped manually. Overriding League Hub side selection" : "Not flipped manually. Overriding League Hub side selection";
+  if (!flipped) return "Not flipped";
+  if (source === "hub") return "Flipped by League Hub side selection";
+  if (source === "pending") return "Flipped. Waiting for Hub side selection";
+  if (source === "draft") return "Flipped by Draft tab side selection";
+  return "Flipped manually";
+}
+
 function GameFlipSidesControl({
   gameName,
   checked,
   onChange,
   disabled = false,
-  source,
+  source = "manual",
 }: {
   gameName: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   /** Who set the current side order. Only League can flip automatically; other games are always manual. */
-  source?: string;
+  source?: LeagueFlipSource;
 }) {
   return (
     <div className="valorant-toggle-row">
       <div>
         <strong>Flip Sides</strong>
         <p>Swap Team 1 and Team 2 across the scoreboard and live graphics. Saved results stay in Team 1/Team 2 order.</p>
-        <p className={`flip-source ${checked ? "flipped" : ""}`} role="status" aria-label={`${gameName} flip source`}>{source ?? (checked ? "Flipped manually" : "Not flipped")}</p>
+        <p className={`flip-source ${checked ? "flipped" : ""}`} role="status">{flipSourceLabel({ flipped: checked, source })}</p>
       </div>
       <label className="switch large">
         <input aria-label={`Flip ${gameName} team sides`} type="checkbox" disabled={disabled} checked={checked} onChange={(event) => onChange(event.target.checked)} />
@@ -5695,7 +5704,7 @@ export default function Home() {
                   <label className="field"><span className="field-label">Side control</span><select value={state.leagueOfLegends.sideControl} onChange={(event) => updateLeagueSideConfig({ sideControl: event.target.value as LeagueOfLegends["sideControl"] })}><option value="draft">Draft tab (default)</option><option value="manual">Manual — Flip Sides</option></select><span className="field-hint">{hubLive ? (sideControl === "manual" ? "Flip Sides is overriding Hub for this game. Choose Draft tab to follow Hub side selection again." : "Sides follow League Hub side selection. Flip Sides overrides this game.") : (sideControl === "draft" ? "Sides follow the Draft tab each game." : "Flip Sides sets sides; saves still set pick order.")}</span></label>
                 </div>
                 <div className="valorant-toggle-list">
-                  <GameFlipSidesControl gameName="League of Legends" disabled={!hubLive && (state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0)} checked={state.leagueOfLegends.blueTeam === "team2"} source={leagueFlipSource({ blueTeam: state.leagueOfLegends.blueTeam, sideControl, hubLive, sidesReady: Boolean(state.leagueOfLegends.hubPresentation?.sidesReady) })} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1", ...(hubLive ? { sideControl: "manual" as const } : {}) })} />
+                  <GameFlipSidesControl gameName="League of Legends" disabled={!hubLive && (state.leagueOfLegends.sideControl === "draft" || state.leagueOfLegends.draft.currentStep > 0)} checked={state.leagueOfLegends.blueTeam === "team2"} source={leagueFlipSource(state.leagueOfLegends).source} onChange={(checked) => updateLeagueSideConfig({ blueTeam: checked ? "team2" : "team1", ...(hubLive ? { sideControl: "manual" as const } : {}) })} />
                   <GameAutoAcceptControl gameName="League of Legends" locked={hubLive} checked={!hubLive && state.leagueOfLegends.autoAcceptLiveResults} onChange={(checked) => updateLeagueOfLegends({ autoAcceptLiveResults: checked })} />
                   <p className="field-hint" role="status">{leagueSelectionSummary}</p>
                 </div>

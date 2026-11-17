@@ -2554,8 +2554,9 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/<GameAutoAcceptControl /g) ?? []).length, 2);
   assert.doesNotMatch(page, /<GameAutoAcceptControl gameName="VALORANT"/);
   assert.equal((page.match(/<GameFlipSidesControl /g) ?? []).length, 3);
-  assert.match(page, /role="status" aria-label=\{`\$\{gameName\} flip source`\}>\{source \?\? \(checked \? "Flipped manually" : "Not flipped"\)\}/);
-  assert.match(page, /<GameFlipSidesControl gameName="League of Legends"[^\n]*source=\{leagueFlipSource\(\{ blueTeam: state\.leagueOfLegends\.blueTeam, sideControl, hubLive, sidesReady:/);
+  assert.match(page, /<p className=\{`flip-source \$\{checked \? "flipped" : ""\}`\} role="status">\{flipSourceLabel\(\{ flipped: checked, source \}\)\}<\/p>/);
+  assert.match(page, /source === "override"\) return flipped \? "Flipped manually\. Overriding League Hub side selection" : "Not flipped manually\. Overriding League Hub side selection"/);
+  assert.match(page, /<GameFlipSidesControl gameName="League of Legends"[^\n]*source=\{leagueFlipSource\(state\.leagueOfLegends\)\.source\}/);
   assert.doesNotMatch(page, /<GameFlipSidesControl gameName="(VALORANT|Rocket League)"[^\n]*source=/);
   assert.equal((page.match(/<GameLiveMatchIndicators /g) ?? []).length, 3);
   assert.match(page, /<h2>Live Match Indicators<\/h2>/);
