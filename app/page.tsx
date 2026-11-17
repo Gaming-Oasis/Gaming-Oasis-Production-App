@@ -12,7 +12,7 @@ import { migrateValorantPlaceholder } from "../lib/valorant-map-placeholder.mjs"
 import { MAP_API, mergeMapArtwork } from "../lib/valorant-map-library.mjs";
 import { prepareMapExport } from "../lib/valorant-map-export.mjs";
 import { shortTeamName, TEAM_NAME_LIMIT } from "../lib/team-name.mjs";
-import { googleDriveFileId, hubLogoSrc } from "../lib/sponsor-logo-url.mjs";
+import { googleDriveFileId, hubLogoSrc, normalizeLogoReference } from "../lib/sponsor-logo-url.mjs";
 import {
   applyTierSeedOffset,
   buildByGroupExport,
@@ -1305,7 +1305,7 @@ function resolveTeam(team: Team) {
   return {
     name: team.overrides.name.trim() || productionSourceName,
     standing: team.overrides.standing.trim() || selectedStanding,
-    logo: team.overrides.logo.trim() || team.logo.trim(),
+    logo: normalizeLogoReference(team.overrides.logo) || team.logo.trim(),
     color: selectedTeamColor(team),
     logoBackground: customLogoBackground || normalizeLogoBackground(team.logoBackground) || IMAGE_PLATE_LIGHT,
   };
@@ -1316,7 +1316,7 @@ function resolveLeague(league: MatchLeague) {
   const sourceSecondaryColor = normalizeProductionColor(league.secondaryColor) || "#47213F";
   return {
     name: league.overrides.name.trim() || league.name.trim(),
-    logo: league.overrides.logo.trim() || league.logo.trim(),
+    logo: normalizeLogoReference(league.overrides.logo) || league.logo.trim(),
     primaryColor: normalizeHexColor(league.overrides.primaryColor) || sourcePrimaryColor,
     secondaryColor: normalizeHexColor(league.overrides.secondaryColor) || sourceSecondaryColor,
     eventName: league.overrides.eventName.trim() || league.eventName.trim(),
@@ -1504,7 +1504,7 @@ function valorantSideLabel(side: string) {
 }
 
 function resolveRegionalLogo(general: GeneralInfo) {
-  const override = general.podcastIndicatorLogo.trim();
+  const override = normalizeLogoReference(general.podcastIndicatorLogo);
   if (override) return override;
   const leagueLogo = resolveLeague(general.matches[0].league).logo.trim();
   if (leagueLogo) return leagueLogo;
@@ -4628,7 +4628,7 @@ export default function Home() {
                           <div className="form-grid two override-grid">
                             <Field label="Name override" value={team.overrides.name} onChange={(value) => updateTeamOverride(matchIndex, teamKey, { name: value })} maxLength={TEAM_NAME_LIMIT} placeholder={nameNeedsOverride ? `Override required — maximum ${TEAM_NAME_LIMIT} characters` : productionSourceName || "Team name"} attention={nameNeedsOverride ? `Override required: final name is ${resolved.name.trim().length} characters; maximum is ${TEAM_NAME_LIMIT}.` : undefined} />
                             <Field label="Standing override" value={team.overrides.standing} onChange={(value) => updateTeamOverride(matchIndex, teamKey, { standing: value })} placeholder={resolved.standing || "3rd or 0-1"} />
-                            <div className="wide-field"><Field label="Logo URL override" value={team.overrides.logo} onChange={(value) => updateTeamOverride(matchIndex, teamKey, { logo: value })} placeholder={team.logo || "https://..."} /></div>
+                            <div className="wide-field"><Field label="Logo URL override" value={team.overrides.logo} onChange={(value) => updateTeamOverride(matchIndex, teamKey, { logo: value })} placeholder={team.logo || "https://... or C:\\Logos\\team.png"} hint="Paste a web link or a file path on this PC." /></div>
                           </div>
                           <div className="override-field-group">
                             <span className="field-label" id={outputColorLabelId}>Output color</span>
@@ -4684,7 +4684,7 @@ export default function Home() {
                     <div className="form-grid two override-grid">
                       <Field label="League name override" value={league.overrides.name} onChange={(value) => updateLeagueOverride(matchIndex, { name: value })} placeholder={league.name || "League name"} />
                       <Field label="Event name override" value={league.overrides.eventName} onChange={(value) => updateLeagueOverride(matchIndex, { eventName: value })} placeholder={league.eventName || "Event name"} />
-                      <div className="wide-field"><Field label="League logo URL override" value={league.overrides.logo} onChange={(value) => updateLeagueOverride(matchIndex, { logo: value })} placeholder={league.logo || "https://..."} /></div>
+                      <div className="wide-field"><Field label="League logo URL override" value={league.overrides.logo} onChange={(value) => updateLeagueOverride(matchIndex, { logo: value })} placeholder={league.logo || "https://... or C:\\Logos\\league.png"} hint="Paste a web link or a file path on this PC." /></div>
                     </div>
                     <div className="form-grid two color-override-grid">
                       <label className="field">

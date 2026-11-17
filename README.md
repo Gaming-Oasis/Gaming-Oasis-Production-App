@@ -121,6 +121,8 @@ No production credentials or configurable API settings are required. The respons
 
 The local writer proxies the match response and Hub-hosted logo previews because the production interface runs on localhost while the public League Hub endpoints are hosted at `hub.gamingoasis.gg`. Exported JSON keeps the original public logo URL.
 
+**Logo URL override** and **League logo URL override** accept either a web link or a PNG, JPG, GIF, or BMP file on this PC: `C:\Logos\team.png`, a quoted path from Windows **Copy as path**, a `file:///` link, or a `\\server\share\team.png` network path. The path is written to `FinalOutput.json` with forward slashes so vMix title image fields can open it. The local writer serves the file to the tool preview and browser overlays, only for pages loaded from `localhost:3000` or `127.0.0.1:3000`. The file must stay at that path for the show.
+
 ## League Hub bracket browser source
 
 Open **Brackets**, paste a public League Hub event link, and select **Find stages**. Choose a single- or double-elimination stage and select **Load bracket**. **Use Match 1 stage** finds the synced Match 1's event and stage; select **Load bracket** to display it. The bracket stays independent of subsequent Match 1 changes. A failed load retains the current graphic.
