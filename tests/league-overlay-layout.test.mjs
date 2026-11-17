@@ -79,6 +79,19 @@ test("League scoreboard replaces the center league logo with VS", async () => {
   assert.match(liveOverlay, /value="VS" rect=\{centered\([^\n]*topCenter\)\}[^>]*label="Versus"/);
 });
 
+test("League scoreboard names each team between Towers and Kills, keeping gold in the bottom row", async () => {
+  const source = await readFile(new URL("../app/overlays/league-of-legends/LeagueOverlay.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/overlays/league-of-legends/league-overlay.module.css", import.meta.url), "utf8");
+  const liveOverlay = source.slice(source.indexOf("export function LiveOverlay"), source.indexOf("export function LeagueOverlayFrame"));
+  // The name box mirrors with its team and stays clear of the tower group (ends at 418) and the kill space (starts at 540).
+  assert.match(liveOverlay, /const nameRect = \[statGroupX\(424, 110\), 34, 110, 29\];/);
+  assert.match(liveOverlay, /<div style=\{\{ color: readableText\(team\.color\) \}\}>[\s\S]{0,400}<div className=\{styles\.scoreName\} style=\{box\(nameRect\)\}[^>]*><FitSquadName name=\{team\.name\} maxPx=\{15\} minPx=\{9\} \/><\/div>/);
+  assert.match(liveOverlay, /const goldX = statGroupX\(442, 56\);/);
+  assert.match(liveOverlay, /name="score-gold" rect=\{centered\(\[goldX, 0, 13, 12\], bottomCenter\)\}/);
+  assert.doesNotMatch(liveOverlay, /score-gold[^\n]*topCenter/);
+  assert.match(css, /\.scoreName strong\[data-cut="true"\] \{ direction: rtl; text-overflow: ellipsis; \}/);
+});
+
 test("League Pick/Ban sponsor uses the shared overlay card treatment", async () => {
   const component = await readFile(new URL("../app/overlays/league-of-legends/LeagueOverlay.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/overlays/league-of-legends/league-overlay.module.css", import.meta.url), "utf8");

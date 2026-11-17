@@ -80,6 +80,10 @@
 .translucentPlate { background: rgb(23 23 23 / 0.8); }
 .scoreLogo { display: grid; place-items: center; padding: 6px; overflow: hidden; background: #171717;  }
 .scoreLogo .fallback { padding: 0; font-size: 10px; line-height: 1.1; }
+/* Team names fill the unused source gold slot; they inherit the readable color of their team fill. */
+.scoreName { display: flex; align-items: center; pointer-events: none; }
+.scoreName strong { display: block; width: 100%; overflow: hidden; white-space: nowrap; font-weight: 700; line-height: 1.15; text-align: center; }
+.scoreName strong[data-cut="true"] { direction: rtl; text-overflow: ellipsis; }
 .buffTab { background: #171717; color: #FFFFFF; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px)); animation: buffTabEnter 280ms cubic-bezier(.2, .7, .2, 1) both; }
 @keyframes buffTabEnter {
   from { opacity: 0; transform: translateY(-8px); }
