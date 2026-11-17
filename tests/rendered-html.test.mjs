@@ -518,7 +518,7 @@ test("server-renders only the three supported League of Legends browser sources"
   assert.match(component, /className=\{styles\.ban\} style=\{\{ \.\.\.box\(art\.bans\[index\]\), "--pick-accent": team\.color/);
   // Blue renders on the left half and Red on the right; each ban plate names its side and team.
   assert.match(component, /side === "blue" \? art\.banPlate\[0\] \+ art\.banPlate\[2\] : art\.banPlate\[0\] - SIDE_TAB_WIDTH/);
-  assert.match(component, /data\.sideLabels !== false \? <div className=\{styles\.sideTab\}[\s\S]{0,200}\{side === "blue" \? "Blue side" : "Red side"\}[\s\S]{0,80}<SideTabName name=\{team\.name\} \/>/);
+  assert.match(component, /data\.sideLabels !== false \? <div className=\{styles\.sideTab\}[\s\S]{0,200}\{side === "blue" \? "Blue side" : "Red side"\}[\s\S]{0,80}<FitSquadName name=\{team\.name\} \/>/);
   assert.match(css, /\.sideTab \{[^}]*background: #171717/);
   assert.match(css, /\.sideTab strong\[data-cut="true"\] \{ direction: rtl; text-overflow: ellipsis; \}/);
   assert.match(css, /\.pick\[data-active="true"\]::after, \.ban\[data-active="true"\]::after \{[^}]*z-index: 3;[^}]*border: 4px solid var\(--pick-accent\);[^}]*animation: draftActiveSelectionBorder 3s/);

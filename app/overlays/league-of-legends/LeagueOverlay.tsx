@@ -173,8 +173,8 @@ function SeriesIndicators({ team, bestOf, side, scene }: { team: VsOverlayTeam; 
   </div>;
 }
 
-/** Shrinks the name to fit its side tab. A name still too wide at the minimum size is cut from its start, so the squad letter that tells two teams apart stays visible. */
-function SideTabName({ name }: { name: string }) {
+/** Shrinks the name to fit its box. A name still too wide at the minimum size is cut from its start, so the squad letter that tells two teams apart stays visible. */
+function FitSquadName({ name, maxPx = 24, minPx = 13 }: { name: string; maxPx?: number; minPx?: number }) {
   const ref = useRef<HTMLElement>(null);
   const [cut, setCut] = useState(false);
   useLayoutEffect(() => {
@@ -186,15 +186,15 @@ function SideTabName({ name }: { name: string }) {
     const tooWide = () => { range.selectNodeContents(el); return range.getBoundingClientRect().width > el.getBoundingClientRect().width; };
     const fit = () => {
       if (!active) return;
-      let size = 24;
+      let size = maxPx;
       el.style.fontSize = size + "px";
-      while (size > 13 && tooWide()) el.style.fontSize = --size + "px";
+      while (size > minPx && tooWide()) el.style.fontSize = --size + "px";
       setCut(tooWide());
     };
     fit();
     void document.fonts.ready.then(fit);
     return () => { active = false; };
-  }, [name]);
+  }, [name, maxPx, minPx]);
   // Left-to-right marks keep trailing punctuation in place when the cut name overflows right-to-left.
   return <strong ref={ref} data-cut={cut}>{LRM + name + LRM}</strong>;
 }
@@ -243,7 +243,7 @@ export function DraftOverlay({ data }: { data: OverlayData }) {
       return <section key={side} className={styles.draftSide} aria-label={team.name + " " + side + " side picks and bans"}>
         {data.sideLabels !== false ? <div className={styles.sideTab} style={{ ...box(sideTab), "--pick-accent": team.color } as CSSProperties} data-side={side}>
           <span>{side === "blue" ? "Blue side" : "Red side"}</span>
-          <SideTabName name={team.name} />
+          <FitSquadName name={team.name} />
         </div> : null}
         {picks.map((champion: string, slot: number) => {
           const card = art.picks[slot];
@@ -326,7 +326,10 @@ export function LiveOverlay({ data, available }: { data: OverlayData; available:
           const midpoint = art.main[0] + art.main[2] / 2;
           const statGroupX = (left: number, width: number) => side ? midpoint * 2 - left - width : left;
           const towerX = statGroupX(374, 44);
-          const goldX = statGroupX(452, 74);
+          // Team names take the source gold slot between Towers and Kills.
+          const nameRect = [statGroupX(424, 110), 34, 110, 29];
+          // Gold, if it gets a source, sits in the bottom-row gap between Baron and Dragons.
+          const goldX = statGroupX(442, 56);
           // The source extraction names these inhibitor slots; the artwork's
           // far-corner icon is the Grub counter used by this broadcast layout.
           const grubs = art.inhibitors[side];
@@ -352,12 +355,13 @@ export function LiveOverlay({ data, available }: { data: OverlayData; available:
             <div style={{ color: readableText(team.color) }}>
               <SourceIcon name="score-tower" rect={centered([towerX, 0, 14, 19], topCenter)} opacity={0.8} />
               <SourceText value={stat("towers", source)} rect={centered([towerX + 20, 0, 24, 14], topCenter)} label={team.name + " towers: " + stat("towers", source)} />
-              {settings.goldSource === "api" ? <>
-              <SourceIcon name="score-gold" rect={centered([goldX, 0, 18, 16], topCenter)} opacity={0.8} />
-              <SourceText value={available ? 0 : "—"} rect={centered([goldX + 24, 0, 50, 14], topCenter)} label={team.name + " gold unavailable"} />
-              </> : null}
+              <div className={styles.scoreName} style={box(nameRect)} data-side={side ? "red" : "blue"}><FitSquadName name={team.name} maxPx={15} minPx={9} /></div>
               <SourceText value={kills(source)} rect={centered(killSpace, topCenter)} fontSize={20 * 1.863961942138289} align={side ? "start" : "end"} label={team.name + " kills: " + kills(source)} />
             </div>
+            {settings.goldSource === "api" ? <>
+              <SourceIcon name="score-gold" rect={centered([goldX, 0, 13, 12], bottomCenter)} opacity={0.8} />
+              <SourceText value={available ? 0 : "—"} rect={centered([goldX + 16, 0, 40, 11], bottomCenter)} fontSize={20 * 0.7648273045397512} label={team.name + " gold unavailable"} />
+            </> : null}
             <SourceIcon name="score-inhibitor" rect={centered(grubs, bottomCenter)} />
             <SourceText value={stat("grubs", source)} rect={centered([grubValue[0], 0, 15, grubValue[3]], bottomCenter)} align="center" fontSize={20 * 0.7648273045397512} label={team.name + " Void Grubs taken: " + stat("grubs", source)} />
             <span className={baronActive ? styles.baronActive : undefined}><SourceIcon name="score-baron" rect={centered(baron, bottomCenter)} /></span>
