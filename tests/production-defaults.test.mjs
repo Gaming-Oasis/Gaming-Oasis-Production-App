@@ -45,6 +45,9 @@ test("presets update all production controls while preserving show data and manu
   assert.equal(matchesProductionDefaults(conference, false), false);
   assert.equal(matchesProductionDefaults(reloaded, false), false);
   assert.equal(standard.leagueOfLegends.vsScreenEnabled, true);
+  // Pick/Ban side labels are part of the production look: defaults restore them and report a hidden switch.
+  assert.equal(standard.leagueOfLegends.sideLabelsEnabled, true);
+  assert.equal(matchesProductionDefaults({ ...standard, leagueOfLegends: { ...standard.leagueOfLegends, sideLabelsEnabled: false } }, false), false);
   assert.equal(standard.rocketLeague.statsSceneBackground, "team-split");
   assert.equal(standard.leagueOfLegends.scoreboard.hideCountdowns, false);
   assert.equal(standard.leagueOfLegends.scoreboard.hideScoreboard, false);

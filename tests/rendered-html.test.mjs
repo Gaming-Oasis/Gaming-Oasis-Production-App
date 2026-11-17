@@ -476,8 +476,12 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /Sides follow the Draft tab each game\./);
   assert.match(page, /Flip Sides sets sides; saves still set pick order\./);
   assert.match(page, /Sides follow League Hub side selection\. Flip Sides overrides this game\./);
-  assert.match(page, /Waiting for Hub side selection\./);
+  // Side status copy lives in lib/league-of-legends.mjs (leagueSideStatus) with behavioural tests.
+  assert.match(page, /const sideSource = leagueSideStatus\(\{/);
   assert.doesNotMatch(page, /Waiting for Hub sides and pick order\./);
+  assert.match(page, /sidesOnAir \? \(side === "blue" \? " · Left on Pick\/Ban" : " · Right on Pick\/Ban"\) : ""/);
+  assert.match(page, /\{sideAssignment\}\s*\{hubLive \? null : firstSelectionSetup\}/);
+  assert.match(page, /aria-label="Show League of Legends Pick\/Ban side labels"/);
   assert.match(page, /disabled=\{!hubLive && \(state\.leagueOfLegends\.sideControl === "draft" \|\| state\.leagueOfLegends\.draft\.currentStep > 0\)\}/);
   assert.match(page, /<select value=\{state\.leagueOfLegends\.sideControl\}/);
   assert.doesNotMatch(page, /<select disabled=\{hubLive\} value=\{state\.leagueOfLegends\.sideControl\}/);
@@ -512,6 +516,11 @@ test("server-renders only the three supported League of Legends browser sources"
   assert.match(css, /\.draftTeamLogo::after \{[^}]*border: 2px solid var\(--draft-team-accent\)/);
   assert.match(css, /\.scoreLogo::after \{[^}]*linear-gradient\(90deg, var\(--league-primary\), var\(--league-secondary\)\)/);
   assert.match(component, /className=\{styles\.ban\} style=\{\{ \.\.\.box\(art\.bans\[index\]\), "--pick-accent": team\.color/);
+  // Blue renders on the left half and Red on the right; each ban plate names its side and team.
+  assert.match(component, /side === "blue" \? art\.banPlate\[0\] \+ art\.banPlate\[2\] : art\.banPlate\[0\] - SIDE_TAB_WIDTH/);
+  assert.match(component, /data\.sideLabels !== false \? <div className=\{styles\.sideTab\}[\s\S]{0,200}\{side === "blue" \? "Blue side" : "Red side"\}[\s\S]{0,80}<SideTabName name=\{team\.name\} \/>/);
+  assert.match(css, /\.sideTab \{[^}]*background: #171717/);
+  assert.match(css, /\.sideTab strong\[data-cut="true"\] \{ direction: rtl; text-overflow: ellipsis; \}/);
   assert.match(css, /\.pick\[data-active="true"\]::after, \.ban\[data-active="true"\]::after \{[^}]*z-index: 3;[^}]*border: 4px solid var\(--pick-accent\);[^}]*animation: draftActiveSelectionBorder 3s/);
   assert.match(css, /@keyframes draftActiveSelectionBorder/);
   assert.doesNotMatch(css, /draftActiveSelectionBorder[\s\S]{0,180}(?:outline|border-color)/);
@@ -2649,6 +2658,12 @@ test("derives the short production name while omitting the A squad label", () =>
   assert.equal(shortTeamName("#4 GT Rocket League A - Swarm", "Rocket League"), "GT");
   assert.equal(shortTeamName("#2 MU VALORANT B - Midland University", "VALORANT"), "MU B");
   assert.equal(shortTeamName("Independent Team"), "Independent Team");
+  // League of Legends condenses to LoL with or without the event's game title, and A squads still drop their suffix.
+  assert.equal(shortTeamName("UMICH League of Legends E"), "UMICH LoL E");
+  assert.equal(shortTeamName("#3 UMICH League of Legends B - University of Michigan", "League of Legends"), "UMICH LoL B");
+  assert.equal(shortTeamName("UMICH league of legends A", "League of Legends"), "UMICH LoL");
+  assert.equal(shortTeamName("UMICH LoL E", "League of Legends"), "UMICH LoL E");
+  assert.ok(shortTeamName("UMICH League of Legends E").length <= TEAM_NAME_LIMIT);
 });
 
 test("calculates the Rocket League overlay fields from seven game inputs", () => {
