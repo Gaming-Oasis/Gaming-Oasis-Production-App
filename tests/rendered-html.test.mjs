@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { applyProductionDefaults } from "../lib/production-defaults.mjs";
 import { acknowledgePhantom, phantomAction, phantomBroadcast, phantomStatus } from "../lib/phantom-draft.mjs";
@@ -52,7 +53,7 @@ import {
   undoLeagueDraftSelection,
 } from "../lib/league-of-legends.mjs";
 import { mergeLeagueOverlayLive, startLeagueLiveClient } from "../lib/league-of-legends-live.mjs";
-import { hubLogoSrc, sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
+import { hubLogoSrc, localLogoPath, normalizeLogoReference, sponsorLogoSrc } from "../lib/sponsor-logo-url.mjs";
 import { readBoundedJson } from "../lib/bounded-json.mjs";
 import { FINAL_OUTPUT_KEYS, JSON_FILENAMES, startJsonWriter, VALORANT_MAP_DATA_FILENAME } from "../scripts/json-writer.mjs";
 import { resolveNpmInvocation, stopChild } from "../scripts/launch-production.mjs";
@@ -3214,6 +3215,68 @@ test("proxies remote sponsor logos for vMix without fetching private hosts", asy
     assert.deepEqual(requested, ["https://cdn.example/logo.png", "https://cdn.example/logo-final.png", "https://cdn.example/private-hop.png"]);
   } finally {
     await writer.close();
+  }
+});
+
+test("accepts workstation file paths as logo overrides", async () => {
+  assert.equal(localLogoPath("C:\\Logos\\Team One.png"), "C:/Logos/Team One.png");
+  assert.equal(localLogoPath("  \"C:\\Logos\\team.png\"  "), "C:/Logos/team.png");
+  assert.equal(localLogoPath("file:///C:/Logos/Team%20One.png"), "C:/Logos/Team One.png");
+  assert.equal(localLogoPath("\\\\media-pc\\Logos\\team.png"), "//media-pc/Logos/team.png");
+  assert.equal(localLogoPath("file://media-pc/Logos/team.png"), "//media-pc/Logos/team.png");
+  for (const value of ["https://cdn.example/team.png", "team.png", "/team.png", "C:", "C:/", ""]) {
+    assert.equal(localLogoPath(value), "");
+  }
+  assert.equal(normalizeLogoReference(" file:///D:/Show/league.png "), "D:/Show/league.png");
+  assert.equal(normalizeLogoReference(" https://cdn.example/team.png "), "https://cdn.example/team.png");
+  const proxied = "http://127.0.0.1:4877/api/local-logos?path=C%3A%2FLogos%2FTeam%20One.png";
+  assert.equal(hubLogoSrc("C:\\Logos\\Team One.png"), proxied);
+  assert.equal(hubLogoSrc("file:///C:/Logos/Team%20One.png"), proxied);
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /logo: normalizeLogoReference\(team\.overrides\.logo\) \|\| team\.logo\.trim\(\)/);
+  assert.match(page, /logo: normalizeLogoReference\(league\.overrides\.logo\) \|\| league\.logo\.trim\(\)/);
+});
+
+test("serves workstation logo files only to the production tool", async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), "gaming-oasis-local-logo-"));
+  const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const logoFile = path.join(outputDir, "Team One.png");
+  const textFile = path.join(outputDir, "notes.txt");
+  const fakePng = path.join(outputDir, "fake.png");
+  await writeFile(logoFile, imageBytes);
+  await writeFile(textFile, "private");
+  await writeFile(fakePng, "not an image");
+  const writer = await startJsonWriter({
+    port: 0,
+    outputDir,
+    enableRocketLeagueStatsApi: false,
+    enableLeagueLiveClient: false,
+  });
+  const logoUrl = (file) => `${writer.url}/api/local-logos?path=${encodeURIComponent(file)}`;
+
+  try {
+    const anonymous = await fetch(logoUrl(logoFile));
+    assert.equal(anonymous.status, 403);
+    const foreign = await fetch(logoUrl(logoFile), { headers: { Origin: "https://example.com", Referer: "https://example.com/" } });
+    assert.equal(foreign.status, 403);
+
+    const preview = await fetch(logoUrl(`"${logoFile}"`), { headers: { Origin: "http://localhost:3000" } });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.headers.get("content-type"), "image/png");
+    assert.equal(preview.headers.get("access-control-allow-origin"), "http://localhost:3000");
+    assert.deepEqual(new Uint8Array(await preview.arrayBuffer()), imageBytes);
+
+    const overlay = await fetch(logoUrl(pathToFileURL(logoFile).href), { headers: { Referer: "http://localhost:3000/overlays/valorant" } });
+    assert.equal(overlay.status, 200);
+
+    const trusted = { headers: { Origin: "http://localhost:3000" } };
+    assert.equal((await fetch(logoUrl(textFile), trusted)).status, 415);
+    assert.equal((await fetch(logoUrl(fakePng), trusted)).status, 415);
+    assert.equal((await fetch(logoUrl(path.join(outputDir, "missing.png")), trusted)).status, 404);
+    assert.equal((await fetch(logoUrl("team.png"), trusted)).status, 400);
+  } finally {
+    await writer.close();
+    await rm(outputDir, { recursive: true, force: true });
   }
 });
 

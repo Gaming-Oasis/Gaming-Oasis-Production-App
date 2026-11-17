@@ -2,13 +2,13 @@ import { createServer } from "node:http";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { lookup as defaultDnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { access, copyFile, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatSocialHandle } from "../lib/social-handle.mjs";
 import { isLeagueScoreboard } from "../lib/league-scoreboard.mjs";
 import { isBracketOverlayState, parseBracketProxyPath } from "../lib/bracket.mjs";
-import { googleDriveFileId } from "../lib/sponsor-logo-url.mjs";
+import { googleDriveFileId, localLogoPath } from "../lib/sponsor-logo-url.mjs";
 import { createValorantMapStore } from "../lib/valorant-map-store.mjs";
 import { VALORANT_MAP_ARTWORK } from "../lib/valorant.mjs";
 import {
@@ -363,6 +363,13 @@ function sniffVmixExtension(body) {
   if (body[0] === 0x42 && body[1] === 0x4d) return ".bmp";
   return "";
 }
+
+const LOCAL_LOGO_CONTENT_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+};
 
 function extensionFromPath(filePath) {
   const extension = path.extname(filePath).toLowerCase();
@@ -1002,7 +1009,7 @@ export async function startJsonWriter({
   async function loadVmixSponsorImage(logo) {
     const trimmed = String(logo || "").trim();
     if (!trimmed) return null;
-    const existing = await readExistingVmixImage(trimmed);
+    const existing = await readExistingVmixImage(localLogoPath(trimmed) || trimmed);
     if (existing) return existing;
     let url;
     try {
@@ -1321,6 +1328,55 @@ export async function startJsonWriter({
       } catch {
         response.writeHead(404, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ error: "League asset is unavailable" }));
+      }
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/api/local-logos?")) {
+      if (request.url.length > 4096) {
+        rejectJson(response, 414, "Local logo path is too long");
+        return;
+      }
+      // Only the production tool and its overlays may read workstation images.
+      let referrerOrigin = "";
+      try {
+        referrerOrigin = new URL(String(request.headers.referer ?? "")).origin;
+      } catch {
+        // No referrer; rely on Origin.
+      }
+      if (!isTrustedOrigin(request.headers.origin) && !isTrustedOrigin(referrerOrigin)) {
+        rejectJson(response, 403, "Local logos are available only to the production tool");
+        return;
+      }
+      let localPath = "";
+      try {
+        localPath = localLogoPath(new URL(request.url, "http://127.0.0.1").searchParams.get("path") ?? "");
+      } catch {
+        localPath = "";
+      }
+      if (!localPath) {
+        rejectJson(response, 400, "Local logo path is not valid");
+        return;
+      }
+      if (!extensionFromPath(localPath)) {
+        rejectJson(response, 415, "Local logo must be a PNG, JPG, GIF, or BMP file");
+        return;
+      }
+      try {
+        const info = await stat(localPath);
+        if (!info.isFile()) throw new HttpError(404, "Local logo file was not found");
+        if (info.size > MAX_IMAGE_RESPONSE_BYTES) throw new HttpError(413, "Local logo file is too large");
+        const body = await readFile(localPath);
+        const extension = sniffVmixExtension(body);
+        if (!extension) throw new HttpError(415, "Local logo must be a PNG, JPG, GIF, or BMP file");
+        response.writeHead(200, {
+          "Content-Type": LOCAL_LOGO_CONTENT_TYPES[extension],
+          "Content-Length": body.length,
+        });
+        response.end(body);
+      } catch (error) {
+        if (error instanceof HttpError) rejectJson(response, error.status, error.message);
+        else rejectJson(response, 404, "Local logo file was not found");
       }
       return;
     }
