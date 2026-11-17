@@ -277,10 +277,21 @@ test("readableText and image plates favor white unless necessary", () => {
 test("resolves scoreboard headers from event name with game-level override", () => {
   assert.equal(resolveScoreboardHeader("", "Spring Invitational"), "Spring Invitational");
   assert.equal(resolveScoreboardHeader("  ", "Spring Invitational"), "Spring Invitational");
-  assert.equal(resolveScoreboardHeader("RL Finals", "Spring Invitational"), "RL Finals");
-  assert.equal(resolveScoreboardHeader("", "Rocket League Spring Invitational"), "RL Spring Invitational");
-  assert.equal(resolveScoreboardHeader("", "Collegiate Rocket League Finals"), "Collegiate RL Finals");
-  assert.equal(resolveScoreboardHeader("Rocket League Championship", "Spring Invitational"), "RL Championship");
+  // Viewers already know the game, so every game name and abbreviation is removed from the on-air header.
+  assert.equal(resolveScoreboardHeader("RL Finals", "Spring Invitational"), "Finals");
+  assert.equal(resolveScoreboardHeader("", "Rocket League Spring Invitational"), "Spring Invitational");
+  assert.equal(resolveScoreboardHeader("", "Collegiate Rocket League Finals"), "Collegiate Finals");
+  assert.equal(resolveScoreboardHeader("Rocket League Championship", "Spring Invitational"), "Championship");
+  assert.equal(resolveScoreboardHeader("", "Gaming Oasis VALORANT Open"), "Gaming Oasis Open");
+  assert.equal(resolveScoreboardHeader("VAL Week 3", ""), "Week 3");
+  assert.equal(resolveScoreboardHeader("", "Gaming Oasis League of Legends Cup"), "Gaming Oasis Cup");
+  assert.equal(resolveScoreboardHeader("LoL Playoffs", ""), "Playoffs");
+  assert.equal(resolveScoreboardHeader("", "Gaming Oasis | Rocket League | Week 3"), "Gaming Oasis | Week 3");
+  assert.equal(resolveScoreboardHeader("", "Rocket League: Week 3"), "Week 3");
+  assert.equal(resolveScoreboardHeader("", "Spring Invitational - VALORANT"), "Spring Invitational");
+  assert.equal(resolveScoreboardHeader("", "Rocket League"), "");
+  // Words that only contain a game abbreviation stay intact.
+  assert.equal(resolveScoreboardHeader("", "Valley World Finals"), "Valley World Finals");
   assert.equal(resolveScoreboardHeader("", ""), "");
 });
 
@@ -2652,17 +2663,28 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.deepEqual(starterPreviewFiles, []);
 });
 
-test("derives the short production name while omitting the A squad label", () => {
+test("derives the short production name without game labels or the A squad label", () => {
   assert.equal(TEAM_NAME_LIMIT, 13);
   assert.equal(shortTeamName("#1 KU Rocket League A - Keiser University", "Rocket League"), "KU");
   assert.equal(shortTeamName("#4 GT Rocket League A - Swarm", "Rocket League"), "GT");
   assert.equal(shortTeamName("#2 MU VALORANT B - Midland University", "VALORANT"), "MU B");
   assert.equal(shortTeamName("Independent Team"), "Independent Team");
-  // League of Legends condenses to LoL with or without the event's game title, and A squads still drop their suffix.
-  assert.equal(shortTeamName("UMICH League of Legends E"), "UMICH LoL E");
-  assert.equal(shortTeamName("#3 UMICH League of Legends B - University of Michigan", "League of Legends"), "UMICH LoL B");
-  assert.equal(shortTeamName("UMICH league of legends A", "League of Legends"), "UMICH LoL");
-  assert.equal(shortTeamName("UMICH LoL E", "League of Legends"), "UMICH LoL E");
+  // Every game name and abbreviation is removed, with or without the event's game title.
+  assert.equal(shortTeamName("#1 KU Rocket League A - Keiser University"), "KU");
+  assert.equal(shortTeamName("#2 MU VALORANT B - Midland University"), "MU B");
+  assert.equal(shortTeamName("UMICH League of Legends E"), "UMICH E");
+  assert.equal(shortTeamName("#3 UMICH League of Legends B - University of Michigan", "League of Legends"), "UMICH B");
+  assert.equal(shortTeamName("UMICH league of legends A", "League of Legends"), "UMICH");
+  assert.equal(shortTeamName("UMICH LoL E", "League of Legends"), "UMICH E");
+  assert.equal(shortTeamName("KU RL B"), "KU B");
+  assert.equal(shortTeamName("MU VAL A"), "MU");
+  // The A designator is always dropped, however it is written.
+  assert.equal(shortTeamName("KU A"), "KU");
+  assert.equal(shortTeamName("KU (A)"), "KU");
+  assert.equal(shortTeamName("#5 KU Rocket League (A) - Keiser University"), "KU");
+  assert.equal(shortTeamName("Valley State B"), "Valley State B");
+  // A name that is only a game label falls back to the source text rather than going blank.
+  assert.equal(shortTeamName("Rocket League"), "Rocket League");
   assert.ok(shortTeamName("UMICH League of Legends E").length <= TEAM_NAME_LIMIT);
 });
 
