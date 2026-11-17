@@ -2554,6 +2554,10 @@ test("keeps the legacy JSON contract and removes the starter preview", async () 
   assert.equal((page.match(/<GameAutoAcceptControl /g) ?? []).length, 2);
   assert.doesNotMatch(page, /<GameAutoAcceptControl gameName="VALORANT"/);
   assert.equal((page.match(/<GameFlipSidesControl /g) ?? []).length, 3);
+  assert.match(page, /<p className=\{`flip-source \$\{checked \|\| source === "override" \? "flipped" : ""\}`\} role="status">\{flipSourceLabel\(\{ flipped: checked, source \}\)\}<\/p>/);
+  assert.match(page, /const leagueFlip = leagueFlipSource\(state\.leagueOfLegends, seedHolder\);/);
+  assert.match(page, /<GameFlipSidesControl gameName="League of Legends"[^\n]*checked=\{leagueFlip\.flipped\} source=\{leagueFlip\.source\}/);
+  assert.doesNotMatch(page, /<GameFlipSidesControl gameName="(VALORANT|Rocket League)"[^\n]*source=/);
   assert.equal((page.match(/<GameLiveMatchIndicators /g) ?? []).length, 3);
   assert.match(page, /<h2>Live Match Indicators<\/h2>/);
   assert.match(page, /function resetRocketLeagueSeries\(\)/);
