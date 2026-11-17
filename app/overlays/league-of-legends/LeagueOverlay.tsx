@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { leagueDraftSteps, LEAGUE_ROLES, leagueChampionAssetId, leagueGameLimit, normalizeLeaguePickOrder } from "../../../lib/league-of-legends.mjs";
 import { isLeagueOverlayData, leagueFearlessChampions, leagueFearlessPage, leagueLiveStatsAvailable } from "../../../lib/league-overlay.mjs";
@@ -64,7 +64,7 @@ export type OverlayData = {
   scoreboard?: LeagueScoreboardSettings; blueTeamKey?: "team1" | "team2";
   version: 1; assetVersion: string; header: string; currentGame: number; bestOf: string;
   leaguePrimary: string; leagueSecondary: string; leagueLogo?: string;
-  blueTeam: VsOverlayTeam; redTeam: VsOverlayTeam; sponsorWidgetEnabled: boolean; vsScreenEnabled: boolean;
+  blueTeam: VsOverlayTeam; redTeam: VsOverlayTeam; sponsorWidgetEnabled: boolean; vsScreenEnabled: boolean; sideLabels?: boolean;
   sponsors: VsOverlaySponsor[]; draftMode: string;
   live: {
     connection: { connected: boolean; stale: boolean; lastEventAt?: string | null };
@@ -171,6 +171,32 @@ function SeriesIndicators({ team, bestOf, side, scene }: { team: VsOverlayTeam; 
   </div>;
 }
 
+/** Shrinks the name to fit its side tab. A name still too wide at the minimum size is cut from its start, so the squad letter that tells two teams apart stays visible. */
+function SideTabName({ name }: { name: string }) {
+  const ref = useRef<HTMLElement>(null);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let active = true;
+    const range = document.createRange();
+    // Sub-pixel glyph widths: integer scrollWidth would report a fit that still overflows.
+    const tooWide = () => { range.selectNodeContents(el); return range.getBoundingClientRect().width > el.getBoundingClientRect().width; };
+    const fit = () => {
+      if (!active) return;
+      let size = 24;
+      el.style.fontSize = size + "px";
+      while (size > 13 && tooWide()) el.style.fontSize = --size + "px";
+      setCut(tooWide());
+    };
+    fit();
+    void document.fonts.ready.then(fit);
+    return () => { active = false; };
+  }, [name]);
+  // Left-to-right marks keep trailing punctuation in place when the cut name overflows right-to-left.
+  return <strong ref={ref} data-cut={cut}>{"‎" + name + "‎"}</strong>;
+}
+
 function FearlessStrip({ data }: { data: OverlayData }) {
   const signature = JSON.stringify(leagueFearlessChampions(data));
   const champions = useMemo(() => JSON.parse(signature) as string[], [signature]);
@@ -213,10 +239,10 @@ export function DraftOverlay({ data }: { data: OverlayData }) {
       // ban plate toward the center so viewers can tell near-identical teams apart.
       const sideTab = [side === "blue" ? art.banPlate[0] + art.banPlate[2] : art.banPlate[0] - SIDE_TAB_WIDTH, art.banPlate[1], SIDE_TAB_WIDTH, art.banPlate[3]];
       return <section key={side} className={styles.draftSide} aria-label={team.name + " " + side + " side picks and bans"}>
-        <div className={styles.sideTab} style={{ ...box(sideTab), "--pick-accent": team.color } as CSSProperties} data-side={side}>
+        {data.sideLabels !== false ? <div className={styles.sideTab} style={{ ...box(sideTab), "--pick-accent": team.color } as CSSProperties} data-side={side}>
           <span>{side === "blue" ? "Blue side" : "Red side"}</span>
-          <FitTeamName name={team.name} className="" maxPx={24} minPx={13} />
-        </div>
+          <SideTabName name={team.name} />
+        </div> : null}
         {picks.map((champion: string, slot: number) => {
           const card = art.picks[slot];
           const roleName = LEAGUE_ROLES[order.indexOf(slot)] as keyof typeof card.roles;

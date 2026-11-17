@@ -51,13 +51,14 @@
 }
 .banPlate, .fearlessStrip { background: #171717; }
 /* Side identity tabs are an intentional addition to the source artwork: same plate, white text, team-color edge. */
-.sideTab { display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 0 18px; background: #171717; }
+.sideTab { display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 0 18px; background: #171717; text-align: left; }
 .sideTab[data-side="red"] { text-align: right; }
 .sideTab::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 3px; background: var(--pick-accent); }
 .sideTab[data-side="red"]::after { right: auto; left: 0; }
 .sideTab > span { font-size: 18px; font-weight: 700; line-height: 18px; letter-spacing: .06em; text-transform: uppercase; opacity: .75; }
-/* Clip instead of an ellipsis: a sub-pixel overflow must never hide the squad letter that tells two teams apart. */
 .sideTab strong { display: block; width: 100%; overflow: hidden; white-space: nowrap; font-weight: 700; line-height: 1.15; }
+/* A name too long even at the minimum size truncates from its start (right-to-left overflow), so the squad letter that tells two teams apart always stays visible. */
+.sideTab strong[data-cut="true"] { direction: rtl; text-overflow: ellipsis; }
 .ban { display: grid; place-items: center; font-size: 24px; }
 .ban > span:not(.artwork) { opacity: .4; }
 .ban img, .fearlessSlot img { filter: grayscale(1); object-fit: cover; }

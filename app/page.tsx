@@ -80,6 +80,8 @@ import {
   leagueFirstPickSide,
   leagueOtherTeam,
   leagueSeedHolder,
+  leagueSideStatus,
+  leagueSidesReady,
   createLeagueDraftState,
   draftSlots,
   fearlessChampionSet,
@@ -313,6 +315,7 @@ type LeagueOfLegends = {
   autoAcceptLiveResults: boolean;
   sponsorWidgetEnabled: boolean;
   vsScreenEnabled: boolean;
+  sideLabelsEnabled: boolean;
   debugLiveEnabled: boolean;
   debugLiveScenario: "live" | "finished" | "stale";
   results: LeagueResultGame[];
@@ -844,6 +847,7 @@ function createInitialState(): ProductionState {
       autoAcceptLiveResults: false,
       sponsorWidgetEnabled: true,
       vsScreenEnabled: true,
+      sideLabelsEnabled: true,
       debugLiveEnabled: false,
       debugLiveScenario: "live",
       results: createLeagueResultGames(),
@@ -1242,6 +1246,7 @@ function mergeSavedState(savedValue: unknown): ProductionState {
       autoAcceptLiveResults: booleanValue(savedLeague.autoAcceptLiveResults, false),
       sponsorWidgetEnabled: savedLeague.sponsorWidgetEnabled !== false,
       vsScreenEnabled: booleanValue(savedLeague.vsScreenEnabled, true),
+      sideLabelsEnabled: booleanValue(savedLeague.sideLabelsEnabled, true),
       debugLiveEnabled: Boolean(savedLeague.debugLiveEnabled),
       debugLiveScenario: ["live", "finished", "stale"].includes(savedLeague.debugLiveScenario ?? "")
         ? savedLeague.debugLiveScenario!
@@ -5438,23 +5443,30 @@ export default function Home() {
       ? `${blueTeam.name || "Blue team"}: Blue side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "First" : "Second"} pick — ${redTeam.name || "Red team"}: Red side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "Second" : "First"} pick`
       : "Set each team's side and pick order.";
     const blueKey = state.leagueOfLegends.blueTeam;
+    const redKey = leagueOtherTeam(blueKey) as LeagueOfLegends["blueTeam"];
     const leagueTeamName = (teamKey: "team1" | "team2") => (teamKey === "team1" ? teamOne.name || "Team 1" : teamTwo.name || "Team 2");
-    const hubBlueKey = hubLive ? selectHubSession(state.leagueOfLegends.hubDraft.collection, state.leagueOfLegends.currentGame)?.blueTeam ?? null : null;
-    // Manual drafts explain their source in Sides & pick order directly below.
-    const sideSource = !hubLive ? ""
-      : sideControl === "manual"
-        ? hubBlueKey && hubBlueKey !== blueKey ? `Flip Sides is overriding League Hub for this game. Hub has ${leagueTeamName(hubBlueKey)} on Blue.` : "Sides are set with Flip Sides for this game."
-        : state.leagueOfLegends.hubPresentation?.sidesReady ? "Sides follow League Hub side selection." : "Waiting for Hub side selection. Pick/Ban keeps this assignment until the teams choose.";
+    const hubCollection = hubLive ? state.leagueOfLegends.hubDraft.collection : null;
+    const hubSideSession = selectHubSession(hubCollection, state.leagueOfLegends.currentGame);
+    // Phantom mode publishes its staged sides until corrections are applied, so the scene can trail the tool.
+    const onAirBlueKey = phantomBroadcast(state.leagueOfLegends, "leagueOfLegends", matchKey).blueTeam;
+    const sidesOnAir = onAirBlueKey === blueKey;
+    const sideSource = leagueSideStatus({
+      hubLive, sideControl, sidesReady: leagueSidesReady(state.leagueOfLegends), hubRequired: hubCollection?.required, hubHasSession: Boolean(hubSideSession),
+      hubBlueTeam: hubSideSession?.blueTeam ?? null, blueTeam: blueKey, onAirBlueTeam: onAirBlueKey, firstPickTeam: state.leagueOfLegends.firstPickTeam,
+      gameNumber: state.leagueOfLegends.currentGame, teamName: leagueTeamName,
+    });
+    // A manual draft with no confirmed order already runs Blue first; Hub drafts wait for the teams.
+    const firstPickKey = state.leagueOfLegends.firstPickTeam || (hubLive ? "" : state.leagueOfLegends.draft.firstPickSide === "CHAOS" ? redKey : blueKey);
     // Mirrors the Pick/Ban scene: Blue is always the left half, Red the right half.
     const sideAssignment = (
       <section className="league-side-assignment" aria-label="Pick/Ban sides">
         <div className="league-side-teams">
           {(["blue", "red"] as const).map((side) => {
-            const teamKey = side === "blue" ? blueKey : leagueOtherTeam(blueKey) as LeagueOfLegends["blueTeam"];
-            const pickOrder = state.leagueOfLegends.firstPickTeam ? (state.leagueOfLegends.firstPickTeam === teamKey ? "First pick" : "Second pick") : "Pick order not set";
+            const teamKey = side === "blue" ? blueKey : redKey;
+            const pickOrder = firstPickKey ? (firstPickKey === teamKey ? "First pick" : "Second pick") : "Pick order not set";
             return (
               <div className="league-side-team" key={side}>
-                <span>{side === "blue" ? "Blue side · Left on Pick/Ban" : "Red side · Right on Pick/Ban"}</span>
+                <span>{side === "blue" ? "Blue side" : "Red side"}{sidesOnAir ? (side === "blue" ? " · Left on Pick/Ban" : " · Right on Pick/Ban") : ""}</span>
                 <strong>{leagueTeamName(teamKey)}</strong>
                 <small>{teamKey === "team1" ? "Team 1" : "Team 2"} · {pickOrder}</small>
               </div>
@@ -5567,6 +5579,10 @@ export default function Home() {
                 <label className="switch large"><input aria-label="Show League of Legends VS screen background" type="checkbox" checked={state.leagueOfLegends.vsScreenEnabled} onChange={(event) => updateLeagueOfLegends({ vsScreenEnabled: event.target.checked })} /><span /></label>
               </div>
               <div className="browser-overlay-widget-toggle">
+                <div><strong>Side labels</strong><small>Show the Blue side and Red side team tabs beside the Pick/Ban ban rows once sides are set.</small></div>
+                <label className="switch large"><input aria-label="Show League of Legends Pick/Ban side labels" type="checkbox" checked={state.leagueOfLegends.sideLabelsEnabled} onChange={(event) => updateLeagueOfLegends({ sideLabelsEnabled: event.target.checked })} /><span /></label>
+              </div>
+              <div className="browser-overlay-widget-toggle">
                 <div><strong>Sponsor widget</strong><small>Show the rotating included sponsors on Pick/Ban, Scoreboard, and VS.</small></div>
                 <label className="switch large"><input aria-label="Enable League of Legends sponsor widget" type="checkbox" checked={state.leagueOfLegends.sponsorWidgetEnabled} onChange={(event) => updateLeagueOfLegends({ sponsorWidgetEnabled: event.target.checked })} /><span /></label>
               </div>
@@ -5603,7 +5619,7 @@ export default function Home() {
               {hubLive ? null : firstSelectionSetup}
               {activeStep ? (
                 <div className="league-active-step">
-                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? "Blue side" : "Red side"} · {leagueTeamName(activeStep.side === "ORDER" ? blueKey : leagueOtherTeam(blueKey) as LeagueOfLegends["blueTeam"])} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
+                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? "Blue side" : "Red side"} · {leagueTeamName(activeStep.side === "ORDER" ? blueKey : redKey)} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
                   {hubLive ? <p className="field-hint">Waiting for this selection in League Hub.</p> : <><label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
                   <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button></>}
                 </div>
