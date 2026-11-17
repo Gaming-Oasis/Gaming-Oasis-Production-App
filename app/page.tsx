@@ -93,7 +93,7 @@ import { applyProductionDefaults, matchesProductionDefaults } from "../lib/produ
 import { clearProductionData } from "../lib/clear-production-data.mjs";
 import { applyMatchLookupResult } from "../lib/match-sync.mjs";
 import { HubDraftControls, useHubDraftSync } from "./HubDraftControls";
-import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, reconcileHubMatch, resetHubSource, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
+import { acceptHubCollection, emptyHubSource, hubEligibility, hubIdentity, hubLeagueResultMetadata, hydrateHubSource, projectHubGame, reconcileHubMatch, resetHubSource, selectHubSession, setHubMode, type HubCollection, type HubGameKey, type HubIdentity, type HubPresentation, type HubSource } from "../lib/hub-draft.mjs";
 import {
   CASTER_PRESET_LIMIT,
   findCasterPreset,
@@ -5437,6 +5437,33 @@ export default function Home() {
     const leagueSelectionSummary = state.leagueOfLegends.firstPickTeam
       ? `${blueTeam.name || "Blue team"}: Blue side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "First" : "Second"} pick — ${redTeam.name || "Red team"}: Red side · ${state.leagueOfLegends.firstPickTeam === state.leagueOfLegends.blueTeam ? "Second" : "First"} pick`
       : "Set each team's side and pick order.";
+    const blueKey = state.leagueOfLegends.blueTeam;
+    const leagueTeamName = (teamKey: "team1" | "team2") => (teamKey === "team1" ? teamOne.name || "Team 1" : teamTwo.name || "Team 2");
+    const hubBlueKey = hubLive ? selectHubSession(state.leagueOfLegends.hubDraft.collection, state.leagueOfLegends.currentGame)?.blueTeam ?? null : null;
+    // Manual drafts explain their source in Sides & pick order directly below.
+    const sideSource = !hubLive ? ""
+      : sideControl === "manual"
+        ? hubBlueKey && hubBlueKey !== blueKey ? `Flip Sides is overriding League Hub for this game. Hub has ${leagueTeamName(hubBlueKey)} on Blue.` : "Sides are set with Flip Sides for this game."
+        : state.leagueOfLegends.hubPresentation?.sidesReady ? "Sides follow League Hub side selection." : "Waiting for Hub side selection. Pick/Ban keeps this assignment until the teams choose.";
+    // Mirrors the Pick/Ban scene: Blue is always the left half, Red the right half.
+    const sideAssignment = (
+      <section className="league-side-assignment" aria-label="Pick/Ban sides">
+        <div className="league-side-teams">
+          {(["blue", "red"] as const).map((side) => {
+            const teamKey = side === "blue" ? blueKey : leagueOtherTeam(blueKey) as LeagueOfLegends["blueTeam"];
+            const pickOrder = state.leagueOfLegends.firstPickTeam ? (state.leagueOfLegends.firstPickTeam === teamKey ? "First pick" : "Second pick") : "Pick order not set";
+            return (
+              <div className="league-side-team" key={side}>
+                <span>{side === "blue" ? "Blue side · Left on Pick/Ban" : "Red side · Right on Pick/Ban"}</span>
+                <strong>{leagueTeamName(teamKey)}</strong>
+                <small>{teamKey === "team1" ? "Team 1" : "Team 2"} · {pickOrder}</small>
+              </div>
+            );
+          })}
+        </div>
+        {sideSource ? <p className="field-hint" role="status">{sideSource}</p> : null}
+      </section>
+    );
     const firstSelectionSetup = (
       <section className="league-first-selection" aria-label="Side and draft order">
         <div className="card-title-row"><div><h3>Sides &amp; pick order · Game {state.leagueOfLegends.currentGame}</h3><p>Confirm the side assignment and draft order in match chat before locking a champion.{state.leagueOfLegends.currentGame === 1 && !seedHolder ? " No distinct seeds — run the witnessed coin toss in match chat, then set the agreed assignment." : ""}</p></div></div>
@@ -5465,7 +5492,6 @@ export default function Home() {
         <div className="form-grid">
           <label className="field"><span className="field-label">Draft rules</span><select disabled={leagueSelectionLocked} title={state.leagueOfLegends.draft.currentStep > 0 ? "Reset the draft before changing format" : undefined} value={state.leagueOfLegends.draftMode} onChange={(event) => updateLeagueOfLegends({ draftMode: event.target.value as LeagueOfLegends["draftMode"] })}><option value="standard">Tournament</option><option value="online">Standard</option><option value="fearless">Global fearless</option></select></label>
         </div>
-        <p className="field-hint" role="status">{leagueSelectionSummary}</p>
       </section>
     );
     const draftSteps = leagueDraftSteps(state.leagueOfLegends.draftMode, state.leagueOfLegends.draft.firstPickSide);
@@ -5573,10 +5599,11 @@ export default function Home() {
             <PhantomDraftControls status={reveal} onAction={(action) => actPhantom("leagueOfLegends", action)} />
             <section className="panel-card league-draft-control">
               <div className="card-title-row"><div><h2>Champion select</h2><p>Selections follow the selected draft format. Data Dragon {leagueCatalogVersion} supplies the champion catalog.</p></div></div>
-              {hubLive ? <p className="field-hint">{state.leagueOfLegends.hubPresentation?.sidesReady || sideControl === "manual" ? leagueSelectionSummary : "Waiting for Hub side selection."}</p> : firstSelectionSetup}
+              {sideAssignment}
+              {hubLive ? null : firstSelectionSetup}
               {activeStep ? (
                 <div className="league-active-step">
-                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? blueTeam.name || "Blue side" : redTeam.name || "Red side"} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
+                  <div><span>{activeStep.phase}</span><strong>{activeStep.side === "ORDER" ? "Blue side" : "Red side"} · {leagueTeamName(activeStep.side === "ORDER" ? blueKey : leagueOtherTeam(blueKey) as LeagueOfLegends["blueTeam"])} · {activeStep.action === "pick" ? "Pick" : "Ban"} {Number(activeStep.slot) + 1}</strong></div>
                   {hubLive ? <p className="field-hint">Waiting for this selection in League Hub.</p> : <><label className="field"><span className="field-label">Champion</span><select value={leagueChampion} onChange={(event) => setLeagueChampion(event.target.value)}><option value="">Select champion</option>{leagueCatalog.map((champion) => <option key={champion.id} value={champion.name} disabled={used.has(champion.name) || unavailable.has(champion.name)}>{champion.name}{unavailable.has(champion.name) ? " — fearless" : used.has(champion.name) ? " — used" : ""}</option>)}</select></label>
                   <button className="button primary" type="button" onClick={lockLeagueChampion} disabled={!leagueChampion}>Lock {activeStep.action}</button></>}
                 </div>

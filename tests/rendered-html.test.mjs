@@ -478,6 +478,9 @@ test("server-renders the Gaming Oasis production workspace", async () => {
   assert.match(page, /Sides follow League Hub side selection\. Flip Sides overrides this game\./);
   assert.match(page, /Waiting for Hub side selection\./);
   assert.doesNotMatch(page, /Waiting for Hub sides and pick order\./);
+  assert.match(page, /"Blue side · Left on Pick\/Ban" : "Red side · Right on Pick\/Ban"/);
+  assert.match(page, /\{sideAssignment\}\s*\{hubLive \? null : firstSelectionSetup\}/);
+  assert.match(page, /Flip Sides is overriding League Hub for this game\. Hub has \$\{leagueTeamName\(hubBlueKey\)\} on Blue\./);
   assert.match(page, /disabled=\{!hubLive && \(state\.leagueOfLegends\.sideControl === "draft" \|\| state\.leagueOfLegends\.draft\.currentStep > 0\)\}/);
   assert.match(page, /<select value=\{state\.leagueOfLegends\.sideControl\}/);
   assert.doesNotMatch(page, /<select disabled=\{hubLive\} value=\{state\.leagueOfLegends\.sideControl\}/);
@@ -512,6 +515,10 @@ test("server-renders only the three supported League of Legends browser sources"
   assert.match(css, /\.draftTeamLogo::after \{[^}]*border: 2px solid var\(--draft-team-accent\)/);
   assert.match(css, /\.scoreLogo::after \{[^}]*linear-gradient\(90deg, var\(--league-primary\), var\(--league-secondary\)\)/);
   assert.match(component, /className=\{styles\.ban\} style=\{\{ \.\.\.box\(art\.bans\[index\]\), "--pick-accent": team\.color/);
+  // Blue renders on the left half and Red on the right; each ban plate names its side and team.
+  assert.match(component, /side === "blue" \? art\.banPlate\[0\] \+ art\.banPlate\[2\] : art\.banPlate\[0\] - SIDE_TAB_WIDTH/);
+  assert.match(component, /className=\{styles\.sideTab\}[\s\S]{0,200}\{side === "blue" \? "Blue side" : "Red side"\}[\s\S]{0,80}<FitTeamName name=\{team\.name\}/);
+  assert.match(css, /\.sideTab \{[^}]*background: #171717/);
   assert.match(css, /\.pick\[data-active="true"\]::after, \.ban\[data-active="true"\]::after \{[^}]*z-index: 3;[^}]*border: 4px solid var\(--pick-accent\);[^}]*animation: draftActiveSelectionBorder 3s/);
   assert.match(css, /@keyframes draftActiveSelectionBorder/);
   assert.doesNotMatch(css, /draftActiveSelectionBorder[\s\S]{0,180}(?:outline|border-color)/);

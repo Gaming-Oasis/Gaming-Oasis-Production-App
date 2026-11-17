@@ -18,6 +18,7 @@ import styles from "./league-overlay.module.css";
 const OVERLAY_ENDPOINT = "http://127.0.0.1:4877/api/overlays/league-of-legends";
 const ASSET_ENDPOINT = "http://127.0.0.1:4877/api/public/league-of-legends/assets";
 const ICON_ROOT = "/league-of-legends-overlay";
+const SIDE_TAB_WIDTH = 340;
 
 type Rect = number[];
 function box(rect: Rect, origin: Rect = [0, 0]): CSSProperties {
@@ -208,7 +209,14 @@ export function DraftOverlay({ data }: { data: OverlayData }) {
       const pickStride = art.picks[0].portrait[2] + 7;
       const firstPickX = side === "blue" ? art.picks[0].portrait[0] : art.picks[art.picks.length - 1].portrait[0] - pickStride * (art.picks.length - 1);
       const isActive = active?.side === (side === "blue" ? "ORDER" : "CHAOS");
+      // Blue is always the left half and Red the right half. The identity tab extends each
+      // ban plate toward the center so viewers can tell near-identical teams apart.
+      const sideTab = [side === "blue" ? art.banPlate[0] + art.banPlate[2] : art.banPlate[0] - SIDE_TAB_WIDTH, art.banPlate[1], SIDE_TAB_WIDTH, art.banPlate[3]];
       return <section key={side} className={styles.draftSide} aria-label={team.name + " " + side + " side picks and bans"}>
+        <div className={styles.sideTab} style={{ ...box(sideTab), "--pick-accent": team.color } as CSSProperties} data-side={side}>
+          <span>{side === "blue" ? "Blue side" : "Red side"}</span>
+          <FitTeamName name={team.name} className="" maxPx={24} minPx={13} />
+        </div>
         {picks.map((champion: string, slot: number) => {
           const card = art.picks[slot];
           const roleName = LEAGUE_ROLES[order.indexOf(slot)] as keyof typeof card.roles;
