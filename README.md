@@ -185,7 +185,7 @@ Champion portraits, square champion icons, and item artwork come from Riot Data 
 
 Logo previews retain the source image's transparency, inspect its visible colors, and automatically place it over a white or navy (`#171717`) background for contrast. Operators can force either background from the team override controls.
 
-Synced team names are converted to their short production form before output. For example, `#1 KU Rocket League A - Keiser University` becomes `KU`; the A squad suffix is omitted, while B and other squad labels remain. League of Legends is condensed to `LoL` instead of removed, so `UMICH League of Legends E` becomes `UMICH LoL E`. The full Hub name remains visible as source information. Final names are limited to the legacy 13-character graphics field, and an over-limit override field is highlighted red until corrected.
+Synced team names are converted to their short production form before output. For example, `#1 KU Rocket League A - Keiser University` becomes `KU`; the A squad suffix (`A` or `(A)`) is always omitted, while B and other squad labels remain. Every game name and abbreviation (Rocket League/RL, VALORANT/VAL, League of Legends/LoL) is removed because viewers already know the game, so `UMICH League of Legends E` becomes `UMICH E`. Scoreboard headers drop game names and abbreviations the same way, so `Gaming Oasis Rocket League Finals` airs as `Gaming Oasis Finals`. The full Hub name remains visible as source information. Final names are limited to the legacy 13-character graphics field, and an over-limit override field is highlighted red until corrected.
 
 ## Local development
 
